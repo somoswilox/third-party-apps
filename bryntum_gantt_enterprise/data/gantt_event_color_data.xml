@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <data noupdate="1">
+
+        <record id="color_1" model="gantt.event.color">
+            <field name="name">Persimmon</field>
+            <field name="color">#FF5733</field>
+        </record>
+
+        <record id="color_2" model="gantt.event.color">
+            <field name="name">Spring Green</field>
+            <field name="color">#33FF57</field>
+        </record>
+
+        <record id="color_3" model="gantt.event.color">
+            <field name="name">Royal Blue</field>
+            <field name="color">#3357FF</field>
+        </record>
+
+        <record id="color_4" model="gantt.event.color">
+            <field name="name">Sunflower</field>
+            <field name="color">#F1C40F</field>
+        </record>
+
+        <record id="color_5" model="gantt.event.color">
+            <field name="name">Amethyst</field>
+            <field name="color">#8E44AD</field>
+        </record>
+
+        <record id="color_6" model="gantt.event.color">
+            <field name="name">Turquoise</field>
+            <field name="color">#1ABC9C</field>
+        </record>
+
+        <record id="color_7" model="gantt.event.color">
+            <field name="name">Carrot</field>
+            <field name="color">#E67E22</field>
+        </record>
+
+        <record id="color_8" model="gantt.event.color">
+            <field name="name">Emerald</field>
+            <field name="color">#2ECC71</field>
+        </record>
+
+        <record id="color_9" model="gantt.event.color">
+            <field name="name">Sky Blue</field>
+            <field name="color">#3498DB</field>
+        </record>
+
+        <record id="color_10" model="gantt.event.color">
+            <field name="name">Alizarin</field>
+            <field name="color">#E74C3C</field>
+        </record>
+
+        <record id="color_11" model="gantt.event.color">
+            <field name="name">Wisteria</field>
+            <field name="color">#9B59B6</field>
+        </record>
+
+        <record id="color_12" model="gantt.event.color">
+            <field name="name">Wet Asphalt</field>
+            <field name="color">#34495E</field>
+        </record>
+
+        <record id="color_13" model="gantt.event.color">
+            <field name="name">Green Sea</field>
+            <field name="color">#16A085</field>
+        </record>
+
+        <record id="color_14" model="gantt.event.color">
+            <field name="name">Orange Peel</field>
+            <field name="color">#F39C12</field>
+        </record>
+
+        <record id="color_15" model="gantt.event.color">
+            <field name="name">Pumpkin</field>
+            <field name="color">#D35400</field>
+        </record>
+
+        <record id="color_16" model="gantt.event.color">
+            <field name="name">Asphalt Grey</field>
+            <field name="color">#7F8C8D</field>
+        </record>
+
+    </data>
+</odoo>

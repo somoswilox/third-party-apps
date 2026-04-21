@@ -1,0 +1,63 @@
+<odoo>
+   <record model="ir.ui.view" id="gec_form_view">
+        <field name="name">Gantt Color</field>
+        <field name="model">gantt.event.color</field>
+        <field name="arch" type="xml">
+            <form string="Gantt Colors">
+                <sheet>
+                    <group>
+                        <field name="name" />
+                        <field name="color" widget="char_color_picker" />
+                        <field name="task_ids" />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record model="ir.ui.view" id="gec_tree_view">
+        <field name="name">Gantt Color</field>
+        <field name="model">gantt.event.color</field>
+        <field name="arch" type="xml">
+            <list string="Gantt Event Color">
+                <field name="name" />
+                <field name="color" widget="char_color_picker" />
+                <field name="task_ids" />
+            </list>
+        </field>
+    </record>
+
+    <record id="gec_action" model="ir.actions.act_window">
+        <field name="name">Gantt Color</field>
+        <field name="res_model">gantt.event.color</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No colors found. Let's create one!
+            </p>
+            <p>
+                Change colors of your tasks in bryntum-gantt.
+            </p>
+        </field>
+    </record>
+
+
+    <menuitem
+        name="Bryntum Colors"
+        id="menu_bryntum_color_act"
+        parent="project.menu_project_config"
+        action="gec_action"
+    />
+
+    <record id="project_task_color" model="ir.ui.view">
+        <field name="name">project_task_view_form</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project_task_view_form" />
+        <field name="arch" type="xml">
+            <xpath
+                expr="//notebook/page[@name='bryntum_config']//group[1]"
+                position="after"
+            >
+                <field name="html_color_bryntum_id" />
+            </xpath>
+        </field>
+    </record>
+</odoo>

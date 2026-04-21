@@ -1,0 +1,67 @@
+.gantt_config {
+    height: 250px !important;
+    border-style: solid !important;
+    overflow-y: auto !important;
+}
+
+.gantt_config div,
+.gantt_config div textarea,
+#bryntum-gantt {
+    height: 100% !important;
+    overflow-y: auto !important;
+}
+
+.fa-chart-gantt::before {
+    background: url("../img/chart-gantt-solid.svg") no-repeat;
+    content: "";
+    width: 15px;
+    height: 22px;
+    display: inline-block;
+    // making icon mask and then coloring it
+    mask: url("../img/chart-gantt-solid.svg") no-repeat center;
+    mask-size: contain;
+    -webkit-mask: url("../img/chart-gantt-solid.svg") no-repeat center;
+    -webkit-mask-size: contain;
+    background-color: Dodgerblue !important;
+}
+.width_button {
+    width: 25px;
+}
+
+@media (min-width: 320px) {
+    #bryntum-scheduler-component {
+        height: 85% !important;
+        overflow: auto;
+    }
+}
+
+@media (min-width: 801px) {
+    #bryntum-scheduler-component {
+        height: 90% !important;
+        overflow: auto;
+    }
+}
+
+@media (min-width: 1801px) {
+    #bryntum-scheduler-component {
+        height: 95% !important;
+        overflow: auto;
+    }
+}
+
+#bryntum-scheduler-component {
+    position: relative;
+    flex: 1 1 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    transform: translate(0, 0);
+    top: 0;
+    left: 0;
+}
+
+[aria-hidden="true"],
+[aria-hidden="1"] {
+    display: unset !important;
+}

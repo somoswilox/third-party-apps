@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <t t-name="bryntum_gantt_enterprise.CharColorPickerTemplate">
+        <div class="o_field_widget o_required_modifier o_field_char">
+            <t t-if="!props.readonly">
+                <input type="color" t-att-value="value" t-on-input="onColorChange" />
+            </t>
+            <t t-if="props.readonly">
+                <span class="selected-color-value" t-att-esc="value" />
+                <div
+                    t-attf-style="width: 30px; height: 30px; background-color: {{ value }}; border: 1px solid #ccc;"
+                />
+            </t>
+        </div>
+    </t>
+</odoo>

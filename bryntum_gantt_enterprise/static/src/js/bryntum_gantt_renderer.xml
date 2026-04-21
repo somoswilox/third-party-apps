@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="bryntum_gantt_enterprise.Renderer">
+     <head>
+        <link rel="stylesheet" href="" data-bryntum-theme="true" />
+     </head>
+      <div id="bryntum-scheduler-component" class="panel" />
+    </t>
+</templates>
