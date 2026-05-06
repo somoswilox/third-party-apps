@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_l10n_ar_agip_padron,l10n_ar.agip.padron,model_l10n_ar_agip_padron,base.group_user,1,1,1,1
+access_agip_padron_import_wizard,agip.padron.import.wizard,model_agip_padron_import_wizard,base.group_user,1,1,1,1
+access_l10n_ar_agip_padron_user,l10n_ar.agip.padron.model_access,model_l10n_ar_agip_padron,base.group_user,1,1,1,1
