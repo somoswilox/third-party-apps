@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!--
+            Parametro con los valores tecnicos del campo state que requieren
+            reporte de actividad. Modificable desde Ajustes -> Tecnico ->
+            Parametros del sistema, sin tocar codigo.
+
+            Default: los tres estados confirmados por Galpones Modulares.
+        -->
+        <record id="obra_audit_auditable_states" model="ir.config_parameter">
+            <field name="key">obra_audit.auditable_states</field>
+            <field name="value">01_in_progress,02_changes_requested,04_waiting_normal</field>
+        </record>
+    </data>
+</odoo>

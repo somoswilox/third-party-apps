@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_obra_task_daily_snapshot_user,obra.task.daily.snapshot.user,model_obra_task_daily_snapshot,base.group_user,1,0,0,0
+access_obra_task_daily_snapshot_manager,obra.task.daily.snapshot.manager,model_obra_task_daily_snapshot,project.group_project_manager,1,1,1,1

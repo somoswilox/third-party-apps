@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Vista lista -->
+    <record id="view_obra_task_daily_snapshot_tree" model="ir.ui.view">
+        <field name="name">obra.task.daily.snapshot.tree</field>
+        <field name="model">obra.task.daily.snapshot</field>
+        <field name="arch" type="xml">
+            <list string="Snapshots diarios" default_order="snapshot_date desc, project_id">
+                <field name="snapshot_date"/>
+                <field name="project_id"/>
+                <field name="task_name"/>
+                <field name="state_label"/>
+                <field name="requires_report" widget="boolean"/>
+                <field name="user_ids_text" optional="show"/>
+                <field name="state" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Vista busqueda -->
+    <record id="view_obra_task_daily_snapshot_search" model="ir.ui.view">
+        <field name="name">obra.task.daily.snapshot.search</field>
+        <field name="model">obra.task.daily.snapshot</field>
+        <field name="arch" type="xml">
+            <search string="Buscar snapshots">
+                <field name="task_name"/>
+                <field name="project_id"/>
+                <field name="snapshot_date"/>
+                <field name="state_label"/>
+                <filter name="filter_requires_report"
+                        string="Requiere reporte"
+                        domain="[('requires_report','=',True)]"/>
+                <filter name="filter_today"
+                        string="Hoy"
+                        domain="[('snapshot_date','=', context_today())]"/>
+                <filter name="filter_last_7_days"
+                        string="Ultimos 7 dias"
+                        domain="[('snapshot_date','>=', (context_today() - relativedelta(days=7)))]"/>
+                <separator/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_project" string="Proyecto" context="{'group_by':'project_id'}"/>
+                    <filter name="group_state" string="Estado" context="{'group_by':'state_label'}"/>
+                    <filter name="group_date" string="Fecha" context="{'group_by':'snapshot_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Accion -->
+    <record id="action_obra_task_daily_snapshot" model="ir.actions.act_window">
+        <field name="name">Snapshots de auditoria</field>
+        <field name="res_model">obra.task.daily.snapshot</field>
+        <field name="view_mode">list</field>
+        <field name="search_view_id" ref="view_obra_task_daily_snapshot_search"/>
+        <field name="context">{'search_default_filter_today': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Aun no hay snapshots
+            </p>
+            <p>
+                El cron diario "Obra Audit: Snapshot diario de tareas"
+                genera estos registros automaticamente cada noche a las
+                23:45 hora Argentina (02:45 UTC).
+            </p>
+            <p>
+                Para generar manualmente uno ahora (testing), ejecutar
+                el cron desde Ajustes -> Tecnico -> Automatizacion ->
+                Acciones planificadas.
+            </p>
+        </field>
+    </record>
+
+    <!-- Menus -->
+    <menuitem id="menu_obra_audit_root"
+              name="Auditoria de Obra"
+              parent="project.menu_main_pm"
+              sequence="100"/>
+
+    <menuitem id="menu_obra_task_daily_snapshot"
+              name="Snapshots diarios"
+              parent="menu_obra_audit_root"
+              action="action_obra_task_daily_snapshot"
+              sequence="10"/>
+
+</odoo>
