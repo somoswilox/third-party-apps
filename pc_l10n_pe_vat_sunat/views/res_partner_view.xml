@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record model="ir.ui.view" id="view_partner_form_inherit">
+        <field name="name">res.partner.view.form.inherit.l10n.pe.vat</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <sheet position="before">
+                <header>
+                    <button string="Update RUC/DNI" type="object" name="update_document" context="{'force_update':True}" />
+                    <field name="state" widget="statusbar" nolabel="1" statusbar_visible="ACTIVO,BAJA DE OFICIO" statusbar_colors="{'ACTIVO':'green','BAJA DE OFICIO':'red','BAJA PROVISIONAL':'red','SUSPENSION TEMPORAL':'red'}" />
+                </header>
+            </sheet>
+            <xpath expr="//div[@name='button_box']" position="after">
+				<widget name="web_ribbon" title="Habido"
+						invisible="not is_company or condition != 'HABIDO' or not active"/>
+				<widget name="web_ribbon" title="No Habido"
+						bg_color="bg-danger"
+						invisible="not is_company or condition == 'HABIDO' or not condition or not active" />
+			         
+	        </xpath>
+            <xpath expr="//field[@name='category_id']" position="before">
+                <field name="condition" invisible="1" />
+            </xpath>
+			<xpath expr="//notebook/page/field[@name='child_ids']/form/sheet" position="before">
+				<header>
+					<button string="Update RUC/DNI" type="object" name="update_document" context="{'force_update':True}" invisible="type != 'contact'"/>
+				</header>
+			</xpath>
+            <xpath expr="//group/group" position="inside">
+                <field name="is_good_taxpayer" readonly="1" force_save="1"/>
+                <field name="is_retention_agent" readonly="1" force_save="1"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="model_res_partner_action_update_document" model="ir.actions.server">
+        <field name="name">Update RUC/DNI</field>
+        <field name="model_id" ref="pc_l10n_pe_vat_sunat.model_res_partner"/>
+        <field name="binding_model_id" ref="sale.model_res_partner"/>
+        <field name="binding_view_types">form,list</field>
+        <field name="state">code</field>
+        <field name="code">action = records.update_document()</field>
+    </record>
+
+</odoo>
