@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<odoo>
+    
+    <record id="account_spot_detraction_action" model="ir.actions.act_window">
+        <field name="name">SPOT Detracción</field>
+        <field name="res_model">account.spot.detraction</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem 
+        id="menu_localization_spot_detraction"
+        name="Detracción"
+        parent="menu_localization_spot"
+        action="account_spot_detraction_action"
+    />
+
+
+</odoo>

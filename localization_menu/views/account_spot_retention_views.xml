@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    
+    <record id="account_spot_retention_view_form" model="ir.ui.view">
+        <field name="name">account.spot.retention.view.form</field>
+        <field name="model">account.spot.retention</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="account_spot_retention_view_tree" model="ir.ui.view">
+        <field name="name">account.spot.retention.view.tree</field>
+        <field name="model">account.spot.retention</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+            </list>
+        </field>
+    </record>
+
+</odoo>

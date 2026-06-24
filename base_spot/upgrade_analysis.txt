@@ -1,0 +1,12 @@
+---Models in module 'type_bank_accounts'---
+---Fields in module 'type_bank_accounts'---
+---XML records in module 'type_bank_accounts'---
+-----------------------------------------------------------------------------
+DEPENDS
+model: localization_menu
+field:
+xml_id: localization_menu.account_spot_detraction_view_form
+
+model: localization_menu
+field:
+xml_id: localization_menu.account_spot_detraction_view_tree

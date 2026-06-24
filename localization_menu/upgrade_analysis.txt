@@ -1,0 +1,30 @@
+---Models in module 'types_system_pension'---
+---Fields in module 'types_system_pension'---
+---XML records in module 'types_system_pension'---
+UPD ir.model.access: localization_menu.account.spot.retention -> localization_menu.account.spot.retention.invoice
+UPD ir.model.access: localization_menu.account.spot.detraction -> localization_menu.account.spot.detraction.invoice
+UPD ir.model.access: localization_menu.code.aduana -> localization_menu.code.aduana.invoice
+UPD ir.model.access: localization_menu.localization_menu.model_account_spot_retention -> localization_menu.model_account_spot_retention
+UPD ir.model.access: localization_menu.localization_menu.model_account_spot_detraction -> localization_menu.model_account_spot_detraction
+UPD ir.model.access: localization_menu.localization_menu.model_code_aduana -> localization_menu.model_code_aduana
+UPD ir.ui.view: localization_menu.view_account_spot_detraction_form -> localization_menu.account_spot_detraction_view_form
+UPD ir.ui.view: localization_menu.view_account_spot_detraction_tree -> localization_menu.account_spot_detraction_view_tree
+UPD ir.ui.view: localization_menu.view_account_spot_retention_form -> localization_menu.account_spot_retention_view_form
+UPD ir.ui.view: localization_menu.view_account_spot_retention_tree -> localization_menu.account_spot_retention_view_tree
+UPD ir.ui.view: localization_menu.view_code_aduana_form -> localization_menu.code_aduana_view_form
+UPD ir.ui.view: localization_menu.view_code_aduana_tree -> localization_menu.code_aduana_view_tree
+----------------------------------------------------------------
+DEPENDS [ account ]
+model:  account_spot_detraccion
+field:  name
+xml_id: 
+
+model:  account_spot_retention
+field:  name
+xml_id: 
+
+model:  code_aduana
+field:  name,
+        code    
+xml_id: 
+
