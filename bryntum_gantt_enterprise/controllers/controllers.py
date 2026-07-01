@@ -497,8 +497,10 @@ class BryntumGantt(http.Controller):
 
         return {"success": True, "status": "created", "ids": create_int_ids}
 
-    @http.route("/bryntum_gantt/save_user_config", type="json", auth="user")
+    @http.route("/bryntum_gantt/save_user_config", type="json", auth="none")
     def save_user_config(self, **kwargs):
+        if not request.session.uid:
+            return {"status": "skipped"}
         config_data = request.httprequest.get_json()
         user = request.env.user.sudo()
         if user.has_group("bryntum_gantt_enterprise.group_save_own_settings"):
