@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- Search View -->
+        <record model="ir.ui.view" id="ocapi_account_unified_search_view">
+            <field name="name">ocapi.account.unified.search</field>
+            <field name="model">ocapi.account.unified</field>
+            <field name="arch" type="xml">
+                <search>
+                    <field name="name"/>
+                    <field name="type"/>
+                    <field name="company_id"/>
+                    <field name="country_id"/>
+                    <field name="client_id"/>
+                    <separator/>
+                    <filter string="MercadoLibre" name="filter_mercadolibre" domain="[('type','=','mercadolibre')]"/>
+                    <filter string="Producteca" name="filter_producteca" domain="[('type','=','producteca')]"/>
+                    <filter string="Fulfillment" name="filter_fulfillment" domain="[('type','in',['fulfillment','fulfillment_virtual'])]"/>
+                    <filter string="LDPS" name="filter_ldps" domain="[('type','in',['ldps','ldps_virtual'])]"/>
+                    <separator/>
+                    <filter string="Monitoreadas" name="filter_monitored" domain="[('connection_monitor','=',True)]"/>
+                    <separator/>
+                    <group>
+                        <filter string="Conector" name="group_type" context="{'group_by':'type'}"/>
+                        <filter string="Empresa" name="group_company" context="{'group_by':'company_id'}"/>
+                        <filter string="Pais" name="group_country" context="{'group_by':'country_id'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <!-- Tree View -->
+        <record model="ir.ui.view" id="ocapi_account_unified_tree_view">
+            <field name="name">ocapi.account.unified.tree</field>
+            <field name="model">ocapi.account.unified</field>
+            <field name="arch" type="xml">
+                <list string="Todas las Cuentas" create="false" edit="false" delete="false">
+                    <field name="type" string="Conector"/>
+                    <field name="name"/>
+                    <field name="company_id"/>
+                    <field name="country_id" optional="show"/>
+                    <field name="client_id"/>
+                    <field name="connection_monitor" string="Monitor" optional="show" widget="boolean"/>
+                    <field name="source_model" string="Modelo" optional="hide"/>
+                    <field name="write_date" string="Actualizado" optional="show"/>
+                </list>
+            </field>
+        </record>
+
+        <!-- Form View (read-only, with button to open source record) -->
+        <record model="ir.ui.view" id="ocapi_account_unified_form_view">
+            <field name="name">ocapi.account.unified.form</field>
+            <field name="model">ocapi.account.unified</field>
+            <field name="arch" type="xml">
+                <form string="Cuenta" create="false" edit="false" delete="false">
+                    <header>
+                        <button name="action_open_source_record"
+                            string="Abrir Cuenta Original"
+                            type="object"
+                            class="btn-primary"
+                            icon="fa-external-link"/>
+                    </header>
+                    <sheet>
+                        <field name="image_128" widget="image" class="oe_avatar" readonly="1"/>
+                        <div class="oe_title">
+                            <h1><field name="name"/></h1>
+                        </div>
+                        <group>
+                            <group string="Cuenta">
+                                <field name="type"/>
+                                <field name="company_id"/>
+                                <field name="country_id"/>
+                                <field name="client_id"/>
+                                <field name="connection_monitor"/>
+                            </group>
+                            <group string="Origen">
+                                <field name="source_model"/>
+                                <field name="source_id"/>
+                                <field name="create_date"/>
+                                <field name="write_date"/>
+                            </group>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <!-- Kanban View -->
+        <record model="ir.ui.view" id="ocapi_account_unified_kanban_view">
+            <field name="name">ocapi.account.unified.kanban</field>
+            <field name="model">ocapi.account.unified</field>
+            <field name="arch" type="xml">
+                <kanban create="false" edit="false" delete="false"
+                        group_create="false" group_delete="false" group_edit="false"
+                        default_group_by="type">
+                    <field name="name"/>
+                    <field name="type"/>
+                    <field name="company_id"/>
+                    <field name="country_id"/>
+                    <field name="client_id"/>
+                    <field name="image_128"/>
+                    <field name="connection_monitor"/>
+                    <field name="source_model"/>
+                    <field name="source_id"/>
+                    <field name="write_date"/>
+                    <templates>
+                        <t t-name="card">
+                            <!-- Determine fallback icon URL based on connector type -->
+                            <t t-set="fallback_icon" t-value="
+                                record.type.raw_value == 'mercadolibre' and '/meli_oerp_multiple/static/src/img/logo_ML.png' or
+                                record.type.raw_value == 'fulfillment' and '/odoo_connector_api_fulfillment/static/description/icon.png' or
+                                record.type.raw_value == 'fulfillment_virtual' and '/odoo_connector_api_fulfillment/static/description/icon.png' or
+                                record.type.raw_value == 'ldps' and '/odoo_connector_api_ldps/static/description/icon.png' or
+                                record.type.raw_value == 'producteca' and '/odoo_connector_api_producteca/static/description/icon.png' or
+                                '/odoo_connector_api/static/description/icon.png'
+                            "/>
+
+                            <div class="oe_kanban_global_click o_kanban_record d-flex">
+                                <!-- Avatar / Image -->
+                                <div class="me-2 d-flex align-items-start">
+                                    <t t-if="record.image_128.value">
+                                        <img t-att-src="'/web/image/' + record.source_model.raw_value + '/' + record.source_id.raw_value + '/image_128'"
+                                             class="rounded bg-100 p-1" width="128" height="128"
+                                             style="object-fit: contain;"
+                                             alt="Account"/>
+                                    </t>
+                                    <t t-else="">
+                                        <img t-if="record.type.raw_value == 'mercadolibre'"
+                                             src="/meli_oerp_multiple/static/src/img/logo_ML.png"
+                                             class="rounded bg-100 p-1" width="128" height="128"
+                                             style="object-fit: contain;" alt="MercadoLibre"/>
+                                        <div t-else=""
+                                             class="rounded d-flex align-items-center justify-content-center bg-100"
+                                             style="width:128px;height:128px">
+                                            <i class="fa fa-plug fa-3x text-muted" title="Connector"/>
+                                        </div>
+                                    </t>
+                                </div>
+                                <!-- Content -->
+                                <div class="flex-grow-1 overflow-hidden">
+                                    <div class="o_kanban_record_top">
+                                        <strong class="o_kanban_record_title text-truncate">
+                                            <field name="name"/>
+                                        </strong>
+                                    </div>
+                                    <div class="o_kanban_record_body">
+                                        <div t-if="record.company_id.value">
+                                            <small class="text-muted text-truncate d-block">
+                                                <i class="fa fa-building-o me-1" role="img" aria-label="Empresa"/>
+                                                <field name="company_id"/>
+                                            </small>
+                                        </div>
+                                        <div t-if="record.country_id.value">
+                                            <small class="text-muted text-truncate d-block">
+                                                <i class="fa fa-globe me-1" role="img" aria-label="Pais"/>
+                                                <field name="country_id"/>
+                                            </small>
+                                        </div>
+                                        <div t-if="record.client_id.raw_value">
+                                            <small class="text-muted text-truncate d-block">
+                                                <i class="fa fa-key me-1" role="img" aria-label="Client ID"/>
+                                                <field name="client_id"/>
+                                            </small>
+                                        </div>
+                                    </div>
+                                    <div class="o_kanban_record_bottom mt-1">
+                                        <div class="oe_kanban_bottom_left">
+                                            <!-- Colored badges by connector type -->
+                                            <span t-if="record.type.raw_value == 'mercadolibre'" class="badge" style="background-color: #ffe600; color: #333;">
+                                                mercadolibre
+                                            </span>
+                                            <span t-elif="record.type.raw_value == 'producteca'" class="badge text-bg-primary">
+                                                producteca
+                                            </span>
+                                            <span t-elif="record.type.raw_value == 'fulfillment'" class="badge text-bg-info">
+                                                fulfillment
+                                            </span>
+                                            <span t-elif="record.type.raw_value == 'fulfillment_virtual'" class="badge text-bg-warning">
+                                                fulfillment virtual
+                                            </span>
+                                            <span t-elif="record.type.raw_value == 'ldps'" class="badge text-bg-success">
+                                                ldps
+                                            </span>
+                                            <span t-elif="record.type.raw_value == 'ldps_virtual'" class="badge" style="background-color: #6f42c1; color: #fff;">
+                                                ldps virtual
+                                            </span>
+                                            <span t-else="" class="badge text-bg-secondary">
+                                                <field name="type"/>
+                                            </span>
+                                            <!-- Monitor indicator -->
+                                            <span t-if="record.connection_monitor.raw_value"
+                                                  class="badge text-bg-success ms-1" title="Monitoreada">
+                                                <i class="fa fa-signal"/>
+                                            </span>
+                                        </div>
+                                        <div class="oe_kanban_bottom_right">
+                                            <small class="text-muted"><field name="write_date"/></small>
+                                        </div>
+                                    </div>
+                                    <!-- Open original button -->
+                                    <div class="mt-1">
+                                        <button name="action_open_source_record"
+                                                type="object"
+                                                class="btn btn-sm btn-outline-primary py-0 px-1"
+                                                title="Abrir cuenta original">
+                                            <i class="fa fa-external-link me-1"/>Abrir
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <!-- Action: Todas las Cuentas (unified) -->
+        <record model="ir.actions.act_window" id="action_ocapi_account_unified">
+            <field name="name">Todas las Cuentas</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">ocapi.account.unified</field>
+            <field name="view_mode">kanban,list,form</field>
+            <field name="search_view_id" ref="ocapi_account_unified_search_view"/>
+        </record>
+
+    </data>
+</odoo>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+        <record model="ir.ui.view" id="view_location_form_meli">
+            <field name="name">stock.location.meli</field>
+            <field name="model">stock.location</field>
+            <field name="inherit_id" ref="stock.view_location_form"/>
+            <field name="arch" type="xml">
+              <xpath expr="//group[@name='additional_info']" position="after">
+                  <group string="Inventario MercadoLibre" name="meli_oerp_stock_location"  col="2">
+                      <field name="mercadolibre_active" invisible="0"/>
+                      <field name="mercadolibre_logistic_type" invisible="0"/>
+                  </group>
+               </xpath>
+            </field>
+        </record>
+
+
+        <record model="ir.ui.view" id="view_stock_picking_form_meli">
+            <field name="name">stock.picking.form.meli</field>
+            <field name="model">stock.picking</field>
+            <field name="inherit_id" ref="stock.view_picking_form"/>
+            <field name="arch" type="xml">
+              <xpath expr="//header" position="inside">
+                  <button name="action_meli_full_auto_assign_lots"
+                          string="Auto-asignar Lotes FIFO (FULL)"
+                          type="object"
+                          class="btn-secondary"
+                          invisible="meli_shipment_logistic_type != 'fulfillment' or state in ('done','cancel')"
+                          help="Asigna automáticamente los lotes disponibles por FIFO (el más viejo primero) dividiendo el movimiento en varias líneas cuando el producto tiene stock en múltiples lotes."/>
+               </xpath>
+              <!-- Campo declarado para que el ORM lo incluya antes de evaluar invisible en la page -->
+              <xpath expr="//sheet" position="inside">
+                  <field name="meli_shipment" invisible="1"/>
+              </xpath>
+              <xpath expr="//notebook" position="inside">
+                  <page string="MercadoLibre" name="meli_picking_tab"
+                        invisible="not meli_shipment">
+                      <group col="2">
+                          <group string="Orden y envío">
+                              <field name="sale_id"/>
+                              <field name="meli_order"/>
+                              <field name="meli_shipment"/>
+                              <field name="meli_shipment_logistic_type_label"/>
+                              <field name="meli_shipment_logistic_type"/>
+                              <field name="meli_shipment_status_brief"/>
+                          </group>
+                          <group string="Despacho">
+                              <field name="meli_handling_limit" readonly="1"
+                                     invisible="meli_handling_limit == False"/>
+                              <field name="meli_handling_limit_status" readonly="1" widget="badge"
+                                     decoration-success="meli_handling_limit_status == 'ok'"
+                                     decoration-warning="meli_handling_limit_status == 'urgent'"
+                                     decoration-danger="meli_handling_limit_status == 'overdue'"
+                                     invisible="meli_handling_limit_status in (False, 'none')"/>
+                              <field name="meli_shipment_print_pdf" filename="meli_shipment_print"
+                                     string="Etiqueta PDF/ZPL"/>
+                              <field name="meli_shipment_print" invisible="1"/>
+                          </group>
+                      </group>
+                  </page>
+               </xpath>
+            </field>
+        </record>
+
+
+    </data>
+</odoo>

@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+    
+    <record id="view_orders_import" model="ir.ui.view">
+      <field name="name">Import Orders (massive) from Mercado Libre</field>
+      <field name="model">mercadolibre.orders.import</field>
+      <field name="type">form</field>
+      <field name="arch" type="xml">
+        <form string="Importar Ventas ML">
+          <sheet>
+
+            <!-- BLOQUE 1 · FILTROS -->
+            <group string="Filtros" col="2">
+              <!-- Columna izquierda: lógica de filtro -->
+              <group>
+                <field name="order_state"/>
+                <field name="nro_venta" placeholder="Opcional"/>
+              </group>
+
+              <!-- Columna derecha: rango temporal -->
+              <group>
+                <field name="date_preset" widget="radio" options="{'horizontal': true}"/>
+                <field name="order_date_from"/>
+                <field name="order_date_to"/>
+                <field name="order_date_block"/>
+              </group>
+
+              <!-- Ocultos técnicos -->
+              <field name="order_id" invisible="1"/>
+              <field name="pack_id" invisible="1"/>
+            </group>
+
+            <!-- BLOQUE 2 · PROCESAMIENTO POR LOTES -->
+            <group string="Procesamiento por lotes" col="2">
+              <!-- Parámetros -->
+              <group string="Parámetros">
+                <field name="batch_processing_unit" string="Cantidad a procesar"/>
+                <field name="batch_processing_unit_offset" string="Índice"/>
+                <field name="skip_stock_update"/>
+              </group>
+
+              <!-- Toggles + métricas -->
+              <group string="Sincronización">
+                <field name="batch_sales_to_sync"/>
+                <div class="o_stat_info">
+                  <span class="o_stat_value" style="font-size:18px; font-weight:bold; color:#007bff;">
+                    <field name="sales_to_sync"/>
+                  </span>
+                  <span class="o_stat_text">Ventas a sincronizar</span>
+                </div>
+                <field name="batch_processing"/>
+                <field name="batch_processing_status" readonly="1"/>
+              </group>
+            </group>
+
+            <!-- CONTENIDO · PREVIEW / ESTADO & REPORTE -->
+            <notebook>
+              <page string="Vista previa">
+		<field name="import_lines" invisible="1"/>
+                <field name="import_lines" nolabel="1"
+                  invisible="import_lines==False">
+                  <list create="false" edit="false" delete="false"
+                        decoration-success="import_status == 'imported'"
+                        decoration-warning="import_status == 'warning'"
+                        decoration-danger="import_status == 'error'"
+                        decoration-muted="import_status == 'pending'">
+                    <field name="name"/>
+                    <field name="date_closed"/>
+                    <field name="order_id"/>
+                    <field name="pack_id"/>
+                    <field name="paid_amount"/>
+                    <field name="buyer"/>
+                    <field name="status"/>
+                    <field name="import_status" string="Estado Importación" widget="badge"
+                           decoration-success="import_status == 'imported'"
+                           decoration-warning="import_status == 'warning'"
+                           decoration-danger="import_status == 'error'"
+                           decoration-muted="import_status == 'pending'"/>
+                    <field name="error" string="Detalle"/>
+                  </list>
+                </field>
+              </page>
+
+              <page string="Ventas procesadas">
+                <!-- Resumen visual de resultados -->
+                <div class="d-flex flex-row gap-3 mb-3 mt-1"
+                     invisible="import_lines_processed == []">
+                  <span class="badge badge-pill"
+                        style="background-color:#28a745; color:#fff; font-size:13px; padding:6px 12px;"
+                        invisible="import_ok_count == 0">
+                    <i class="fa fa-check-circle" title="Ok"/> <field name="import_ok_count" readonly="1" nolabel="1"/> ok
+                  </span>
+                  <span class="badge badge-pill"
+                        style="background-color:#ffc107; color:#212529; font-size:13px; padding:6px 12px;"
+                        invisible="import_warning_count == 0">
+                    <i class="fa fa-exclamation-triangle" title="Incompletas"/> <field name="import_warning_count" readonly="1" nolabel="1"/> incompletas
+                  </span>
+                  <span class="badge badge-pill"
+                        style="background-color:#dc3545; color:#fff; font-size:13px; padding:6px 12px;"
+                        invisible="import_error_count == 0">
+                    <i class="fa fa-times-circle" title="Con error"/> <field name="import_error_count" readonly="1" nolabel="1"/> con error
+                  </span>
+                </div>
+                <field name="import_lines_processed" nolabel="1">
+                  <list create="false" edit="false" delete="false"
+                        decoration-success="import_status == 'imported'"
+                        decoration-warning="import_status == 'warning'">
+                    <field name="name"/>
+                    <field name="date_closed"/>
+                    <field name="order_id"/>
+                    <field name="pack_id"/>
+                    <field name="paid_amount"/>
+                    <field name="buyer"/>
+                    <field name="import_status" string="Estado" widget="badge"
+                           decoration-success="import_status == 'imported'"
+                           decoration-warning="import_status == 'warning'"/>
+                    <field name="error" string="Detalle"
+                           invisible="import_status=='imported'"/>
+                    <field name="meli_order" string="Orden ML" optional="show"/>
+                    <field name="sale_order" string="Pedido" optional="show"/>
+                  </list>
+                </field>
+              </page>
+
+              <page name="incomplete" string="Ventas incompletas">
+                <!-- Ventas del período YA importadas que NO están listas para confirmar:
+                     producto faltante / SKU sin vincular, total $0, o total que no coincide. -->
+                <div class="d-flex flex-row gap-3 mb-3 mt-1"
+                     invisible="import_lines_incomplete == []">
+                  <span class="badge badge-pill"
+                        style="background-color:#ffc107; color:#212529; font-size:13px; padding:6px 12px;"
+                        invisible="import_incomplete_count == 0">
+                    <i class="fa fa-exclamation-triangle" title="Incompletas"/> <field name="import_incomplete_count" readonly="1" nolabel="1"/> incompletas
+                  </span>
+                </div>
+                <div class="alert alert-info mb-3" role="status"
+                     invisible="import_lines_incomplete != []">
+                  <span><i class="fa fa-check-circle" title="Sin incompletas"/> No hay ventas incompletas en el período analizado.</span>
+                </div>
+                <field name="import_lines_incomplete" nolabel="1">
+                  <list create="false" edit="false" delete="false"
+                        decoration-warning="import_status == 'warning'">
+                    <field name="name"/>
+                    <field name="date_closed"/>
+                    <field name="buyer"/>
+                    <field name="paid_amount" string="Total ML"/>
+                    <field name="error" string="Motivo"/>
+                    <field name="sale_order" string="Pedido"/>
+                    <field name="meli_order" string="Orden ML"/>
+                    <field name="import_status" string="Estado" widget="badge"
+                           decoration-warning="import_status == 'warning'"/>
+                  </list>
+                </field>
+              </page>
+
+              <page string="Estado Reporte">
+                <group col="2">
+                  <group string="Estado">
+                    <field name="import_status" readonly="1"/>
+                  </group>
+                  <group string="Reporte">
+                    <field name="report_import_link" widget="url" readonly="1"
+                          invisible="report_import_link==False"/>
+                    <field name="report_import" domain="[('res_id','=',id)]"/>
+                  </group>
+                </group>
+              </page>
+            </notebook>
+
+          </sheet>
+
+          <!-- FOOTER · ACCIONES -->
+          <footer>
+            <button name="orders_import" string="Import Orders" type="object" class="btn-primary oe_highlight"/>
+            <button name="check_import_status" string="Check Import Status" type="object" class="btn-secondary"/>
+            <button name="create_full_report" string="Create Full Report" type="object" class="btn-secondary"/>
+            <button string="Cancel" class="oe_link" special="cancel"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+
+
+        <!-- Form view detallado de una línea de importación -->
+        <record id="view_orders_import_line_form" model="ir.ui.view">
+          <field name="name">mercadolibre.orders.import.line.form</field>
+          <field name="model">mercadolibre.orders.import.line</field>
+          <field name="type">form</field>
+          <field name="arch" type="xml">
+            <form string="Detalle de Importación">
+              <sheet>
+
+                <!-- Banner de estado -->
+                <field name="import_status" invisible="0"/>
+                <div class="alert alert-success mb-3" role="status"
+                     invisible="import_status != 'imported'">
+                  <h4 class="mb-1 fw-bold">
+                    <i class="fa fa-check-circle" title="Importada correctamente"/> Importada correctamente
+                  </h4>
+                  <span>La venta fue procesada y el pedido de venta fue creado en Odoo.</span>
+                </div>
+                <div class="alert alert-warning mb-3" role="status"
+                     invisible="import_status != 'warning'">
+                  <h4 class="mb-1 fw-bold">
+                    <i class="fa fa-exclamation-triangle" title="Incompleta"/> Incompleta
+                  </h4>
+                  <span><field name="error" readonly="1" nolabel="1"/></span>
+                </div>
+                <div class="alert alert-danger mb-3" role="alert"
+                     invisible="import_status != 'error'">
+                  <h4 class="mb-1 fw-bold">
+                    <i class="fa fa-times-circle" title="Error de importación"/> Error de importación
+                  </h4>
+                  <span><field name="error" readonly="1" nolabel="1"/></span>
+                </div>
+
+                <group>
+                  <group string="Datos de la venta ML">
+                    <field name="name" readonly="1"/>
+                    <field name="order_id" readonly="1" string="ID Orden"/>
+                    <field name="pack_id" readonly="1" string="ID Pack/Carrito"/>
+                    <field name="status" readonly="1" string="Estado ML"/>
+                    <field name="date_closed" readonly="1" string="Fecha"/>
+                  </group>
+                  <group string="Comprador y monto">
+                    <field name="buyer" readonly="1"/>
+                    <field name="paid_amount" readonly="1" string="Monto pagado"/>
+                  </group>
+                </group>
+
+                <group string="Registros en Odoo">
+                  <field name="meli_order" readonly="1" string="Orden MercadoLibre"
+                         invisible="meli_order==False"/>
+                  <field name="sale_order" readonly="1" string="Pedido de Venta"
+                         invisible="sale_order==False"/>
+                  <div invisible="meli_order!=False">
+                    <span class="text-muted"><i class="fa fa-info-circle" title="Info"/> Sin orden ML registrada.</span>
+                  </div>
+                  <div invisible="sale_order != False">
+                    <span class="text-muted"><i class="fa fa-info-circle" title="Info"/> Sin pedido de venta generado.</span>
+                  </div>
+                </group>
+
+              </sheet>
+            </form>
+          </field>
+        </record>
+
+        <record id="action_orders_import" model="ir.actions.act_window">
+              <field name="name">Importar Pedidos ML</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="binding_model_id" ref="model_mercadolibre_account"/>
+              <field name="res_model">mercadolibre.orders.import</field>
+              <field name="binding_type">action</field>
+              <field name="binding_view_types">list,form</field>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+        </record>
+
+        <record model="ir.ui.view" id="view_connection_account_mercadolibre_wizard_sales" >
+					<field name="name">mercadolibre.account.form.wizard_sales</field>
+					<field name="model">mercadolibre.account</field>
+          <field name="inherit_id" ref="meli_oerp_multiple.view_connection_account_mercadolibre"></field>
+					<field name="arch" type="xml">
+            <button name='meli_query_orders' position="replace">
+                <button type="action" name="%(action_orders_import)d"
+                      string="Importar Pedidos ML"
+                      title="Importar Pedidos ML"
+                      invisible="status=='disconnected'"
+                      class="btn btn-primary oe_stat_button"
+                      icon="fa-cloud-download">
+                </button>
+              </button>
+          </field>
+        </record>
+
+    </data>
+</odoo>

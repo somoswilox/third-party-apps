@@ -1,0 +1,865 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+      <record id="view_product_template_post" model="ir.ui.view">
+            <field name="name">Post to Mercado Libre</field>
+            <field name="model">mercadolibre.product.template.post</field>
+            <field name="inherit_id" ref="meli_oerp.view_product_template_post"/>
+            <field name="arch" type="xml">
+              <xpath expr="//field[@name='force_meli_pub']" position="before">
+                      <field name="force_meli_new_pub"/>
+                        <field name="force_meli_new_title"
+                          invisible="force_meli_new_pub == False"
+                          />
+                        <field name="force_meli_new_price"
+                          invisible="force_meli_new_pub == False"
+                          />
+                        <field name="force_meli_new_pricelist"
+                          invisible="force_meli_new_pub == False"
+                          />
+                        <field name="force_meli_listing_type"
+                          invisible="force_meli_new_pub == False"
+                          />
+                      <field name="connectors"/>
+              </xpath>
+            </field>
+      </record>
+
+      <record id="view_product_template_binding_post" model="ir.ui.view">
+            <field name="name">Post Binding to Mercado Libre</field>
+            <field name="model">mercadolibre.product.template.binding.post</field>
+            <field name="inherit_id" ref="meli_oerp.view_product_template_post"/>
+            <field name="arch" type="xml">
+              <xpath expr="//button[@name='product_template_post']" position="attributes">
+                <attribute name="title" >Publicar/Actualizar Publicacion en Mercado Libre</attribute>
+              </xpath>
+            </field>
+      </record>
+
+      <record id="view_product_template_update_multiple" model="ir.ui.view">
+            <field name="name">Update from Mercado Libre</field>
+            <field name="model">mercadolibre.product.template.update</field>
+            <field name="inherit_id" ref="meli_oerp.view_product_template_update" />
+            <field name="arch" type="xml">
+              <xpath expr="//field[@name='force_meli_pub']" position="after">
+                      <field name="connection_account"/>
+                      <!--field name="force_create_variants"/-->
+              </xpath>
+            </field>
+      </record>
+
+
+      <!-- View wizard - Update Binding for Product Template: MercadoLibre-->
+      <record id="view_binding_product_template_update_from_mercadolibre" model="ir.ui.view">
+            <field name="name">Update Product Template Binding From MercadoLibre</field>
+            <field name="model">mercadolibre.binder.update.wiz</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Update Product Template Binding" version="7.0">
+                  <h2>Verificar Opciones y Actualizar</h2>
+                  <group>
+                    <group string="Acciones de actualización">
+                      <field name="update_binding"/>
+                      <field name="update_odoo_product"/>
+                      <field name="update_odoo_product_variants"/>
+                      <field name="update_images"/>
+                    </group>
+                    <group string="Huérfanos (template desasignado/archivado)">
+                      <field name="tmpl_orphan_action" />
+                    </group>
+                  </group>
+                  <footer>
+                      <button name="binding_product_template_update" string="Actualizar Vinculación"  type="object" class="oe_highlight"  />
+                      <button name="binding_product_template_orphan_cleanup" string="Ejecutar Limpieza Huérfanos" type="object" class="btn-warning"
+                        invisible="not tmpl_orphan_action" />
+                      <button string="Cancelar" class="oe_link" special="cancel" />
+                  </footer>
+              </form>
+            </field>
+      </record>
+      <!-- Action wizard - Remove from Connector: MercadoLibre-->
+      <record id="action_binding_product_template_update_from_mercadolibre" model="ir.actions.act_window">
+          <field name="name">Update Product Template Binding From MercadoLibre</field>
+          <field name="type">ir.actions.act_window</field>
+          <field name="binding_model_id" ref="model_mercadolibre_product_template" />
+          <field name="view_id" ref="view_binding_product_template_update_from_mercadolibre"/>
+          <field name="binding_type">action</field>
+          <field name="binding_view_types">list,form</field>
+          <field name="res_model">mercadolibre.binder.update.wiz</field>
+          <field name="view_mode">form</field>
+          <field name="target">new</field>
+      </record>
+      <!--act_window id="action_binding_product_template_update_from_mercadolibre"
+    			name="Update Product Template Binding From MercadoLibre"
+    			binding_model="mercadolibre.product_template"
+    			res_model="mercadolibre.binder.update.wiz"
+          view_id="view_binding_product_template_update_from_mercadolibre"
+          view_mode="form"
+    			binding_views="list,form"
+          target="new"/-->
+
+      <!-- View wizard - Update Binding for Product Variant: MercadoLibre-->
+      <record id="view_binding_product_variant_update_from_mercadolibre" model="ir.ui.view">
+            <field name="name">Update Product Variant Binding From MercadoLibre</field>
+            <field name="model">mercadolibre.binder.variant.update.wiz</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Update Product Variant Binding" >
+                  <h2>Actualizar Vinculacion de Variante</h2>
+                  <group>
+                    <group string="Acciones de actualizacion">
+                      <field name="unblock_product_stock"/>
+                      <field name="update_stock"/>
+                      <field name="update_stock_planified"/>
+                      <field name="update_price"/>
+                    </group>
+                    <group string="Herramientas de limpieza de stock">
+                      <field name="cleanup_action" />
+                    </group>
+                  </group>
+                  <separator string="Gestión de vinculaciones huérfanas"/>
+                  <group>
+                    <group string="Huérfanos (producto desasignado/archivado)">
+                      <field name="orphan_action" />
+                    </group>
+                  </group>
+                  <footer>
+                      <button name="binding_product_variant_update" string="Actualizar Vinculacion (variante)" type="object" class="oe_highlight" />
+                      <button name="binding_product_variant_stock_cleanup" string="Ejecutar Limpieza Stock" type="object" class="btn-secondary"
+                        invisible="not cleanup_action" />
+                      <button name="binding_product_variant_orphan_cleanup" string="Ejecutar Limpieza Huérfanos" type="object" class="btn-warning"
+                        invisible="not orphan_action" />
+                      <button string="Cancelar" class="oe_link" special="cancel" />
+                  </footer>
+              </form>
+            </field>
+      </record>
+      <!-- Action wizard - Remove from Connector: MercadoLibre-->
+      <record id="action_binding_product_variant_update_from_mercadolibre" model="ir.actions.act_window">
+          <field name="name">Update Product Variant Binding From MercadoLibre</field>
+          <field name="type">ir.actions.act_window</field>
+          <field name="binding_model_id" ref="model_mercadolibre_product" />
+          <field name="view_id" ref="view_binding_product_variant_update_from_mercadolibre"/>
+          <field name="binding_type">action</field>
+          <field name="binding_view_types">list,form</field>
+          <field name="res_model">mercadolibre.binder.variant.update.wiz</field>
+          <field name="view_mode">form</field>
+          <field name="target">new</field>
+      </record>
+      <!--act_window id="action_binding_product_variant_update_from_mercadolibre"
+    			name="Update Product Variant Binding From MercadoLibre"
+    			binding_model="mercadolibre.product"
+    			res_model="mercadolibre.binder.variant.update.wiz"
+          view_id="view_binding_product_variant_update_from_mercadolibre"
+          view_mode="form"
+    			binding_views="list,form"
+          target="new"/-->
+
+      <!-- View wizard - Remove from Connector: MercadoLibre-->
+      <record id="view_product_template_remove_from_mercadolibre" model="ir.ui.view">
+            <field name="name">Remove Product From MercadoLibre / Unbind</field>
+            <field name="model">mercadolibre.binder.wiz</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Remove Product" version="7.0">
+                  <h2>Choose MercadoLibre Account to unbind this product from</h2>
+                  <field name="connectors" widget="many2many_tags"/>
+                  <br/>
+                  <label for="meli_id">MercadoLibre Id To Unbind</label>
+                  <field name="meli_id"/>
+                  <footer>
+                      <button name="product_template_remove_from_connector" string="Remove From Connector / Unbind"  type="object" class="oe_highlight"  />
+                        <button string="Cancel" class="oe_link" special="cancel" />
+                  </footer>
+              </form>
+            </field>
+      </record>
+      <!-- Action wizard - Remove from Connector: MercadoLibre-->
+      <record id="action_product_template_remove_from_mercadolibre" model="ir.actions.act_window">
+          <field name="name">Remove Product From MercadoLibre / Unbind</field>
+          <field name="type">ir.actions.act_window</field>
+          <field name="binding_model_id" ref="model_product_template" />
+          <field name="view_id" ref="view_product_template_remove_from_mercadolibre"/>
+          <field name="binding_type">action</field>
+          <field name="binding_view_types">list,form</field>
+          <field name="res_model">mercadolibre.binder.wiz</field>
+          <field name="view_mode">form</field>
+          <field name="target">new</field>
+      </record>
+      <!--act_window id="action_product_template_remove_from_mercadolibre"
+    			name="Remove Product From MercadoLibre / Unbind"
+    			binding_model="product.template"
+    			res_model="mercadolibre.binder.wiz"
+          view_id="view_product_template_remove_from_mercadolibre"
+          view_mode="form"
+    			binding_views="list,form"
+          target="new"/-->
+
+
+      <!-- View wizard  - Add to Connector: MercadoLibre-->
+      <record id="view_product_template_add_to_mercadolibre" model="ir.ui.view">
+            <field name="name">Add Product To MercadoLibre / Bind</field>
+            <field name="model">mercadolibre.binder.wiz</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Add Product" version="7.0">
+                  <h2>Choose MercadoLibre Account to bind</h2>
+                  <field name="connectors" widget="many2many_tags"/>
+                  <br/>
+                  <label for="meli_id">MercadoLibre Id</label>
+                  <field name="meli_id"/>
+                  <br/>
+                  <label for="bind_only">Solo asociar producto y variantes usando SKU (No modifica el producto de Odoo)</label>
+                  <field name="bind_only"/>
+                  <br/>
+                  <footer>
+                      <button name="product_template_add_to_connector" string="Add To Connector / Bind"  type="object" class="oe_highlight"  />
+                        <button string="Cancel" class="oe_link" special="cancel" />
+                  </footer>
+              </form>
+            </field>
+      </record>
+
+      <record id="view_mercadolibre_product_maestro_update" model="ir.ui.view">
+            <field name="name">Actualizar Datos Producto Maestro</field>
+            <field name="model">mercadolibre.product.maestro.update</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+                <form string="Update Product Maestro" version="7.0">
+                    <h2>Choose MercadoLibre Account</h2>
+                  <field name="connection_account"/>
+                  <br/>
+                  <footer>
+                      <button name="maestro_update" string="Actualizar"  type="object" class="oe_highlight"  />
+                        <button string="Cancel" class="oe_link" special="cancel" />
+                  </footer>
+                </form>
+            </field>
+      </record>
+      <!-- Action wizard - Update product maestro: MercadoLibre-->
+      <record id="action_mercadolibre_product_maestro_update" model="ir.actions.act_window">
+          <field name="name">Actualizar Maestro</field>
+          <field name="type">ir.actions.act_window</field>
+          <field name="binding_model_id" ref="model_mercadolibre_product_maestro" />
+          <field name="view_id" ref="view_mercadolibre_product_maestro_update"/>
+          <field name="binding_type">action</field>
+          <field name="binding_view_types">list,form</field>
+          <field name="res_model">mercadolibre.product.maestro.update</field>
+          <field name="view_mode">form</field>
+          <field name="target">new</field>
+      </record>
+
+      <!-- Action wizard - Add to Connector: MercadoLibre-->
+      <record id="action_product_template_add_to_mercadolibre" model="ir.actions.act_window">
+          <field name="name">Add Product To MercadoLibre / Bind</field>
+          <field name="type">ir.actions.act_window</field>
+          <field name="binding_model_id" ref="model_product_template" />
+          <field name="view_id" ref="view_product_template_add_to_mercadolibre"/>
+          <field name="binding_type">action</field>
+          <field name="binding_view_types">list,form</field>
+          <field name="res_model">mercadolibre.binder.wiz</field>
+          <field name="view_mode">form</field>
+          <field name="target">new</field>
+      </record>
+      <!--act_window id="action_product_template_add_to_mercadolibre"
+    			name="Add Product To MercadoLibre / Bind"
+    			binding_model="product.template"
+    			res_model="mercadolibre.binder.wiz"
+          view_id="view_product_template_add_to_mercadolibre"
+    			binding_views="list,form"
+          view_mode="form"
+    			target="new"/-->
+
+
+    <!-- PRODUCT PRODUCT -->
+
+          <!-- View wizard - Remove Variant from Connector: MercadoLibre-->
+          <record id="view_product_product_remove_from_mercadolibre" model="ir.ui.view">
+                <field name="name">Remove Product Variant From MercadoLibre / Unbind</field>
+                <field name="model">mercadolibre.variant.binder.wiz</field>
+                <field name="type">form</field>
+                <field name="arch" type="xml">
+                  <form string="Remove Product" version="7.0">
+                      <h2>Choose MercadoLibre Account to unbind</h2>
+                      <field name="connectors" widget="many2many_tags"/>
+                      <br/>
+                      <label for="meli_id">MercadoLibre Id</label>
+                      <field name="meli_id"/>
+                      <br/>
+                      <label for="meli_id_variation">MercadoLibre Id Variation</label>
+                      <field name="meli_id_variation"/>
+                      <footer>
+                          <button name="product_product_remove_from_connector" string="Remove From Connector / Unbind"  type="object" class="oe_highlight"  />
+                            <button string="Cancel" class="oe_link" special="cancel" />
+                      </footer>
+                  </form>
+                </field>
+          </record>
+          <!-- Action wizard - Remove from Connector: MercadoLibre-->
+          <record id="action_product_product_remove_from_mercadolibre" model="ir.actions.act_window">
+              <field name="name">Remove Product Variant From MercadoLibre / Unbind</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="binding_model_id" ref="model_product_product" />
+              <field name="view_id" ref="view_product_product_remove_from_mercadolibre"/>
+              <field name="binding_type">action</field>
+              <field name="binding_view_types">list,form</field>
+              <field name="res_model">mercadolibre.variant.binder.wiz</field>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+          </record>
+          <!--act_window id="action_product_product_remove_from_mercadolibre"
+        			name="Remove Product Variant From MercadoLibre / Unbind"
+        			binding_model="product.product"
+        			res_model="mercadolibre.variant.binder.wiz"
+              view_id="view_product_product_remove_from_mercadolibre"
+        			view_mode="form"
+              binding_views="list,form"
+              target="new"/-->
+
+
+          <!-- View wizard  - Add to Connector: MercadoLibre-->
+          <record id="view_product_product_add_to_mercadolibre" model="ir.ui.view">
+                <field name="name">Add Product Variant To MercadoLibre / Bind</field>
+                <field name="model">mercadolibre.variant.binder.wiz</field>
+                <field name="type">form</field>
+                <field name="arch" type="xml">
+                  <form string="Add Product" version="7.0">
+                      <h2>Choose MercadoLibre Account to bind</h2>
+                      <field name="connectors" widget="many2many_tags"/>
+                      <field name="meli_id"/>
+                      <field name="meli_id_variation"/>
+                      <footer>
+                          <button name="product_product_add_to_connector" string="Add To Connector / Bind"  type="object" class="oe_highlight"  />
+                            <button string="Cancel" class="oe_link" special="cancel" />
+                      </footer>
+                  </form>
+                </field>
+          </record>
+          <!-- Action wizard - Add to Connector: MercadoLibre-->
+          <record id="action_product_product_add_to_mercadolibre" model="ir.actions.act_window">
+              <field name="name">Add Product Variant To MercadoLibre / Bind</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="binding_model_id" ref="model_product_product" />
+              <field name="view_id" ref="view_product_product_add_to_mercadolibre"/>
+              <field name="binding_type">action</field>
+              <field name="binding_view_types">list,form</field>
+              <field name="res_model">mercadolibre.variant.binder.wiz</field>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+          </record>
+          <!--act_window id="action_product_product_add_to_mercadolibre"
+        			name="Add Product Variant To MercadoLibre / Bind"
+        			binding_model="product.product"
+        			res_model="mercadolibre.variant.binder.wiz"
+              view_id="view_product_product_add_to_mercadolibre"
+              view_mode="form"
+              binding_views="list,form"
+              target="new"/-->
+
+
+
+          <!-- NOTIFICATIONS -->
+          <!-- View wizard FORM  - Notifications Process-->
+          <record id="view_mercadolibre_notification_wiz" model="ir.ui.view">
+                <field name="name">Process Notification Wiz Form</field>
+                <field name="model">mercadolibre.notification.wiz</field>
+                <field name="type">form</field>
+                <field name="arch" type="xml">
+                  <form string="Notification Process" version="7.0">
+                      <h2>Choose account to filter notification</h2>
+                      <group>
+                        <group>
+                          <field name="connection_account"/>
+                          <field name='reprocess_force'/>
+                        </group>
+                      </group>
+                      <footer>
+                          <button name="process_notifications" string="Procesar"  type="object" class="oe_highlight"  />
+                            <button string="Cancel" class="oe_link" special="cancel" />
+                      </footer>
+                  </form>
+                </field>
+          </record>
+          <!-- Action wizard - Add to Connector: MercadoLibre-->
+          <record id="action_mercadolibre_notification_wiz" model="ir.actions.act_window">
+              <field name="name">Procesar Notificaciones</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="binding_model_id" ref="model_mercadolibre_notification" />
+              <field name="view_id" ref="view_mercadolibre_notification_wiz"/>
+              <field name="binding_type">action</field>
+              <field name="binding_view_types">list,form</field>
+              <field name="res_model">mercadolibre.notification.wiz</field>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+          </record>
+          <!--act_window id="action_mercadolibre_notification_wiz"
+              name="MercadoLibre Notifications Process"
+              binding_model="mercadolibre.notification"
+              res_model="mercadolibre.notification.wiz"
+              view_id="view_mercadolibre_notification_wiz"
+              view_mode="form"
+              binding_views="list,form"
+              target="new"/-->
+
+
+
+        <!-- FIX VARIANT ATTRIBUTES -->
+        <!-- View wizard FORM  - Variant Fix -->
+        <!--record id="view_mercadolibre_variant_fixer_wiz" model="ir.ui.view">
+              <field name="name">Fix Variant Attributes</field>
+              <field name="model">mercadolibre.variant.fixer.wiz</field>
+              <field name="type">form</field>
+              <field name="arch" type="xml">
+                <form string="Variant Fix" version="7.0">
+                    <h2>Just check and process</h2>
+                    <group>
+                      <group>
+                        <field name="fix_attributes"/>
+                      </group>
+                    </group>
+                    <footer>
+                        <button name="fix_variant" string="Fix Variants"  type="object" class="oe_highlight"  />
+                          <button string="Cancel" class="oe_link" special="cancel" />
+                    </footer>
+                </form>
+              </field>
+        </record-->
+        <!-- Action wizard - Add to Connector: MercadoLibre-->
+        <!--record id="action_mercadolibre_variant_fixer_wiz" model="ir.actions.act_window">
+            <field name="name">Fix Variant Attributes</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="binding_model_id" ref="model_product_product" />
+            <field name="view_id" ref="view_mercadolibre_variant_fixer_wiz"/>
+            <field name="binding_type">action</field>
+            <field name="binding_view_types">list,form</field>
+            <field name="res_model">mercadolibre.variant.fixer.wiz</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record-->
+
+          <!-- View: Import Line Form (standalone - kept for reference) -->
+          <record id="view_products_import_line_form" model="ir.ui.view">
+            <field name="name">Import Line Detail</field>
+            <field name="model">mercadolibre.products.import.line</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Detalle de Publicación">
+                <!-- detail_fetched es computado: al leerlo se dispara la carga de datos ML -->
+                <field name="detail_fetched" invisible="1"/>
+                <header>
+                  <button name="import_single_line" string="Importar"
+                          type="object" class="btn-primary oe_highlight"
+                          invisible="import_status == 'synced' or import_status == 'imported'"
+                          title="Importar/vincular esta publicación individualmente"/>
+                  <button name="action_open_ml" string="Ver API ML" type="object" class="btn-link"
+                          title="Abrir JSON de la API de MercadoLibre (con access token)"/>
+                  <button name="action_open_ml_web" string="Ver Web ML" type="object" class="btn-link"
+                          title="Abrir página web de la publicación en MercadoLibre"/>
+                  <field name="import_status" widget="statusbar"
+                         statusbar_visible="pending,synced,imported"/>
+                </header>
+                <sheet>
+                  <widget name="web_ribbon" title="SKU/Barcode en Odoo Duplicado" bg_color="bg-warning"
+                          invisible="sku_found_in_odoo == False or import_status != 'duplicate'"/>
+                  <widget name="web_ribbon" title="SKU/Barcode en Odoo" bg_color="bg-success"
+                          invisible="sku_found_in_odoo == False or import_status == 'duplicate'"/>
+                  <widget name="web_ribbon" title="SKU no encontrado" bg_color="bg-warning"
+                          invisible="sku_found_in_odoo == True or detail_fetched == False"/>
+                  <div class="oe_title">
+                    <label for="ml_title" string="Título"/>
+                    <h1><field name="ml_title" readonly="1" placeholder="(Consultar detalle ML)"/></h1>
+                  </div>
+                  <group col="2">
+                    <group string="Publicación ML">
+                      <field name="meli_id" readonly="1"/>
+                      <field name="meli_status" readonly="1"/>
+                      <field name="meli_price" readonly="1"/>
+                      <field name="meli_qty" readonly="1"/>
+                      <field name="variations_count" readonly="1"/>
+                    </group>
+                    <group string="SKUs y Códigos">
+                      <field name="seller_skus" readonly="1" string="SKUs"/>
+                      <field name="barcodes" readonly="1"/>
+                      <field name="sku_found_in_odoo" readonly="1" widget="boolean_toggle"/>
+                    </group>
+                  </group>
+                  <group string="Detalle de variaciones" col="1"
+                         invisible="detail_fetched == False">
+                    <field name="variations_detail" readonly="1" nolabel="1"
+                           widget="text" placeholder="Consultar detalle ML para ver variaciones..."/>
+                  </group>
+                  <div invisible="not import_suggestion"
+                       style="margin:8px 0; padding:10px 14px; border-left:4px solid #f0ad4e; background:#fffbf0; border-radius:3px;">
+                    <strong style="display:block; margin-bottom:4px;">¿Qué hacer?</strong>
+                    <field name="import_suggestion" readonly="1" nolabel="1" widget="text"
+                           style="white-space:pre-line; color:#555; background:transparent; border:none; padding:0;"/>
+                  </div>
+                  <group string="Productos encontrados en Odoo" col="1"
+                         invisible="detail_fetched == False or sku_found_in_odoo == False">
+                    <field name="odoo_product_ids" readonly="1" nolabel="1">
+                      <list create="false" edit="false" delete="false" open_form_view="True">
+                        <field name="product_tmpl_id" string="Producto base" optional="show"/>
+                        <field name="display_name" string="Variante"/>
+                        <field name="default_code" string="SKU en Odoo"/>
+                        <field name="barcode" string="Barcode en Odoo"/>
+                      </list>
+                    </field>
+                  </group>
+                  <group invisible="not error" col="1">
+                    <field name="error" readonly="1" string="Error técnico"/>
+                  </group>
+                  <field name="meli_permalink" invisible="1"/>
+                  <field name="name" invisible="1"/>
+                  <field name="sku" invisible="1"/>
+                  <field name="import_id" invisible="1"/>
+                </sheet>
+              </form>
+            </field>
+          </record>
+
+          <!-- View: Product Template Import Wizard (multiple accounts) -->
+          <record id="view_product_template_import_multiple" model="ir.ui.view">
+            <field name="name">Import Products (massive) from MercadoLibre</field>
+            <field name="model">mercadolibre.product.template.import</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+              <form string="Importar Masivamente ML">
+                <sheet>
+
+                  <!-- FILTROS + LOTES en una sola fila compacta -->
+                  <group col="4">
+                    <group>
+                      <field name="post_state" string="Estado"/>
+                      <field name="sku_filter" string="Filtro SKU"/>
+                      <field name="sync_filter" string="Sincronización"/>
+                      <field name="meli_id" string="ML Ids" placeholder="MLA123, MLA456..."/>
+                    </group>
+                    <group>
+                      <field name="force_dont_create"/>
+                      <field name="force_create_variants"/>
+                    </group>
+                    <group>
+                      <field name="batch_processing_unit" string="Lote"/>
+                      <field name="batch_processing_unit_offset" string="Offset"/>
+                    </group>
+                    <group>
+                      <field name="actives_to_sync" readonly="1" string="Activas" class="meli_stat_badge"/>
+                      <field name="paused_to_sync" readonly="1" string="Pausadas" class="meli_stat_badge"/>
+                      <field name="maestro_count" readonly="1" string="Maestros" class="meli_stat_badge"/>
+                      <field name="maestro_active" readonly="1" widget="boolean_toggle" string="Maestro activo"/>
+                    </group>
+                  </group>
+
+                  <!-- Botón para re-filtrar + status -->
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <button name="apply_filter" string="Aplicar Filtro"
+                            type="object" class="btn-secondary"
+                            title="Re-filtrar las publicaciones con los filtros actuales (completa SKUs si es necesario)"/>
+                    <field name="import_status" readonly="1" nolabel="1"
+                           class="text-muted" invisible="not import_status"/>
+                  </div>
+
+                  <!-- Campos ocultos que necesitamos pero no mostramos -->
+                  <field name="has_consulta" invisible="1"/>
+                  <field name="product_lines_json" invisible="1"/>
+                  <field name="force_meli_pub" invisible="1"/>
+                  <field name="force_import_images" invisible="1"/>
+                  <field name="force_meli_website_published" invisible="1"/>
+                  <field name="force_meli_website_category_create_and_assign" invisible="1"/>
+                  <field name="batch_actives_to_sync" invisible="1"/>
+                  <field name="batch_paused_to_sync" invisible="1"/>
+                  <field name="batch_left_to_sync" invisible="1"/>
+                  <field name="closed_to_sync" invisible="1"/>
+                  <field name="import_status" invisible="1"/>
+
+                  <!-- Banners de binding: SKU duplicado en Odoo / sin vincular -->
+                  <div class="alert alert-warning mb-2" role="alert" invisible="duplicate_count == 0">
+                    <strong>⚠ <field name="duplicate_count" class="oe_inline" readonly="1"/> publicación(es) con SKU DUPLICADO en Odoo</strong>
+                    — el mismo SKU existe en más de un producto, por eso no se pueden vincular automáticamente.
+                    SKUs: <field name="duplicate_skus" class="oe_inline" readonly="1"/>.
+                  </div>
+                  <div class="alert alert-info mb-2" role="status" invisible="unbound_count == 0">
+                    <field name="unbound_count" class="oe_inline" readonly="1"/> publicación(es) <strong>Sin vincular</strong>
+                    — revisar SKU/variaciones contra el producto en Odoo.
+                  </div>
+
+                  <!-- CONTENIDO: PREVIEW / REPORTE -->
+                  <notebook>
+                    <page string="Vista previa">
+                      <field name="import_lines" invisible="1"/>
+                      <field name="import_lines" nolabel="1"
+                        invisible="import_lines == False">
+                        <list create="false" edit="false" delete="false"
+                              decoration-success="import_status == 'synced' or import_status == 'imported'"
+                              decoration-danger="import_status == 'error' or import_status == 'duplicate'"
+                              decoration-warning="import_status == 'missing'"
+                              decoration-muted="import_status == 'pending'">
+                          <field name="meli_id" string="ML Id"/>
+                          <field name="meli_status" string="Estado ML"/>
+                          <field name="sku" string="SKU"/>
+                          <field name="meli_barcode" string="Barcode" optional="hide"/>
+                          <field name="name" string="Nombre"/>
+                          <field name="meli_price" string="Precio"/>
+                          <field name="meli_qty" string="Stock"/>
+                          <field name="variations_count" string="Vars"/>
+                          <field name="import_status" string="Estado" widget="badge"
+                                 decoration-success="import_status == 'synced' or import_status == 'imported'"
+                                 decoration-danger="import_status == 'error' or import_status == 'duplicate'"
+                                 decoration-warning="import_status == 'missing'"/>
+                          <field name="error" string="Error" optional="show"/>
+                        </list>
+                        <form string="Detalle de Publicación">
+                          <!-- detail_fetched es computado: al leerlo se dispara la carga de datos ML -->
+                          <field name="detail_fetched" invisible="1"/>
+                          <header>
+                            <button name="import_single_line" string="Importar"
+                                    type="object" class="btn-primary oe_highlight"
+                                    invisible="import_status == 'synced' or import_status == 'imported'"
+                                    title="Importar/vincular esta publicación individualmente"/>
+                            <button name="action_open_ml" string="Ver API ML" type="object" class="btn-link"
+                                    title="Abrir JSON de la API de MercadoLibre (con access token)"/>
+                            <button name="action_open_ml_web" string="Ver Web ML" type="object" class="btn-link"
+                                    title="Abrir página web de la publicación en MercadoLibre"/>
+                            <field name="import_status" widget="statusbar"
+                                   statusbar_visible="pending,synced,imported"/>
+                          </header>
+                          <sheet>
+                            <widget name="web_ribbon" title="SKU/Barcode en Odoo Duplicado" bg_color="bg-warning"
+                                    invisible="sku_found_in_odoo == False or import_status != 'duplicate'"/>
+                            <widget name="web_ribbon" title="SKU/Barcode en Odoo" bg_color="bg-success"
+                                    invisible="sku_found_in_odoo == False or import_status == 'duplicate'"/>
+                            <widget name="web_ribbon" title="SKU no encontrado" bg_color="bg-warning"
+                                    invisible="sku_found_in_odoo == True or detail_fetched == False"/>
+                            <div class="oe_title">
+                              <label for="ml_title" string="Título"/>
+                              <h1><field name="ml_title" readonly="1" placeholder="(Consultar detalle ML)"/></h1>
+                            </div>
+                            <group col="2">
+                              <group string="Publicación ML">
+                                <field name="meli_id" readonly="1"/>
+                                <field name="meli_status" readonly="1"/>
+                                <field name="meli_price" readonly="1"/>
+                                <field name="meli_qty" readonly="1"/>
+                                <field name="variations_count" readonly="1"/>
+                              </group>
+                              <group string="SKUs y Códigos">
+                                <field name="seller_skus" readonly="1" string="SKUs"/>
+                                <field name="barcodes" readonly="1"/>
+                                <field name="sku_found_in_odoo" readonly="1" widget="boolean_toggle"/>
+                              </group>
+                            </group>
+                            <group string="Detalle de variaciones" col="1"
+                                   invisible="detail_fetched == False">
+                              <field name="variations_detail" readonly="1" nolabel="1"
+                                     widget="text" placeholder="Consultar detalle ML para ver variaciones..."/>
+                            </group>
+                            <div invisible="not import_suggestion"
+                                 style="margin:8px 0; padding:10px 14px; border-left:4px solid #f0ad4e; background:#fffbf0; border-radius:3px;">
+                              <strong style="display:block; margin-bottom:4px;"><i class="fa fa-exclamation-triangle" title="Atención" style="margin-right:6px; color:#e6a817;"/> ¿Qué hacer?</strong>
+                              <field name="import_suggestion" readonly="1" nolabel="1" widget="text"
+                                     style="white-space:pre-line; font-weight:600; color:#333; background:transparent; border:none; padding:0;"/>
+                            </div>
+                            <group string="Productos encontrados en Odoo" col="1"
+                                   invisible="detail_fetched == False or sku_found_in_odoo == False">
+                              <field name="odoo_product_ids" readonly="1" nolabel="1">
+                                <list create="false" edit="false" delete="false" open_form_view="True">
+                                  <field name="product_tmpl_id" string="Producto base" optional="show"/>
+                                  <field name="display_name" string="Variante"/>
+                                  <field name="default_code" string="SKU en Odoo"/>
+                                  <field name="barcode" string="Barcode en Odoo"/>
+                                </list>
+                              </field>
+                            </group>
+                            <group invisible="not error" col="1">
+                              <field name="error" readonly="1" string="Error técnico"/>
+                            </group>
+                            <field name="meli_permalink" invisible="1"/>
+                            <field name="name" invisible="1"/>
+                            <field name="sku" invisible="1"/>
+                          </sheet>
+                        </form>
+                      </field>
+                    </page>
+
+                    <page string="Opciones avanzadas">
+                      <group col="2">
+                        <group string="Opciones de importación">
+                          <field name="force_meli_pub" invisible="0"/>
+                          <field name="force_import_images" invisible="0"/>
+                          <field name="force_create_variants" invisible="0"/>
+                          <field name="force_dont_create" invisible="0"/>
+                          <field name="force_meli_website_published" invisible="0"/>
+                          <field name="force_meli_website_category_create_and_assign" invisible="0"/>
+                        </group>
+                        <group string="Batch avanzado">
+                          <field name="batch_actives_to_sync" invisible="0" readonly="0"/>
+                          <field name="batch_paused_to_sync" invisible="0" readonly="0"/>
+                          <field name="batch_left_to_sync" invisible="0" readonly="0"/>
+                          <field name="closed_to_sync" readonly="1"/>
+                          <field name="import_status" readonly="1" invisible="0"/>
+                        </group>
+                      </group>
+                      <!-- MULTIGET: Control de Cron desde el wizard -->
+                      <group string="Control de Cron">
+                        <group string="Configuración">
+                          <field name="cron_post_state" string="Status"/>
+                          <field name="cron_batch_size" string="Batch size"/>
+                          <field name="cron_force_dont_create" string="No crear productos"/>
+                          <field name="cron_force_import_images" string="Importar imágenes"/>
+                        </group>
+                        <group string="Perfil actual">
+                          <field name="cron_active" string="Cron activo" widget="boolean_toggle"/>
+                          <field name="cron_profile_display" string="Perfil" readonly="1"/>
+                          <button name="action_create_or_update_cron" string="Actualizar Perfil Cron"
+                                  type="object" class="btn-secondary"
+                                  title="Guarda la configuración del cron con los valores de la izquierda"/>
+                        </group>
+                      </group>
+                      <group string="Reporte">
+                        <field name="report_import_link" widget="url" readonly="1"
+                              invisible="report_import_link == False"/>
+                        <field name="report_import" readonly="0" domain="[('res_id','=',id)]"/>
+                      </group>
+                    </page>
+                  </notebook>
+
+                </sheet>
+
+                <!-- FOOTER: ACCIONES -->
+                <footer>
+                  <button name="check_import_status" string="Consultar ML" type="object" class="btn-secondary"
+                          title="Consultar publicaciones en MercadoLibre y mostrar vista previa"/>
+                  <!-- MULTIGET: Importar los ya consultados sin re-consultar ML -->
+                  <button name="action_import_consulted" string="Importar Consultados" type="object" class="btn-secondary"
+                          invisible="not has_consulta"
+                          title="Importa las publicaciones ya consultadas sin volver a consultar ML"/>
+                  <button name="product_template_import" string="Importar desde ML" type="object" class="btn-primary oe_highlight"
+                          title="Importar/vincular las publicaciones listadas"/>
+                  <button name="action_activate_cron_import" string="Activar Cron" type="object" class="btn-secondary"
+                          title="Activa el cron de importacion batch con los parametros actuales del wizard"/>
+                  <button name="action_run_cron_now" string="Ejecutar Cron" type="object" class="btn-warning"
+                          title="Ejecuta una iteracion del cron batch import inmediatamente"/>
+                  <button name="create_full_report" string="Reporte Completo" type="object" class="btn-secondary"
+                          title="Genera reporte CSV detallado consultando cada publicación"/>
+                  <button string="Cerrar" class="oe_link" special="cancel"/>
+                </footer>
+              </form>
+            </field>
+          </record>
+
+          <record id="action_product_template_import" model="ir.actions.act_window">
+                <field name="name">Importar Masivamente ML</field>
+                <field name="type">ir.actions.act_window</field>
+                <field name="binding_model_id" ref="model_mercadolibre_account"/>
+                <field name="res_model">mercadolibre.product.template.import</field>
+                <field name="binding_type">action</field>
+                <field name="binding_view_types">list,form</field>
+                <field name="view_mode">form</field>
+                <field name="view_id" ref="view_product_template_import_multiple"/>
+                <field name="target">new</field>
+          </record>
+
+          <record id="action_product_template_binding_post" model="ir.actions.act_window">
+              <field name="name">Publicar/Actualizar Publicacion en ML</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="binding_model_id" ref="model_mercadolibre_product_template"/>
+              <field name="res_model">mercadolibre.product.template.binding.post</field>
+              <field name="view_id" ref="meli_oerp_multiple.view_product_template_binding_post"/>
+              <field name="binding_type">action</field>
+              <field name="binding_view_types">list,form</field>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+          </record>
+
+          <!-- PUBLICATION PREVIEW WIZARD -->
+          <record id="view_meli_publication_preview_wizard" model="ir.ui.view">
+              <field name="name">Preview de Publicación MercadoLibre</field>
+              <field name="model">meli.publication.preview.wizard</field>
+              <field name="type">form</field>
+              <field name="arch" type="xml">
+                  <form string="Preview de Publicación ML">
+                      <sheet>
+                          <div class="oe_title">
+                              <h1>
+                                  <span invisible="operation_type != 'create'">🆕 Nueva Publicación</span>
+                                  <span invisible="operation_type != 'update'">🔄 Actualización de: <field name="meli_id" nolabel="1" class="oe_inline"/></span>
+                              </h1>
+                          </div>
+                          <group>
+                              <group>
+                                  <field name="product_tmpl_id" readonly="1"/>
+                                  <field name="product_id" readonly="1"/>
+                                  <field name="operation_type" readonly="1"/>
+                              </group>
+                          </group>
+
+                          <notebook>
+                              <page string="📋 Body JSON" name="body">
+                                  <field name="json_body_formatted" nolabel="1"/>
+                              </page>
+                              <page string="🔀 Variaciones" name="variations" invisible="json_variations == False">
+                                  <field name="json_variations_formatted" nolabel="1"/>
+                              </page>
+                              <page string="🖼️ Imágenes" name="images">
+                                  <field name="images_info_formatted" nolabel="1"/>
+                              </page>
+                              <page string="⚠️ Advertencias" name="warnings">
+                                  <field name="warnings" readonly="1" nolabel="1" widget="text"/>
+                              </page>
+                              <page string="📝 JSON Raw" name="raw">
+                                  <label for="json_body" string="Body JSON (raw)"/>
+                                  <field name="json_body" readonly="1" nolabel="1"/>
+                                  <label for="json_variations" string="Variaciones JSON (raw)" invisible="json_variations == False"/>
+                                  <field name="json_variations" readonly="1" nolabel="1" invisible="json_variations == False"/>
+                              </page>
+                          </notebook>
+                      </sheet>
+                      <footer>
+                          <button name="action_proceed_publish" string="Proceder a Publicar" type="object" class="oe_highlight" icon="fa-globe"/>
+                          <button string="Cerrar" class="btn-secondary" special="cancel"/>
+                      </footer>
+                  </form>
+              </field>
+          </record>
+
+          <record id="action_meli_publication_preview" model="ir.actions.act_window">
+              <field name="name">Preview Publicación ML</field>
+              <field name="type">ir.actions.act_window</field>
+              <field name="res_model">meli.publication.preview.wizard</field>
+              <field name="view_id" ref="view_meli_publication_preview_wizard"/>
+              <field name="view_mode">form</field>
+              <field name="target">new</field>
+          </record>
+
+
+        <!-- Multiwarehouse Diagnostic Wizard -->
+        <record id="view_meli_multiwarehouse_diagnostic" model="ir.ui.view">
+            <field name="name">meli.multiwarehouse.diagnostic.form</field>
+            <field name="model">meli.multiwarehouse.diagnostic</field>
+            <field name="arch" type="xml">
+                <form string="Check &amp; Test Multiwarehouse">
+                    <sheet>
+                        <group>
+                            <field name="result_text" widget="text" readonly="1"
+                                   style="font-family: monospace; white-space: pre; min-height: 400px;"/>
+                        </group>
+                    </sheet>
+                    <footer>
+                        <button string="Cerrar" class="btn-primary" special="cancel"/>
+                    </footer>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_meli_multiwarehouse_diagnostic" model="ir.actions.act_window">
+            <field name="name">Diagnóstico Multiwarehouse</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">meli.multiwarehouse.diagnostic</field>
+            <field name="view_id" ref="view_meli_multiwarehouse_diagnostic"/>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+
+    </data>
+</odoo>

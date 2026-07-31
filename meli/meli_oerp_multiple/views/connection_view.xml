@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+
+
+  		<!--record model="ir.ui.view" id="view_mercadolibre_connection_form">
+  			<field name="name">mercadolibre.connection.form</field>
+  			<field name="model">mercadolibre.connection.account</field>
+  			<field name="arch" type="xml">
+  				<form create="0" edit="0" delete="0">
+  					<header>
+  						<field name="state" widget="statusbar" />
+  					</header>
+  					<sheet>
+  						<div class="oe_title">
+  							<h1><field name="notification_id"/></h1>
+  							<field name='user_id'/>
+  							<field name='application_id'/>
+  						</div>
+  						<div class="oe_button_box" name="button_box_mel" style="width: auto;">
+  							<button name='process_notification' type="object"
+  								string="Procesar"
+  								title="Procesar notificación"
+  								confirm="¿Está seguro que necesita procesar esta notificación?"
+  								class="oe_stat_button"
+  								icon="fa-refresh"/>
+  						</div>
+  						<group>
+  							<group>
+  								<field name="topic" />
+  								<field name="resource" />
+  								<field name="sent" />
+  								<field name="received" />
+  							</group>
+  							<group>
+  								<field name='attempts'/>
+  								<field name="processing_started" />
+  								<field name="processing_ended" />
+  								<field name="processing_errors" />
+  							</group>
+  						</group>
+  					</sheet>
+  				</form>
+  			</field>
+  		</record-->
+
+      <record id="mercadolibre_account_search_view" model="ir.ui.view">
+  			<field name="name">MercadoLibre Accounts - Search</field>
+  			<field name="model">mercadolibre.account</field>
+  			<field name="arch" type="xml">
+  				<search>
+  					<field name="name" />
+            <field name="meli_user_nickname" string="Nickname"/>
+            <field name="seller_id"/>
+            <field name="client_id" />
+            <field name="company_id" />
+            <field name="brand"/>
+            <separator/>
+            <filter string="Activos" name="filter_active" domain="[('account_state', '=', 'active')]"/>
+            <filter string="En Configuración" name="filter_configuring" domain="[('account_state', '=', 'configuring')]"/>
+            <filter string="Pausados" name="filter_paused" domain="[('account_state', '=', 'paused')]"/>
+            <filter string="Con Error" name="filter_error" domain="[('account_state', '=', 'error')]"/>
+            <filter string="Nuevos" name="filter_new" domain="[('account_state', '=', 'new')]"/>
+            <separator/>
+            <filter string="Tienda Oficial" name="filter_official_store" domain="[('official_store_id', '!=', False)]"/>
+            <separator/>
+            <group>
+              <filter string="Estado de Cuenta" name="group_account_state" context="{'group_by': 'account_state'}"/>
+              <filter string="Empresa" name="group_company" context="{'group_by': 'company_id'}"/>
+              <filter string="Marca" name="group_brand" context="{'group_by': 'brand'}"/>
+              <filter string="País" name="group_country" context="{'group_by': 'country_id'}"/>
+            </group>
+  				</search>
+  			</field>
+  		</record>
+
+      <record model="ir.ui.view" id="view_mercadolibre_configuration_tree">
+        <field name="name">mercadolibre.configuration.tree</field>
+        <field name="model">mercadolibre.configuration</field>
+        <field name="arch" type="xml">
+          <list create="1" edit="1" delete="1" default_order='id desc'>
+            <field name="name" />
+            <field name="mode" />
+            <field name="connection_account" />
+            <field name="company_id" />
+            <field name="mercadolibre_order_confirmation"/>
+            <field name="mercadolibre_order_confirmation_full"/>
+            <field name="mercadolibre_stock_virtual_available"/>
+            <field name="mercadolibre_stock_warehouse"/>
+            <field name="mercadolibre_cron_post_update_stock"/>
+            <field name="mercadolibre_pricelist"/>
+            <field name="mercadolibre_pricelist_usd"/>
+            <field name="mercadolibre_cron_post_update_price"/>
+            <field name="mercadolibre_invoice_journal_id"/>
+          </list>
+        </field>
+      </record>
+
+      <record model="ir.ui.view" id="view_mercadolibre_account_tree">
+        <field name="name">mercadolibre.account.tree</field>
+        <field name="model">mercadolibre.account</field>
+        <field name="arch" type="xml">
+          <list create="False" edit="1" delete="1" default_order='id desc'>
+            <field name="company_id" />
+            <field name="official_store_id"/>
+            <field name="brand"/>
+            <field name="name" />
+            <field name="meli_user_nickname" string="Nickname"/>
+            <field name="seller_id" />
+            <field name="products_count" string="Productos"/>
+            <field name="orders_count" string="Órdenes"/>
+            <field name="orders_pending_count" string="Pendientes"/>
+            <field name="status" widget="badge" decoration-success="status == 'connected'" decoration-danger="status == 'disconnected'"/>
+            <field name="account_state" widget="badge" decoration-success="account_state == 'active'" decoration-warning="account_state in ('paused', 'configuring')" decoration-danger="account_state == 'error'" decoration-info="account_state == 'new'"/>
+            <field name="meli_user_reputation_level" string="Reputación"/>
+            <field name="last_order_date" string="Última Orden"/>
+          </list>
+        </field>
+      </record>
+
+      <!-- Vista Kanban para MercadoLibre Accounts -->
+      <record model="ir.ui.view" id="view_mercadolibre_account_kanban">
+        <field name="name">mercadolibre.account.kanban</field>
+        <field name="model">mercadolibre.account</field>
+        <field name="arch" type="xml">
+          <kanban class="o_kanban_mobile o_meli_account_kanban" quick_create="false">
+            <field name="id"/>
+            <field name="name"/>
+            <field name="status"/>
+            <field name="account_state"/>
+            <field name="kanban_color"/>
+            <field name="meli_user_nickname"/>
+            <field name="seller_id"/>
+            <field name="products_count"/>
+            <field name="publications_count"/>
+            <field name="orders_count"/>
+            <field name="orders_pending_count"/>
+            <field name="meli_user_reputation_level"/>
+            <field name="meli_user_ratings_positive"/>
+            <field name="official_store_id"/>
+            <field name="brand"/>
+            <field name="company_id"/>
+            <field name="last_order_date"/>
+            <field name="meli_user_last_sync"/>
+            <field name="image_128"/>
+            <templates>
+              <t t-name="card">
+                <div class="oe_kanban_global_click" style="padding: 0 !important; overflow: hidden; border-radius: 12px;">
+
+                  <!-- ========== HEADER OSCURO ========== -->
+                  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); padding: 16px; color: #fff;">
+                    <div class="d-flex align-items-start">
+                      <!-- Logo -->
+                      <div class="flex-shrink-0 me-3">
+                        <t t-if="record.image_128.value">
+                          <img t-att-src="record.image_128.value" alt="Logo"
+                               style="width: 64px; height: 64px; object-fit: contain; border-radius: 12px; background: rgba(255,255,255,0.15); padding: 6px;"/>
+                        </t>
+                        <t t-else="">
+                          <img src="/meli_oerp_multiple/static/src/img/logo_ML.png" alt="MercadoLibre"
+                               style="width: 64px; height: 64px; object-fit: contain; border-radius: 12px; background: rgba(255,214,0,0.2); padding: 6px;"/>
+                        </t>
+                      </div>
+                      <!-- Nombre y badges -->
+                      <div class="flex-grow-1 overflow-hidden">
+                        <div class="d-flex justify-content-between align-items-start">
+                          <div class="overflow-hidden">
+                            <div class="fw-bold text-truncate" style="font-size: 1.15em; line-height: 1.2;">
+                              <field name="name"/>
+                            </div>
+                            <t t-if="record.meli_user_nickname.value">
+                              <div style="opacity: 0.7; font-size: 0.85em;">
+                                @<field name="meli_user_nickname"/>
+                                <span style="background: rgba(255,255,255,0.15); padding: 1px 8px; border-radius: 10px; font-size: 0.85em; margin-left: 6px;">
+                                  ID: <field name="seller_id"/>
+                                </span>
+                              </div>
+                            </t>
+                          </div>
+                          <div class="d-flex flex-column align-items-end gap-1 flex-shrink-0 ms-2">
+                            <!-- Status badge -->
+                            <t t-if="record.status.raw_value == 'connected'">
+                              <span style="background: rgba(40,167,69,0.25); color: #6fdc8c; padding: 2px 10px; border-radius: 10px; font-size: 0.75em; white-space: nowrap;">
+                                <i class="fa fa-circle me-1" style="font-size: 0.6em;" title="Conectado" role="img" aria-label="Conectado"/> CONECTADO
+                              </span>
+                            </t>
+                            <t t-else="">
+                              <span style="background: rgba(220,53,69,0.25); color: #ff8389; padding: 2px 10px; border-radius: 10px; font-size: 0.75em; white-space: nowrap;">
+                                <i class="fa fa-circle me-1" style="font-size: 0.6em;" title="Desconectado" role="img" aria-label="Desconectado"/> DESCONECTADO
+                              </span>
+                            </t>
+                            <!-- Tienda Oficial -->
+                            <t t-if="record.official_store_id.value">
+                              <span style="background: rgba(13,110,253,0.3); color: #a6c8ff; padding: 2px 10px; border-radius: 10px; font-size: 0.7em; white-space: nowrap;">
+                                <i class="fa fa-star me-1" title="Tienda Oficial"/> TIENDA OFICIAL
+                              </span>
+                            </t>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- ========== BODY BLANCO ========== -->
+                  <div style="padding: 16px;">
+
+                    <!-- Número hero: Total Órdenes -->
+                    <div class="text-center mb-2">
+                      <div style="font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; color: #198754; font-weight: 600;">
+                        Total Órdenes Procesadas
+                      </div>
+                      <div style="font-size: 2.2em; font-weight: 700; font-style: italic; line-height: 1.1; color: #212529;">
+                        <field name="orders_count"/>
+                        <span style="font-size: 0.35em; font-weight: 400; font-style: normal; color: #6c757d;"> órdenes</span>
+                      </div>
+                    </div>
+
+                    <!-- Divider -->
+                    <hr style="margin: 8px 0; opacity: 0.15;"/>
+
+                    <!-- Stats: Productos | Publicaciones | Pendientes -->
+                    <div class="d-flex text-center" style="white-space: nowrap;">
+                      <div class="flex-fill" style="border-right: 1px solid rgba(0,0,0,0.1);">
+                        <div class="fw-bold" style="font-size: 1.3em; color: #0d6efd;">
+                          <field name="products_count"/>
+                        </div>
+                        <div style="font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.5px; color: #6c757d; font-weight: 600;">Productos</div>
+                      </div>
+                      <div class="flex-fill" style="border-right: 1px solid rgba(0,0,0,0.1);">
+                        <div class="fw-bold" style="font-size: 1.3em; color: #0dcaf0;">
+                          <field name="publications_count"/>
+                        </div>
+                        <div style="font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.5px; color: #6c757d; font-weight: 600;">Publicaciones</div>
+                      </div>
+                      <div class="flex-fill">
+                        <div t-attf-class="fw-bold" t-attf-style="font-size: 1.3em; color: #{record.orders_pending_count.raw_value > 0 ? '#ffc107' : '#adb5bd'};">
+                          <field name="orders_pending_count"/>
+                        </div>
+                        <div style="font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.5px; color: #6c757d; font-weight: 600;">Pendientes</div>
+                      </div>
+                    </div>
+
+                    <!-- Divider -->
+                    <hr style="margin: 8px 0; opacity: 0.15;"/>
+
+                    <!-- Reputación con barra de progreso -->
+                    <t t-if="record.meli_user_reputation_level.value">
+                      <div class="mb-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                          <small style="font-size: 0.75em; color: #6c757d; font-weight: 600;">Reputación del vendedor</small>
+                          <t t-if="record.meli_user_ratings_positive.raw_value">
+                            <small class="fw-bold" style="font-size: 0.85em; color: #198754;">
+                              <field name="meli_user_ratings_positive"/>%
+                            </small>
+                          </t>
+                        </div>
+                        <!-- Barra de progreso -->
+                        <t t-if="record.meli_user_ratings_positive.raw_value">
+                          <div class="meli-progress-bg" style="border-radius: 4px; height: 6px; overflow: hidden;">
+                            <div t-attf-style="width: #{record.meli_user_ratings_positive.raw_value}%; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--bs-success), #20c997);"/>
+                          </div>
+                        </t>
+                        <div class="mt-1">
+                          <span class="badge bg-success" style="padding: 2px 8px; border-radius: 8px; font-size: 0.7em;">
+                            <i class="fa fa-star me-1" title="Reputación" role="img" aria-label="Reputación"/><field name="meli_user_reputation_level"/>
+                          </span>
+                          <t t-if="record.meli_user_ratings_positive.raw_value">
+                            <span class="text-muted" style="font-size: 0.7em; margin-left: 4px;">Positivas</span>
+                          </t>
+                        </div>
+                      </div>
+                      <hr class="meli-divider"/>
+                    </t>
+
+                    <!-- Footer: empresa, fechas y estado -->
+                    <div>
+                      <t t-if="record.company_id.value">
+                        <div class="text-muted mb-1" style="font-size: 0.75em;">
+                          <i class="fa fa-building me-1" title="Empresa" role="img" aria-label="Empresa"/><field name="company_id"/>
+                          <t t-if="record.brand.value">
+                            <span class="ms-2"><i class="fa fa-tag me-1" title="Marca" role="img" aria-label="Marca"/><field name="brand"/></span>
+                          </t>
+                        </div>
+                      </t>
+                      <div class="d-flex justify-content-between align-items-center flex-wrap" style="gap: 4px;">
+                        <div class="text-muted" style="font-size: 0.7em;">
+                          <t t-if="record.last_order_date.value">
+                            <i class="fa fa-clock-o me-1" title="Última orden" role="img" aria-label="Última orden"/>Última orden: <field name="last_order_date"/>
+                          </t>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                          <t t-if="record.meli_user_last_sync.value">
+                            <span class="text-muted" style="font-size: 0.65em;">
+                              <i class="fa fa-refresh me-1" title="Sincronización" role="img" aria-label="Sincronización"/>Sync: <field name="meli_user_last_sync"/>
+                            </span>
+                          </t>
+                          <field name="account_state" widget="badge"
+                                 decoration-success="account_state == 'active'"
+                                 decoration-warning="account_state in ('paused', 'configuring')"
+                                 decoration-danger="account_state == 'error'"
+                                 decoration-info="account_state == 'new'"/>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Footer con acciones -->
+                  <!--div class="o_kanban_record_bottom mt-2 pt-2 border-top">
+                    <div class="oe_kanban_bottom_left">
+                      <field name="account_state" widget="badge"
+                             decoration-success="account_state == 'active'"
+                             decoration-warning="account_state in ('paused', 'configuring')"
+                             decoration-danger="account_state == 'error'"
+                             decoration-info="account_state == 'new'"/>
+                    </div>
+                    <div class="oe_kanban_bottom_right">
+                      <t t-if="record.meli_user_last_sync.value">
+                        <small class="text-muted">
+                          <i class="fa fa-refresh" role="img" aria-label="Última sincronización"/> <field name="meli_user_last_sync"/>
+                        </small>
+                      </t>
+                    </div>
+                  </div-->
+                </div>
+              </t>
+            </templates>
+          </kanban>
+        </field>
+      </record>
+
+      <record model="ir.actions.act_window" id="action_mercadolibre_configurations_tree">
+  			<field name="name">Connection Account Configurations</field>
+  			<field name="type">ir.actions.act_window</field>
+  			<field name="res_model">mercadolibre.configuration</field>
+  			<!--field name="view_type">form</field-->
+  			<field name="view_mode">list,form</field>
+  			<!--field name="search_view_id" ref="producteca_configuration_search_view" /-->
+  		</record>
+
+      <record model="ir.actions.act_window" id="action_mercadolibre_connections_tree">
+  			<field name="name">Connection Accounts</field>
+  			<field name="type">ir.actions.act_window</field>
+  			<field name="res_model">mercadolibre.account</field>
+  			<field name="view_mode">kanban,list,form</field>
+  			<field name="search_view_id" ref="mercadolibre_account_search_view"/>
+  			<field name="context">{}</field>
+  			<field name="help" type="html">
+  				<p class="o_view_nocontent_smiling_face">
+  					Crear una nueva cuenta de MercadoLibre
+  				</p>
+  				<p>
+  					Las cuentas de MercadoLibre permiten conectar tu tienda con el marketplace
+  					para sincronizar productos, órdenes y más.
+  				</p>
+  			</field>
+  		</record>
+
+
+      <menuitem id="menu_mercadolibre_connectors" name="MercadoLibre Multiple" parent="meli_oerp.menu_meli" sequence="1"
+          groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" />
+
+
+          <menuitem id="menu_mercadolibre_connections"
+            action="action_mercadolibre_connections_tree"
+            parent="menu_mercadolibre_connectors"
+            name="Accounts" sequence="1"/>
+
+            <menuitem id="menu_mercadolibre_configurations"
+              action="action_mercadolibre_configurations_tree"
+              parent="menu_mercadolibre_connectors"
+              name="Configurations" sequence="2"/>
+
+		</data>
+</odoo>

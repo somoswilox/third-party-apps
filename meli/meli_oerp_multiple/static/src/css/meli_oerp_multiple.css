@@ -1,0 +1,268 @@
+.mercadolibre_product_maestro .text-success {
+   background-color: #a7f2af7d !important;
+}
+
+ .mercadolibre_product_maestro
+.text-danger {
+	background-color: #fb88847d !important;
+}
+
+.mercadolibre_product_maestro
+.text-warning {
+	background-color: #fdf57d8f !important;
+}
+
+/* ========== MeLi Account Kanban Card ========== */
+.o_meli_account_kanban .o_kanban_record {
+    padding: 0 !important;
+    overflow: hidden;
+    border-radius: 12px !important;
+    border: none !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.o_meli_account_kanban .o_kanban_record:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15) !important;
+    transform: translateY(-2px);
+}
+
+.o_meli_account_kanban .o_kanban_record > div:first-child {
+    padding: 0 !important;
+}
+
+/* Ensure the card content div has no extra padding from Odoo */
+.o_meli_account_kanban .oe_kanban_global_click {
+    padding: 0 !important;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Fix badge widget rendering inside dark header */
+.o_meli_account_kanban .o_field_badge .badge {
+    font-size: 0.7em !important;
+}
+
+/* Body area: adapts to BS5 theme (light/dark) via var() */
+.o_meli_account_kanban .meli-kanban-body {
+    background: var(--bs-body-bg);
+}
+
+/* Stat column right-border using theme-aware color */
+.o_meli_account_kanban .meli-stat-col {
+    border-right: 1px solid var(--bs-border-color-translucent);
+}
+
+/* Dividers inside the card */
+.o_meli_account_kanban .meli-divider {
+    margin: 8px 0;
+    opacity: 1;
+    border-color: var(--bs-border-color-translucent);
+}
+
+/* Progress bar track */
+.o_meli_account_kanban .meli-progress-bg {
+    background: var(--bs-secondary-bg);
+}
+
+/* Dark mode: stronger card shadows */
+[data-bs-theme="dark"] .o_meli_account_kanban .o_kanban_record {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35) !important;
+}
+[data-bs-theme="dark"] .o_meli_account_kanban .o_kanban_record:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55) !important;
+}
+
+/* ========== Stat badges for import wizard ========== */
+.meli_stat_badge {
+    background: var(--bs-emphasis-color) !important;
+    color: var(--bs-body-bg) !important;
+    font-size: 1.1em !important;
+    font-weight: 700 !important;
+    padding: 3px 14px !important;
+    border-radius: 8px !important;
+    text-align: center !important;
+    display: inline-block !important;
+    min-width: 60px;
+    letter-spacing: 0.3px;
+}
+
+.meli_stat_badge span,
+.meli_stat_badge input {
+    color: var(--bs-body-bg) !important;
+    background: transparent !important;
+    border: none !important;
+    font-weight: 700 !important;
+    font-size: inherit !important;
+    padding: 0 !important;
+}
+
+/* ========== MeLi Dashboard (computed HTML) ========== */
+.kpi-dashboard {
+    padding: 10px;
+    font-family: Arial, sans-serif;
+}
+
+.kpi-dashboard .kpi-chart-card {
+    display: inline-block;
+    width: 280px;
+    vertical-align: top;
+    text-align: center;
+    padding: 10px;
+    border: 1px solid var(--bs-border-color, #e0e0e0);
+    border-radius: 8px;
+    margin: 5px;
+    background: var(--bs-body-bg, #fafafa);
+}
+
+.kpi-dashboard .kpi-chart-title {
+    font-size: 15px;
+    font-weight: bold;
+    margin-bottom: 6px;
+    color: var(--bs-body-color, #333);
+}
+
+.kpi-dashboard .kpi-config-header {
+    background: var(--bs-tertiary-bg, #f0f0f0);
+    padding: 5px 8px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--bs-secondary-color, #666);
+    text-align: left;
+}
+
+.kpi-dashboard .kpi-donut-hole {
+    fill: var(--bs-body-bg, white);
+}
+
+.kpi-dashboard .kpi-donut-total {
+    fill: var(--bs-body-color, #333);
+}
+
+.kpi-dashboard .kpi-legend {
+    text-align: left;
+    padding: 6px 8px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.kpi-dashboard .kpi-legend-item {
+    display: flex;
+    align-items: center;
+    margin: 2px 0;
+    font-size: 13px;
+    color: var(--bs-body-color, #333);
+}
+
+.kpi-dashboard .kpi-legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+
+.kpi-dashboard .kpi-legend-label {
+    flex: 1;
+}
+
+.kpi-dashboard .kpi-legend-value {
+    font-weight: bold;
+    margin-left: 8px;
+}
+
+.kpi-dashboard .kpi-legend-divider {
+    border-top: 1px solid var(--bs-border-color, #ddd);
+    margin: 4px 0;
+    padding-top: 4px;
+    font-size: 12px;
+    color: var(--bs-secondary-color, #666);
+}
+
+.kpi-dashboard .kpi-legend-team {
+    display: flex;
+    align-items: center;
+    margin: 2px 0;
+    font-size: 12px;
+    color: var(--bs-body-color, #333);
+}
+
+.kpi-dashboard .kpi-legend-team .kpi-legend-dot {
+    width: 10px;
+    height: 10px;
+    margin-right: 5px;
+}
+
+.kpi-dashboard .kpi-sync-footer {
+    margin-top: 10px;
+    text-align: center;
+    color: var(--bs-secondary-color, #999);
+    font-size: 12px;
+}
+
+/* SVG stroke adapts to card background */
+.kpi-dashboard .kpi-chart-card svg path {
+    stroke: var(--bs-body-bg, white);
+}
+
+/* ========== Dashboard Dark Mode ========== */
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-chart-card,
+.o_dark .kpi-dashboard .kpi-chart-card,
+body.dark .kpi-dashboard .kpi-chart-card {
+    background: #2b3035;
+    border-color: #495057;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-chart-title,
+.o_dark .kpi-dashboard .kpi-chart-title,
+body.dark .kpi-dashboard .kpi-chart-title {
+    color: #dee2e6;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-config-header,
+.o_dark .kpi-dashboard .kpi-config-header,
+body.dark .kpi-dashboard .kpi-config-header {
+    background: #343a40;
+    color: #adb5bd;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-donut-hole,
+.o_dark .kpi-dashboard .kpi-donut-hole,
+body.dark .kpi-dashboard .kpi-donut-hole {
+    fill: #2b3035;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-donut-total,
+.o_dark .kpi-dashboard .kpi-donut-total,
+body.dark .kpi-dashboard .kpi-donut-total {
+    fill: #dee2e6;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-legend-item,
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-legend-team,
+.o_dark .kpi-dashboard .kpi-legend-item,
+.o_dark .kpi-dashboard .kpi-legend-team,
+body.dark .kpi-dashboard .kpi-legend-item,
+body.dark .kpi-dashboard .kpi-legend-team {
+    color: #dee2e6;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-legend-divider,
+.o_dark .kpi-dashboard .kpi-legend-divider,
+body.dark .kpi-dashboard .kpi-legend-divider {
+    border-color: #495057;
+    color: #adb5bd;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-sync-footer,
+.o_dark .kpi-dashboard .kpi-sync-footer,
+body.dark .kpi-dashboard .kpi-sync-footer {
+    color: #adb5bd;
+}
+
+html[data-bs-theme="dark"] .kpi-dashboard .kpi-chart-card svg path,
+.o_dark .kpi-dashboard .kpi-chart-card svg path,
+body.dark .kpi-dashboard .kpi-chart-card svg path {
+    stroke: #2b3035;
+}

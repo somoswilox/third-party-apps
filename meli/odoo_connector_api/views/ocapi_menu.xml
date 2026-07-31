@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- =================================================================
+             OCAPI Root Application Menu
+             =================================================================
+             Menu de aplicacion de nivel raiz para OCAPI.
+             Visible como app en el menu principal de Odoo con icono propio.
+             Todos los conectores instalados agregan sus sub-menues aqui.
+        -->
+        <menuitem id="menu_ocapi_root"
+            name="OCAPI"
+            web_icon="odoo_connector_api,static/description/icon.png"
+            groups="odoo_connector_api.group_ocapi_connectors_manager"
+            sequence="55"/>
+
+        <!-- =================================================================
+             Sub-menu: Cuentas Generales
+             =================================================================
+             Lista todas las cuentas de conexion (base ocapi.connection.account).
+             Cada conector instalado agrega sus cuentas especificas.
+        -->
+        <menuitem id="menu_ocapi_accounts"
+            name="Cuentas"
+            parent="menu_ocapi_root"
+            sequence="5"/>
+
+        <menuitem id="menu_ocapi_all_accounts"
+            action="action_ocapi_account_unified"
+            parent="menu_ocapi_accounts"
+            name="Todas las Cuentas"
+            sequence="1"/>
+
+        <!-- =================================================================
+             Sub-menu: Conectores (placeholder para el registry)
+             =================================================================
+             Cuando se implemente ocapi.connector.registry, este menu
+             listara los conectores instalados y su estado.
+        -->
+        <menuitem id="menu_ocapi_connectors_section"
+            name="Conectores"
+            parent="menu_ocapi_root"
+            sequence="10"/>
+
+        <!-- =================================================================
+             Sub-menu: Configuracion
+             =================================================================
+             Configuraciones generales de OCAPI.
+        -->
+        <menuitem id="menu_ocapi_configuration"
+            name="Configuracion"
+            parent="menu_ocapi_root"
+            groups="odoo_connector_api.group_ocapi_connectors_manager"
+            sequence="900"/>
+
+    </data>
+</odoo>

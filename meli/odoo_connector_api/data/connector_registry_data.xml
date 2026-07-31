@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!-- =================================================================
+             Registro base del conector OCAPI Custom
+             =================================================================
+             El tipo "custom" es el conector base de OCAPI.
+             Los modulos derivados agregan sus propios registros.
+        -->
+        <record id="connector_ocapi_custom" model="ocapi.connector.registry">
+            <field name="name">OCAPI Custom</field>
+            <field name="connector_type">custom</field>
+            <field name="account_model">ocapi.connection.account</field>
+            <field name="binding_model">ocapi.connection.binding</field>
+            <field name="configuration_model">ocapi.connection.configuration</field>
+            <field name="module_name">odoo_connector_api</field>
+            <field name="is_native_odoo">False</field>
+            <field name="icon">fa-plug</field>
+            <field name="sequence">1</field>
+            <field name="notes">Conector base de OCAPI. Otros modulos heredan de este para crear conectores especificos.</field>
+        </record>
+
+    </data>
+</odoo>

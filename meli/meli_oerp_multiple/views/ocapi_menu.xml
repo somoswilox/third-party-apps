@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- =================================================================
+             MercadoLibre - Menus bajo OCAPI Root
+             =================================================================
+             Duplica los menus principales de MercadoLibre bajo el menu
+             raiz de OCAPI para acceso unificado desde la app OCAPI.
+             Los menus originales bajo Ventas > MercadoLibre se mantienen.
+        -->
+
+        <!-- Link en OCAPI > Cuentas -->
+        <menuitem id="menu_ocapi_meli_accounts"
+            action="action_mercadolibre_connections_tree"
+            parent="odoo_connector_api.menu_ocapi_accounts"
+            name="MercadoLibre"
+            sequence="10"/>
+
+        <!-- Seccion MercadoLibre bajo OCAPI -->
+        <menuitem id="menu_ocapi_mercadolibre"
+            name="MercadoLibre"
+            parent="odoo_connector_api.menu_ocapi_root"
+            sequence="20"/>
+
+        <menuitem id="menu_ocapi_meli_connections"
+            action="action_mercadolibre_connections_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Cuentas"
+            sequence="1"/>
+
+        <menuitem id="menu_ocapi_meli_configurations"
+            action="action_mercadolibre_configurations_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Configuraciones"
+            sequence="2"/>
+
+        <menuitem id="menu_ocapi_meli_product_templates"
+            action="action_mercadolibre_product_template_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Productos"
+            sequence="3"/>
+
+        <menuitem id="menu_ocapi_meli_products"
+            action="action_mercadolibre_products_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Variantes"
+            sequence="4"/>
+
+        <menuitem id="menu_ocapi_meli_bindings"
+            action="action_mercadolibre_bindings_product_template_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Bindings de Productos"
+            sequence="5"/>
+
+        <menuitem id="menu_ocapi_meli_orders"
+            action="action_mercadolibre_orders_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Ventas"
+            sequence="6"/>
+
+        <menuitem id="menu_ocapi_meli_notifications"
+            action="action_mercadolibre_notifications_tree"
+            parent="menu_ocapi_mercadolibre"
+            name="Notificaciones"
+            sequence="100"/>
+
+    </data>
+
+    <!-- Registro del conector en el registry de OCAPI -->
+    <data noupdate="1">
+        <record id="connector_mercadolibre" model="ocapi.connector.registry">
+            <field name="name">MercadoLibre</field>
+            <field name="connector_type">mercadolibre</field>
+            <field name="account_model">mercadolibre.account</field>
+            <field name="binding_model">ocapi.connection.binding</field>
+            <field name="configuration_model">mercadolibre.configuration</field>
+            <field name="module_name">meli_oerp_multiple</field>
+            <field name="is_native_odoo">False</field>
+            <field name="icon">fa-shopping-bag</field>
+            <field name="color">4</field>
+            <field name="sequence">10</field>
+            <field name="notes">Conector para MercadoLibre via meli_oerp_multiple. Soporta multiples cuentas, publicaciones, ordenes y fulfillment.</field>
+        </record>
+    </data>
+</odoo>

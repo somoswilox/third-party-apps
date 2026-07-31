@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+    <record id="view_connection_account_mercadolibre_charts_inherit" model="ir.ui.view">
+      <field name="name">mercadolibre.account.form.charts.inherit</field>
+      <field name="model">mercadolibre.account</field>
+      <!-- Inherit your existing ML account form -->
+      <field name="inherit_id" ref="meli_oerp_multiple.view_connection_account_mercadolibre"/>
+      <field name="arch" type="xml">
+
+        <!-- Add a new page "Dashboard" with three embedded pie charts -->
+        <xpath expr="//form//sheet//notebook" position="inside">
+          <page string="Dashboard">
+
+            <!-- SALES: mercadolibre.orders by status -->
+            <group string="Sales">
+              <field name="ml_order_ids"
+                     widget="graph"
+                     options="{'disable_linking': true}"
+                     context="{
+                       'graph_mode': 'pie',
+                       'graph_groupby': 'status'
+                     }"/>
+            </group>
+
+            <!-- INVOICES: account.move by payment_state (customer invoices only) -->
+            <group string="Invoices">
+              <field name="invoice_ids"
+                     widget="graph"
+                     options="{'disable_linking': true}"
+                     context="{
+                       'graph_mode': 'pie',
+                       'graph_groupby': 'payment_state'
+                     }"/>
+            </group>
+
+            <!-- PUBLICATIONS: mercadolibre.product by our bucket -->
+            <group string="Publications &amp; Stock Sync">
+              <field name="ml_product_ids"
+                     widget="graph"
+                     options="{'disable_linking': true}"
+                     context="{
+                       'graph_mode': 'pie',
+                       'graph_groupby': 'kpi_sync_bucket'
+                     }"/>
+            </group>
+
+          </page>
+        </xpath>
+      </field>
+    </record>
+  </data>
+</odoo>

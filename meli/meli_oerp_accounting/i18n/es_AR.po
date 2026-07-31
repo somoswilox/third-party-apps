@@ -1,0 +1,421 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* meli_oerp_accounting
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0+e\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-11-28 08:24+0000\n"
+"PO-Revision-Date: 2025-11-28 08:24+0000\n"
+"Last-Translator: Moldeo Interactive <info@moldeointeractive.com.ar>\n"
+"Language-Team: Spanish (Argentina) <es_AR@li.org>\n"
+"Language: es_AR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice_full
+msgid "(FULL) Acción sobre la factura al confirmar un pedido"
+msgstr "(FULL) Acción sobre la factura al confirmar un pedido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice_full
+msgid ""
+"(FULL) Acción sobre la factura al confirmar una orden o pedido de venta"
+msgstr "(FULL) Acción sobre la factura al confirmar una orden o pedido de venta"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation
+msgid "Acción al confirmar una orden o pedido de venta"
+msgstr "Acción al confirmar una orden o pedido de venta"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation
+msgid "Acción al recibir un pedido"
+msgstr "Acción al recibir un pedido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice
+msgid "Acción sobre la factura al confirmar un pedido"
+msgstr "Acción sobre la factura al confirmar un pedido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice
+msgid "Acción sobre la factura al confirmar una orden o pedido de venta"
+msgstr "Acción sobre la factura al confirmar una orden o pedido de venta"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_journal
+msgid "Account Journal for MercadoLibre"
+msgstr "Diario Contable para MercadoLibre"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_journal_shp
+msgid "Account Journal for MercadoLibre (SHP)"
+msgstr "Diario Contable para MercadoLibre (SHP)"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_company_page_mercadolibre_accounting
+msgid "Automatic Record Payment"
+msgstr "Registro Automático de Pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_payment_receipt_validation__validate
+msgid "Autovalidación"
+msgstr "Autovalidación"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__ticket
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__ticket
+msgid "Boleta"
+msgstr "Boleta"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_payment_receipt_validation__draft
+msgid "Borrador"
+msgstr "Borrador"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_res_company
+msgid "Companies"
+msgstr "Empresas"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_payment_receipt_validation__concile
+msgid "Conciliar"
+msgstr "Conciliar"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_company_page_mercadolibre_accounting
+msgid "Configuración Contabilidad"
+msgstr "Configuración Contabilidad"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__count
+msgid "Count"
+msgstr "Cantidad"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
+msgid "Crear Facturas"
+msgstr "Crear Facturas"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_tree
+msgid "Crear Pago"
+msgstr "Crear Pago"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_tree
+msgid "Crear Pago Envio Proveedor"
+msgstr "Crear Pago Envio Proveedor"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_tree
+msgid "Crear Pago Proveedor"
+msgstr "Crear Pago Proveedor"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__create_uid
+msgid "Created by"
+msgstr "Creado por"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__create_date
+msgid "Created on"
+msgstr "Creado el"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_analytic_account_id
+msgid "Cuenta Analítica"
+msgstr "Cuenta Analítica"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_journal_id
+msgid "Diario Facturacion"
+msgstr "Diario Facturacion"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_journal_id_full
+msgid "Diario Facturacion Full"
+msgstr "Diario Facturacion Full"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__display_name
+msgid "Display Name"
+msgstr "Nombre para Mostrar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice_dont_send
+msgid "Dont really send, just prepare to post invoice."
+msgstr "No enviar realmente, solo preparar factura para publicar."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_delivered_invoice_draft
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_delivered_invoice_draft
+msgid "Entregado > Factura borrador"
+msgstr "Entregado > Factura borrador"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_delivered_invoice
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_delivered_invoice
+msgid "Entregado > Facturar"
+msgstr "Entregado > Facturar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__invoice
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__invoice
+msgid "Factura"
+msgstr "Factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__invoice_posted
+msgid "Factura enviada"
+msgstr "Factura enviada"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_form
+msgid "Facturar"
+msgstr "Facturar"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_form
+msgid "Facturar meli"
+msgstr "Facturar meli"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__id
+msgid "ID"
+msgstr "ID"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__unknown
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__unknown
+msgid "Indefinido"
+msgstr ""
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_created
+msgid "Invoice Created"
+msgstr "Factura Creada"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_fiscal_documents
+msgid "Invoice Fiscal Documents"
+msgstr "Documentos Fiscales de Factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_pdf
+msgid "Invoice PDF"
+msgstr "PDF de Factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_posted
+msgid "Invoice Posted"
+msgstr "Factura Publicada"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_xml
+msgid "Invoice XML"
+msgstr "XML de Factura"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
+msgid "Invoices"
+msgstr "Facturas"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_account_move
+msgid "Journal Entry"
+msgstr "Asiento Contable"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__write_uid
+msgid "Last Updated by"
+msgstr "Última actualización por"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__write_date
+msgid "Last Updated on"
+msgstr "Última actualización el"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_set_fully_invoice
+msgid ""
+"Marcar como completamente facturado la orden correspondiente (incluido linea"
+" de envio)"
+msgstr "Marcar como completamente facturado la orden correspondiente (incluido linea de envio)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_res_partner
+msgid "MercadoLibre Partner"
+msgstr "Contacto de MercadoLibre"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_res_partner_shp
+msgid "MercadoLibre Partner (SHP)"
+msgstr "Contacto de MercadoLibre (SHP)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_public_wizard
+msgid "Mercadolibre publicar ordenes - Wizard"
+msgstr "Mercadolibre publicar ordenes - Wizard"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__manual
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__manual
+msgid "No facturar"
+msgstr "No facturar"
+
+#. module: meli_oerp_accounting
+#: model:account.payment.method,name:meli_oerp_accounting.account_payment_method_manual_in
+#: model:account.payment.method,name:meli_oerp_accounting.account_payment_method_manual_out
+msgid "Online"
+msgstr "En línea"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_pdf_filename
+msgid "PDF Filename"
+msgstr "Nombre de Archivo PDF"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_invoice_draft
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_invoice_draft
+msgid "Pagado > Factura borrador"
+msgstr "Pagado > Factura borrador"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_invoice
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_invoice
+msgid "Pagado > Facturar"
+msgstr "Pagado > Facturar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation__paid_confirm_with_invoice
+msgid "Pagado>Facturado"
+msgstr "Pagado>Facturado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation__paid_delivered_with_invoice
+msgid "Pagado>Facturado y Entregado"
+msgstr "Pagado>Facturado y Entregado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_payment_id
+msgid "Pago"
+msgstr "Pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_supplier_payment_shipment_id
+msgid "Pago Envio a Proveedor"
+msgstr "Pago Envio a Proveedor"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_supplier_payment_id
+msgid "Pago a Proveedor"
+msgstr "Pago a Proveedor"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_account_payment__meli_payment_id
+msgid "Pago de MP"
+msgstr "Pago de MP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_payments
+msgid "Pagos en MercadoLibre"
+msgstr "Pagos en MercadoLibre"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_account_payment_method
+msgid "Payment Methods"
+msgstr "Métodos de Pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_payment_receipt_validation
+msgid "Payment validation"
+msgstr "Validación de pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_account_payment
+msgid "Payments"
+msgstr "Pagos"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_company_page_mercadolibre_accounting
+msgid "Payments configuration"
+msgstr "Configuración de pagos"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_orders
+msgid "Pedidos en MercadoLibre"
+msgstr "Pedidos en MercadoLibre"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice
+msgid "Send Invoice"
+msgstr "Enviar factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_supplier_fea
+msgid "Process payments fea to Supplier ML"
+msgstr "Procesar pagos de comisiones a Proveedor ML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_customer
+msgid "Process payments from Customer"
+msgstr "Procesar pagos de Cliente"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_supplier_shipment
+msgid "Process payments shipping list cost to Supplier ML"
+msgstr "Procesar pagos de costo de lista de envío a Proveedor ML"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
+msgid "Publicar Facturas"
+msgstr "Publicar Facturas"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_journal_report_id
+msgid "Reporte de factura"
+msgstr "Reporte de factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_sale_order
+msgid "Sales Order"
+msgstr "Pedido de Venta"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_set_fully_invoice
+msgid "Set Fully Invoice"
+msgstr "Marcar Completamente Facturado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_type
+msgid "Tipo de factura"
+msgstr "Tipo de factura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice
+msgid "Try to post invoice, when order is revisited or refreshed."
+msgstr "Intentar publicar factura cuando el pedido sea revisado o actualizado."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
+msgid "Verificar Facturas"
+msgstr "Verificar Facturas"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_xml_filename
+msgid "XML Filename"
+msgstr "Nombre de Archivo XML"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_form
+msgid "¿Está seguro que quiere crear una factura desde meli_oerp?"
+msgstr "¿Está seguro que quiere crear una factura desde meli_oerp?"

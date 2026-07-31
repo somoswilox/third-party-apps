@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+			<record model="ir.ui.view" id="view_company_page_mercadolibre_multiple">
+					<field name="name">res.company.form.mercadolibre.multiple</field>
+					<field name="model">res.company</field>
+					<field name="inherit_id" ref="meli_oerp.view_company_page_mercadolibre"/>
+					<field name="arch" type="xml">
+              <data>
+								<notebook>
+										<page string="MercadoLibre Multiple" invisible="1">
+											<field name="mercadolibre_connections" invisible="0" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager"
+                              readonly="1">
+                          <list>
+                            <field name="company_id"/>
+                            <field name="name"/>
+                            <field name="client_id"/>
+                            <!--field name="state"/-->
+                            <field name="type"/>
+                          </list>
+                      </field>
+										</page>
+								</notebook>
+              </data>
+					</field>
+			</record>
+
+      <record model="ir.ui.view" id="view_company_page_mercadolibre_seller_perms">
+            <field name="name">res.company.form.mercadolibre.seller.perms</field>
+            <field name="model">res.company</field>
+            <field name="inherit_id" ref="meli_oerp.view_company_page_mercadolibre"/>
+            <field name="arch" type="xml">
+                <xpath expr="//field[@name='mercadolibre_seller_team']" position="after">
+                    <button name="action_meli_assign_seller_permissions" type="object"
+                            string="Asignar permisos ML al Vendedor / Equipo" class="btn-link" icon="fa-shield"
+                            confirm="Se agregarán los grupos de MercadoLibre Manager al Vendedor ML y a los miembros del Equipo de ventas ML, necesarios para operar la cuenta. ¿Confirmar?"/>
+                </xpath>
+            </field>
+        </record>
+
+      <record model="ir.ui.view" id="view_company_page_mercadolibre_connections">
+					<field name="name">res.company.form.mercadolibre.connections</field>
+					<field name="model">res.company</field>
+					<field name="inherit_id" ref="meli_oerp.view_company_page_mercadolibre"/>
+					<field name="arch" type="xml">
+              <xpath expr="//group[@name='Account']" position="before">
+                  <group string="Multiple Accounts" name="Accounts">
+                    <field name="mercadolibre_connections" invisible="0" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager"
+                            readonly="1">
+                        <list>
+                          <field name="company_id"/>
+                          <field name="name"/>
+                          <field name="client_id"/>
+                          <!--field name="state"/-->
+                          <field name="type"/>
+                        </list>
+                    </field>
+                  </group>
+                </xpath>
+					</field>
+			</record>
+
+
+
+		</data>
+</odoo>

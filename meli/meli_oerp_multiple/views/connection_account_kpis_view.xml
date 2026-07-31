@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+    <record id="view_connection_account_mercadolibre_kpis_inherit" model="ir.ui.view">
+      <field name="name">mercadolibre.account.kpis.form.inherit</field>
+      <field name="model">mercadolibre.account</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.view_connection_account_mercadolibre"/>
+      <field name="arch" type="xml">
+        <xpath expr="//form//sheet//notebook" position="inside">
+          <page string="Resume">
+            <group string="Period &amp; Refresh">
+              <group>
+                <field name="kpi_from"/>
+                <field name="kpi_to"/>
+              </group>
+              <group>
+                <field name="refresh_count_period" readonly="1"/>
+                <field name="last_kpi_refresh_at" readonly="1"/>
+              </group>
+              <button name="action_refresh_kpis" type="object" string="Refresh KPIs" class="btn-primary"/>
+            </group>
+
+            <separator string="Sales" colspan="4"/>
+            <group>
+              <group string="Counts">
+                <field name="sales_total" readonly="1"/>
+                <field name="sales_paid" readonly="1"/>
+                <field name="sales_delivered" readonly="1"/>
+                <field name="sales_cancelled" readonly="1"/>
+                <field name="sales_returned" readonly="1"/>
+                <field name="sales_missing" readonly="1"/>
+              </group>
+              <group string="Proportions (%)">
+                <field name="sales_paid_pct" readonly="1"/>
+                <field name="sales_delivered_pct" readonly="1"/>
+                <field name="sales_cancelled_pct" readonly="1"/>
+                <field name="sales_returned_pct" readonly="1"/>
+                <field name="sales_missing_pct" readonly="1"/>
+              </group>
+              <group string="By Team (JSON)">
+                <field name="sales_by_team_json" nolabel="1" widget="text" readonly="1"/>
+              </group>
+            </group>
+
+            <separator string="Invoices" colspan="4"/>
+            <group>
+              <group string="Counts">
+                <field name="inv_total" readonly="1"/>
+                <field name="inv_conciled" readonly="1"/>
+                <field name="inv_not_conciled" readonly="1"/>
+                <field name="inv_not_invoiced" readonly="1"/>
+              </group>
+              <group string="Proportions (%)">
+                <field name="inv_conciled_pct" readonly="1"/>
+                <field name="inv_not_conciled_pct" readonly="1"/>
+                <field name="inv_not_invoiced_pct" readonly="1"/>
+              </group>
+              <group string="By Team (JSON)">
+                <field name="invoices_by_team_json" nolabel="1" widget="text" readonly="1"/>
+              </group>
+            </group>
+
+            <separator string="Publications &amp; Stock Sync" colspan="4"/>
+            <group>
+              <group string="Counts">
+                <field name="pub_total" readonly="1"/>
+                <field name="pub_synced_active" readonly="1"/>
+                <field name="pub_synced_pause" readonly="1"/>
+                <field name="pub_synced_updating" readonly="1"/>
+                <field name="pub_synced_updated_problems" readonly="1"/>
+                <field name="pub_error" readonly="1"/>
+                <field name="pub_unsynced" readonly="1"/>
+              </group>
+              <group string="Proportions (%)">
+                <field name="pub_synced_active_pct" readonly="1"/>
+                <field name="pub_synced_pause_pct" readonly="1"/>
+                <field name="pub_synced_updating_pct" readonly="1"/>
+                <field name="pub_synced_updated_problems_pct" readonly="1"/>
+                <field name="pub_error_pct" readonly="1"/>
+                <field name="pub_unsynced_pct" readonly="1"/>
+              </group>
+              <group string="By Team (JSON)">
+                <field name="publications_by_team_json" nolabel="1" widget="text" readonly="1"/>
+              </group>
+            </group>
+          </page>
+        </xpath>
+      </field>
+    </record>
+  </data>
+</odoo>

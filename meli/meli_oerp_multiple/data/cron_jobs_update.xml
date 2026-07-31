@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+	<!-- No noupdate - these will be created/updated on module upgrade -->
+	<data>
+
+		<!-- Cron to process orders marked for bulk ML update via wizard action -->
+		<!-- Disabled by default; enable manually from Settings > Technical > Scheduled Actions -->
+		<record id="ir_cron_meli_batch_update_marked_orders" model="ir.cron">
+			<field name="name">Meli Batch Update Marked Orders</field>
+			<field eval="False" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">5</field>
+			<field name="interval_type">minutes</field>
+			<!--field name="numbercall">-1</field-->
+			<!--field eval="False" name="doall" /-->
+			<field ref="meli_oerp.model_mercadolibre_orders" name="model_id" />
+			<field name="state">code</field>
+			<field name="code">model.cron_batch_update_marked_orders(batch_size=20)</field>
+			<field name="priority">2000</field>
+		</record>
+
+		<!-- Safety-net: auto-postea borradores AFIP de pedidos ML (path liviano, sin refetch a la API ML) -->
+		<!-- Disabled by default; enable manually from Settings > Technical > Scheduled Actions -->
+		<record id="ir_cron_meli_drain_draft_invoices" model="ir.cron">
+			<field name="name">Meli Drain Draft AFIP Invoices</field>
+			<field eval="False" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">15</field>
+			<field name="interval_type">minutes</field>
+			<field ref="meli_oerp.model_mercadolibre_orders" name="model_id" />
+			<field name="state">code</field>
+			<field name="code">model.cron_meli_drain_draft_invoices(batch_size=30)</field>
+			<field name="priority">2100</field>
+		</record>
+
+		<!-- Cron to update BOM line thresholds for fast bottleneck detection -->
+		<record id="ir_cron_meli_bom_thresholds" model="ir.cron">
+			<field name="name">Meli Update BOM Thresholds</field>
+			<field eval="True" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">1</field>
+			<field name="interval_type">hours</field>
+			<!--field name="numbercall">-1</field-->
+			<!--field eval="False" name="doall" /-->
+			<field ref="mrp.model_mrp_bom" name="model_id" />
+			<field name="state">code</field>
+			<field name="code">model.cron_update_meli_thresholds(limit=500)</field>
+			<field name="priority">1000</field>
+		</record>
+
+	</data>
+
+	<!-- MEJORA #3 (enable-by-default, conservador): el diagnostic de stock se shippea en un
+	     bloque noupdate="1" y active="True". Efecto de -u (ver odoo/tools/convert.py _tag_record):
+	       · instalaciones NUEVAS  → el registro se crea habilitado por default.
+	       · instalaciones EXISTENTES → en cada upgrade el registro YA existe y noupdate lo SALTA
+	         (return None): NO se re-escribe active, se respeta el estado que eligió el cliente
+	         (deliberadamente apagado sigue apagado; encendido a mano sigue encendido). Antes,
+	         al vivir en el bloque sin noupdate, cada -u re-forzaba active=False y pisaba al cliente.
+	     Correr no hace daño: el gate del REQUISITO #1 (Publicar Stock por cuenta/config) protege. -->
+	<data noupdate="1">
+		<!-- Cron to detect and reactivate paused ML publications that have stock in Odoo.
+		     Runs every 30 min. Hits the ML API only for products with meli_last_status=paused
+		     and stock_quant.available > 0, and ONLY for accounts/configs whose "Publicar Stock"
+		     (mercadolibre_cron_post_update_stock) is ON. To disable per instance: Settings >
+		     Technical > Scheduled Actions > "Meli Stock Diagnostic". -->
+		<record id="ir_cron_meli_stock_diagnostic" model="ir.cron">
+			<field name="name">Meli Stock Diagnostic</field>
+			<field eval="True" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">30</field>
+			<field name="interval_type">minutes</field>
+			<field ref="meli_oerp_multiple.model_mercadolibre_account" name="model_id" />
+			<field name="state">code</field>
+			<field name="code">model.cron_meli_stock_diagnostic()</field>
+			<field name="priority">2000</field>
+		</record>
+
+		<!-- Refresca el contador de mensajes del comprador sin leer (post-venta) [#499] -->
+		<record id="ir_cron_meli_refresh_unread" model="ir.cron">
+			<field name="name">Meli: mensajes del comprador sin leer</field>
+			<field eval="True" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">10</field>
+			<field name="interval_type">minutes</field>
+			<field ref="meli_oerp_multiple.model_mercadolibre_account" name="model_id" />
+			<field name="state">code</field>
+			<field name="code">model.cron_meli_refresh_unread()</field>
+			<field name="priority">2100</field>
+		</record>
+
+	</data>
+</odoo>

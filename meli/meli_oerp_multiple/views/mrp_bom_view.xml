@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+
+    <!-- Extend BOM form to show threshold in lines -->
+    <record id="mrp_bom_form_view_meli" model="ir.ui.view">
+        <field name="name">mrp.bom.form.meli</field>
+        <field name="model">mrp.bom</field>
+        <field name="inherit_id" ref="mrp.mrp_bom_form_view"/>
+        <field name="arch" type="xml">
+            <!-- Add threshold column to BOM lines tree -->
+            <xpath expr="//field[@name='bom_line_ids']/list//field[@name='product_qty']" position="after">
+                <field name="meli_min_stock_threshold" string="ML Threshold" readonly="1" optional="show"/>
+                <field name="meli_bottleneck_product_id" string="Cuello de botella" readonly="1" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Extend BOM tree/list view to show ML Stock Status with badge and colors -->
+    <record id="mrp_bom_tree_view_meli" model="ir.ui.view">
+        <field name="name">mrp.bom.tree.meli</field>
+        <field name="model">mrp.bom</field>
+        <field name="inherit_id" ref="mrp.mrp_bom_tree_view"/>
+        <field name="arch" type="xml">
+            <!-- Add decoration to list for row coloring -->
+            <xpath expr="//list" position="attributes">
+                <attribute name="decoration-danger">meli_stock_level == 'sin_stock'</attribute>
+                <attribute name="decoration-warning">meli_stock_level == 'stock_bajo'</attribute>
+                <attribute name="decoration-success">meli_stock_level == 'stock_ok'</attribute>
+            </xpath>
+
+            <!-- Add new fields after product_qty -->
+            <xpath expr="//field[@name='product_qty']" position="after">
+                <!-- Badge for stock level -->
+                <field name="meli_stock_level" string="Nivel Stock" widget="badge" optional="show"
+                       decoration-danger="meli_stock_level == 'sin_stock'"
+                       decoration-warning="meli_stock_level == 'stock_bajo'"
+                       decoration-success="meli_stock_level == 'stock_ok'"/>
+                <!-- Descriptive text with all info -->
+                <field name="meli_stock_display" string="Estado Stock ML" optional="show"/>
+                <!-- Keep original threshold as optional/hidden -->
+                <field name="meli_min_stock_threshold" string="ML Threshold" optional="hide"/>
+                <!-- Bottleneck component -->
+                <field name="meli_bottleneck_product_id" string="Cuello de botella" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Add search filters for stock level -->
+    <record id="mrp_bom_search_view_meli" model="ir.ui.view">
+        <field name="name">mrp.bom.search.meli</field>
+        <field name="model">mrp.bom</field>
+        <field name="inherit_id" ref="mrp.view_mrp_bom_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <separator/>
+                <filter string="Sin Stock (ML)" name="meli_sin_stock"
+                        domain="[('meli_threshold_stored', '=', 0), ('meli_bottleneck_product_id', '!=', False)]"/>
+                <filter string="Stock Bajo (ML &lt; 5)" name="meli_stock_bajo"
+                        domain="[('meli_threshold_stored', '&gt;', 0), ('meli_threshold_stored', '&lt;', 5)]"/>
+                <filter string="Stock OK (ML)" name="meli_stock_ok"
+                        domain="[('meli_threshold_stored', '&gt;=', 5)]"/>
+                <separator/>
+                <group>
+                    <filter string="Cuello de botella" name="group_bottleneck"
+                            context="{'group_by': 'meli_bottleneck_product_id'}"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

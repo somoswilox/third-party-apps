@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- CRON Status Kanban View (for embedding in account form) -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_status_kanban">
+            <field name="name">mercadolibre.cron.status.kanban</field>
+            <field name="model">mercadolibre.cron.status</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_small_column" quick_create="false" create="false">
+                    <field name="id"/>
+                    <field name="cron_type"/>
+                    <field name="cron_name"/>
+                    <field name="is_enabled"/>
+                    <field name="last_run_date"/>
+                    <field name="last_run_state"/>
+                    <field name="last_run_duration"/>
+                    <field name="avg_duration"/>
+                    <field name="min_duration"/>
+                    <field name="max_duration"/>
+                    <field name="avg_duration_per_item"/>
+                    <field name="total_executions"/>
+                    <field name="total_items_processed"/>
+                    <field name="success_rate"/>
+                    <field name="kanban_color"/>
+                    <field name="next_call"/>
+                    <field name="last_error_message"/>
+                    <field name="last_log_summary"/>
+                    <templates>
+                        <t t-name="card">
+                            <div t-attf-class="oe_kanban_color_#{kanban_color} oe_kanban_global_click oe_kanban_card p-2">
+                                <!-- Row 1: Name + Toggle -->
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <strong class="text-truncate" style="font-size:13px;">
+                                        <field name="cron_name"/>
+                                    </strong>
+                                    <field name="is_enabled" widget="boolean_toggle"/>
+                                </div>
+
+                                <!-- Row 2: Last run + Next run -->
+                                <div class="d-flex justify-content-between mb-1" style="font-size:11px;">
+                                    <span class="text-muted">
+                                        <t t-if="record.last_run_date.value">
+                                            <i class="fa fa-clock-o me-1" title="Última ejecución" role="img" aria-label="Última ejecución"/>
+                                            <field name="last_run_date"/>
+                                        </t>
+                                        <t t-else="">
+                                            <span>Nunca ejecutado</span>
+                                        </t>
+                                    </span>
+                                    <span class="text-muted" t-if="record.next_call.value">
+                                        <i class="fa fa-calendar me-1" title="Próxima ejecución" role="img" aria-label="Próxima ejecución"/>
+                                        <field name="next_call"/>
+                                    </span>
+                                </div>
+
+                                <!-- Row 3: Duration pills -->
+                                <div class="d-flex gap-1 mb-1">
+                                    <span class="badge rounded-pill text-bg-light border" style="font-size:11px;">
+                                        Última:
+                                        <t t-if="record.last_run_duration.raw_value">
+                                            <t t-if="record.last_run_duration.raw_value &lt; 60">
+                                                <t t-esc="record.last_run_duration.raw_value.toFixed(1)"/>s
+                                            </t>
+                                            <t t-else="">
+                                                <t t-esc="(record.last_run_duration.raw_value / 60).toFixed(1)"/>m
+                                            </t>
+                                        </t>
+                                        <t t-else="">-</t>
+                                    </span>
+                                    <span class="badge rounded-pill text-bg-light border" style="font-size:11px;">
+                                        Prom:
+                                        <t t-if="record.avg_duration.raw_value">
+                                            <t t-if="record.avg_duration.raw_value &lt; 60">
+                                                <t t-esc="record.avg_duration.raw_value.toFixed(1)"/>s
+                                            </t>
+                                            <t t-else="">
+                                                <t t-esc="(record.avg_duration.raw_value / 60).toFixed(1)"/>m
+                                            </t>
+                                        </t>
+                                        <t t-else="">-</t>
+                                    </span>
+                                </div>
+
+                                <!-- Row 4: Stats pills -->
+                                <div class="d-flex gap-1">
+                                    <span class="badge rounded-pill text-bg-secondary" style="font-size:11px;">
+                                        <field name="total_executions"/> ejec.
+                                    </span>
+                                    <span t-attf-class="badge rounded-pill #{record.success_rate.raw_value >= 90 ? 'text-bg-success' : record.success_rate.raw_value >= 70 ? 'text-bg-warning' : 'text-bg-danger'}" style="font-size:11px;">
+                                        <field name="success_rate" widget="float" digits="[3,0]"/>% éxito
+                                    </span>
+                                </div>
+
+                                <!-- Row 5: Error (only shown when last run had error) -->
+                                <div t-if="record.last_run_state.raw_value == 'error'" class="mt-1 text-danger" style="font-size:10px; word-break:break-word; max-height:48px; overflow:hidden;">
+                                    <i class="fa fa-exclamation-triangle me-1" title="Error"/>
+                                    <field name="last_error_message"/>
+                                </div>
+                                <!-- Row 5b: Summary (shown for success/warning) -->
+                                <div t-if="record.last_log_summary.value and record.last_run_state.raw_value != 'error'" class="mt-1 text-muted" style="font-size:10px;">
+                                    <field name="last_log_summary"/>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <!-- CRON Status Tree View -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_status_tree">
+            <field name="name">mercadolibre.cron.status.tree</field>
+            <field name="model">mercadolibre.cron.status</field>
+            <field name="arch" type="xml">
+                <list create="false" decoration-success="last_run_state == 'success'" decoration-danger="last_run_state == 'error'" decoration-warning="last_run_state == 'warning'" decoration-muted="not is_enabled">
+                    <field name="cron_name"/>
+                    <field name="is_enabled" widget="boolean_toggle"/>
+                    <field name="last_run_state" widget="badge"
+                        decoration-success="last_run_state == 'success'"
+                        decoration-warning="last_run_state == 'warning'"
+                        decoration-danger="last_run_state == 'error'"
+                        decoration-info="last_run_state == 'running'"/>
+                    <field name="last_run_date"/>
+                    <field name="total_executions" string="Ejecuciones"/>
+                    <field name="total_items_processed" string="Items"/>
+                    <field name="avg_duration_display" string="Dur. Prom."/>
+                    <field name="avg_duration_per_item_display" string="Dur/Item Prom."/>
+                    <field name="success_rate" string="Éxito %" widget="progressbar"/>
+                    <button name="action_run_now" type="object" string="Ejecutar" icon="fa-play" class="btn-primary"/>
+                    <button name="action_view_executions" type="object" string="Historial" icon="fa-history"/>
+                </list>
+            </field>
+        </record>
+
+        <!-- CRON Status Form View -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_status_form">
+            <field name="name">mercadolibre.cron.status.form</field>
+            <field name="model">mercadolibre.cron.status</field>
+            <field name="arch" type="xml">
+                <form string="Estado CRON">
+                    <sheet>
+                        <div class="oe_title">
+                            <h1><field name="cron_name"/></h1>
+                        </div>
+                        <group>
+                            <group string="Configuración">
+                                <field name="connection_account"/>
+                                <field name="cron_type"/>
+                                <field name="is_enabled"/>
+                            </group>
+                            <group string="Última Ejecución">
+                                <field name="last_run_state" widget="badge"/>
+                                <field name="last_run_date"/>
+                                <field name="last_run_duration"/>
+                                <field name="last_log_summary" invisible="not last_log_summary" string="Resumen"/>
+                                <field name="last_error_message" invisible="not last_error_message" string="Error" widget="text"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group string="Estadísticas Generales">
+                                <field name="total_executions"/>
+                                <field name="total_items_processed"/>
+                                <field name="success_rate" widget="progressbar"/>
+                            </group>
+                            <group string="Duración del CRON (seg)">
+                                <field name="last_run_duration" string="Última"/>
+                                <field name="avg_duration" string="Promedio"/>
+                                <field name="min_duration" string="Mínima"/>
+                                <field name="max_duration" string="Máxima"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group string="Duración por Item (seg)">
+                                <field name="last_duration_per_item" string="Última"/>
+                                <field name="avg_duration_per_item" string="Promedio"/>
+                                <field name="min_duration_per_item" string="Mínima"/>
+                                <field name="max_duration_per_item" string="Máxima"/>
+                            </group>
+                            <group string="Items Última Ejecución">
+                                <field name="last_items_processed" string="Items Procesados"/>
+                            </group>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <!-- CRON Execution Tree View -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_execution_tree">
+            <field name="name">mercadolibre.cron.execution.tree</field>
+            <field name="model">mercadolibre.cron.execution</field>
+            <field name="arch" type="xml">
+                <list decoration-success="state == 'success'" decoration-danger="state == 'error'" decoration-warning="state == 'warning'" decoration-info="state == 'running'">
+                    <field name="date_start"/>
+                    <field name="cron_type"/>
+                    <field name="state" widget="badge"
+                        decoration-success="state == 'success'"
+                        decoration-warning="state == 'warning'"
+                        decoration-danger="state == 'error'"
+                        decoration-info="state == 'running'"/>
+                    <field name="duration_display" string="Duración"/>
+                    <field name="progress_display" string="Resumen"/>
+                    <field name="items_processed" optional="show"/>
+                    <field name="items_success" optional="show"/>
+                    <field name="items_error" optional="show"/>
+                    <field name="orders_by_notification" string="Notif." optional="hide"/>
+                    <field name="orders_new" string="Nuevas" optional="hide"/>
+                    <field name="orders_by_query" string="Query" optional="hide"/>
+                    <field name="orders_timing_display" string="t/orden" optional="show"/>
+                    <field name="duration_per_item_display" string="Dur/Item" optional="hide"/>
+                    <field name="date_end"/>
+                </list>
+            </field>
+        </record>
+
+        <!-- CRON Execution Form View -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_execution_form">
+            <field name="name">mercadolibre.cron.execution.form</field>
+            <field name="model">mercadolibre.cron.execution</field>
+            <field name="arch" type="xml">
+                <form string="Ejecución CRON">
+                    <header>
+                        <field name="state" widget="statusbar"/>
+                    </header>
+                    <sheet>
+                        <div class="oe_title">
+                            <h1><field name="display_name"/></h1>
+                        </div>
+                        <group>
+                            <group string="Información">
+                                <field name="connection_account"/>
+                                <field name="cron_type"/>
+                                <field name="date_start"/>
+                                <field name="date_end"/>
+                                <field name="duration_display" string="Duración"/>
+                            </group>
+                            <group string="Resultados">
+                                <field name="items_processed"/>
+                                <field name="items_success"/>
+                                <field name="items_error"/>
+                            </group>
+                        </group>
+                        <group string="Desglose de Órdenes" invisible="cron_type != 'orders'">
+                            <group string="Fuentes">
+                                <field name="orders_by_notification" string="Por Notificación"/>
+                                <field name="orders_new" string="Nuevas (sin procesar)"/>
+                                <field name="orders_by_query" string="Por Query (seguridad)"/>
+                            </group>
+                            <group string="Benchmark por Orden">
+                                <field name="orders_timing_display" string="Resumen" readonly="1"/>
+                                <field name="orders_avg_time" string="Prom (seg)" digits="[10,3]"/>
+                                <field name="orders_max_time" string="Máx (seg)" digits="[10,3]"/>
+                                <field name="orders_min_time" string="Mín (seg)" digits="[10,3]"/>
+                            </group>
+                        </group>
+                        <group string="Detalles" invisible="not error_message and (cron_type == 'orders' or not log_summary)">
+                            <field name="error_message" invisible="not error_message"/>
+                            <field name="log_summary" invisible="not log_summary or cron_type == 'orders'"/>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <!-- CRON Execution Kanban View -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_execution_kanban">
+            <field name="name">mercadolibre.cron.execution.kanban</field>
+            <field name="model">mercadolibre.cron.execution</field>
+            <field name="arch" type="xml">
+                <kanban default_group_by="cron_type" quick_create="false" create="false">
+                    <field name="id"/>
+                    <field name="cron_type"/>
+                    <field name="state"/>
+                    <field name="date_start"/>
+                    <field name="duration_display"/>
+                    <field name="items_processed"/>
+                    <field name="kanban_color"/>
+                    <templates>
+                        <t t-name="card">
+                            <div t-attf-class="oe_kanban_color_#{kanban_color} oe_kanban_global_click oe_kanban_card">
+                                <div class="o_kanban_record_top">
+                                    <div class="o_kanban_record_headings">
+                                        <field name="date_start"/>
+                                    </div>
+                                    <field name="state" widget="badge"
+                                        decoration-success="state == 'success'"
+                                        decoration-warning="state == 'warning'"
+                                        decoration-danger="state == 'error'"
+                                        decoration-info="state == 'running'"/>
+                                </div>
+                                <div class="o_kanban_record_body">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <i class="fa fa-clock-o" title="Duración" role="img" aria-label="Duración"/> <field name="duration_display"/>
+                                        </div>
+                                        <div class="col-6">
+                                            <i class="fa fa-tasks" role="img" aria-label="Items"/> <field name="items_processed"/> items
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <!-- Search View for CRON Executions -->
+        <record model="ir.ui.view" id="view_mercadolibre_cron_execution_search">
+            <field name="name">mercadolibre.cron.execution.search</field>
+            <field name="model">mercadolibre.cron.execution</field>
+            <field name="arch" type="xml">
+                <search>
+                    <field name="connection_account"/>
+                    <field name="cron_type"/>
+                    <separator/>
+                    <filter string="Exitosos" name="filter_success" domain="[('state', '=', 'success')]"/>
+                    <filter string="Con Errores" name="filter_error" domain="[('state', '=', 'error')]"/>
+                    <filter string="Ejecutando" name="filter_running" domain="[('state', '=', 'running')]"/>
+                    <separator/>
+                    <filter string="Hoy" name="filter_today" domain="[('date_start', '>=', (context_today()).strftime('%Y-%m-%d'))]"/>
+                    <filter string="Última Semana" name="filter_week" domain="[('date_start', '>=', (context_today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d'))]"/>
+                    <separator/>
+                    <group>
+                        <filter string="Tipo de CRON" name="group_cron_type" context="{'group_by': 'cron_type'}"/>
+                        <filter string="Estado" name="group_state" context="{'group_by': 'state'}"/>
+                        <filter string="Fecha" name="group_date" context="{'group_by': 'date_start:day'}"/>
+                        <filter string="Cuenta" name="group_account" context="{'group_by': 'connection_account'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <!-- Action for CRON Executions -->
+        <record model="ir.actions.act_window" id="action_mercadolibre_cron_executions">
+            <field name="name">Historial de Ejecuciones CRON</field>
+            <field name="res_model">mercadolibre.cron.execution</field>
+            <field name="view_mode">list,kanban,form</field>
+            <field name="search_view_id" ref="view_mercadolibre_cron_execution_search"/>
+            <field name="context">{'search_default_filter_today': 1}</field>
+        </record>
+
+    </data>
+</odoo>

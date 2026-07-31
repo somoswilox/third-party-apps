@@ -1,0 +1,837 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+			<record model="ir.ui.view" id="view_connection_account_mercadolibre">
+					<field name="name">mercadolibre.account.form</field>
+					<field name="model">mercadolibre.account</field>
+					<field name="arch" type="xml">
+
+						<form string="MercadoLibre Account">
+							<header>
+								<button name="action_set_active" type="object" string="Activar"
+									class="btn-success"
+									invisible="account_state == 'active' or status == 'disconnected'"/>
+								<button name="action_set_paused" type="object" string="Pausar"
+									class="btn-warning"
+									invisible="account_state == 'paused' or status == 'disconnected'"/>
+								<button name="action_set_configuring" type="object" string="En Configuración"
+									invisible="account_state == 'configuring' or status == 'disconnected'"/>
+								<field name="account_state" widget="statusbar" statusbar_visible="new,configuring,active"/>
+							</header>
+							<sheet>
+								<field name="image_1920" widget="image" class="oe_avatar" options="{'preview_image': 'image_128'}"/>
+								<div class="oe_title">
+									<div class="d-flex align-items-center">
+										<h1 class="me-3"><field name="name"/></h1>
+										<field name="status" widget="badge"
+											decoration-success="status == 'connected'"
+											decoration-danger="status == 'disconnected'"/>
+									</div>
+									<div class="text-muted" invisible="not meli_user_nickname">
+										<span class="me-3">@<field name="meli_user_nickname" readonly="1"/></span>
+										<span invisible="not meli_user_reputation_level" class="badge bg-success">
+											<field name="meli_user_reputation_level" readonly="1"/>
+										</span>
+									</div>
+								</div>
+                  <div class="btn-group oe_button_box" name="button_box_mel" style="width: auto;">
+
+                    <button name='meli_login' type="object"
+  											string="Iniciar sesión"
+  											title="Iniciar sesión en ML"
+                        invisible="status == 'connected'"
+  											class="btn btn-primary oe_stat_button"
+  											icon="fa-user-circle"/>
+
+    									<button name='meli_logout' type="object"
+    											string="Cerrar sesión"
+    											title="Cerrar sesión con ML"
+                          invisible="status == 'disconnected'"
+    											class="btn btn-primary oe_stat_button"
+    											icon="fa-user-circle"/>
+
+                          <button name='meli_refresh_token' type="object"
+        											string="Refrescar Token"
+        											title="Refrescar Token"
+                              invisible="status == 'disconnected'"
+        											class="btn btn-primary oe_stat_button"
+        											icon="fa-refresh"/>
+
+                      <button name='meli_query_orders' type="object"
+                          string="Importar pedidos"
+                          title="Iniciar búsqueda de órdenes/pedidos de ML a Odoo"
+                          icon="fa-cloud-download"
+                          invisible="status == 'disconnected'"
+                          class="btn btn-primary oe_stat_button"/>
+                      <button name='action_refresh_unread_messages' type="object"
+                          string="Refrescar mensajes"
+                          title="Actualizar el contador de mensajes del comprador sin leer en las órdenes"
+                          icon="fa-comments"
+                          invisible="status == 'disconnected'"
+                          class="btn btn-primary oe_stat_button"/>
+
+                      <!--button name='meli_query_products' type="object"
+                          string="Importar productos"
+                          title="Iniciar importación de todos los productos desde ML a Odoo"
+                          invisible="status == 'disconnected'"
+                          icon="fa-cloud-download"
+                          class="oe_stat_button"/-->
+
+                      <button type="action" name="%(action_product_template_import)d"
+                            string="Importar Masivamente"
+                            title="Importar Masivamente"
+                            invisible="status == 'disconnected'"
+                            class="btn btn-primary oe_stat_button"
+                            icon="fa-cloud-download"></button>
+
+                      <button name='meli_update_local_products' type="object"
+                          string="Actualizar productos"
+                          title="Iniciar actualización de productos y stock desde ML a Odoo"
+                          invisible="status == 'disconnected'"
+                          icon="fa-cloud-download"
+                          class="btn btn-primary oe_stat_button"/>
+
+                      <button name='meli_import_categories' type="object"
+                          string="Importar categorías"
+                          title="Iniciar importación de categorías de ML a Odoo (eCommerce)"
+                          invisible="status == 'disconnected'"
+                          icon="fa-cloud-download"
+                          class="btn btn-primary oe_stat_button"/>
+
+                      <button name='meli_pause_all' type="object"
+                              string="Pausar no registrados"
+                              title="Pausar todos los productos publicados en ML que no estan en Odoo"
+                              confirm="¿Está seguro que quiere pausar todos sus productos de ML?"
+                              invisible="status == 'disconnected'"
+                              icon="fa-pause"
+                              class="btn btn-primary oe_stat_button"/>
+
+                      <button name='fix_inconsistent_stock_status' type="object"
+                              string="Corregir Stock Status"
+                              title="Verificar y corregir bindings donde el stock cambió pero el status sigue en 'Actualizado'"
+                              invisible="status == 'disconnected'"
+                              icon="fa-wrench"
+                              class="btn btn-secondary oe_stat_button"/>
+  									<!--button name='orders_update_order' type="object"
+  										string="Actualizar"
+                      invisible="order_id == False"
+  										class="oe_stat_button"
+  										icon="fa-refresh"/-->
+  								</div>
+                <notebook>
+                  <!-- Dashboard Tab - Solo visible cuando está conectado -->
+                  <page string="Dashboard" name="dashboard_page" invisible="status == 'disconnected'">
+                      <field name="summary_header_html" widget="html" nolabel="1" readonly="1"/>
+                  </page>
+                  <page string="Configuración">
+                    <group>
+                      <group>
+                        <field name="redirect_uri"/>
+                      </group>
+                    </group>
+                    <group>
+                      <group>
+                          <field name="type"/>
+                          <field name="meli_login_id"/>
+                          <field name="client_id"/>
+                          <field name="secret_key"/>
+                          <field name="seller_id"/>
+                          <field name="user_product_seller"/>
+                          <field name="multiwarehouse"/>
+                          <field name="connector_version"/>
+                          <field name="ocapi_version"/>
+                          <!--field name="mercadolibre_brands"/-->
+                          <field name="cron_refresh" readonly="0"/>
+                      </group>
+                      <group>
+                          <field name="configuration"/>
+                          <field name="connection_monitor" readonly="0"/>
+                          <field name="official_store_id"/>
+                          <field name="brand"/>
+                          <field name="country_id"/>
+                          <field name="company_id"/>
+                          <field name="access_token" readonly="0"/>
+                          <field name="refresh_token" readonly="0"/>
+                      </group>
+                    </group>
+                    <group groups="base.group_system">
+                      <group string="Rescate (solo administrador técnico)">
+                          <field name="http_proxy"
+                                 placeholder="https://proxy.example.com"/>
+                      </group>
+                    </group>
+                  </page>
+                  <page string="Product Maestro">
+                     <field name="maestro_products">
+                         <list>
+                           <field name="is_master"/>
+                           <field name="is_combo"/>
+                           <field name="name"/>
+                           <field name="sku"/>
+                           <field name="barcode"/>
+                           <field name="meli_id"/>
+                         </list>
+                     </field>
+                 </page>
+                  <page string="Product Bindings">
+                     <field name="mercadolibre_product_template_bindings">
+                         <list>
+                           <field name="name"/>
+			   <field name="conn_id"/>
+                           <field name="sku"/>
+                         </list>
+                     </field>
+                 </page>
+                 <page string="Variant Bindings">
+                     <field name="mercadolibre_product_bindings">
+                         <list>
+                           <field name="name"/>
+                           <field name="conn_id"/>
+                           <field name="conn_variation_id"/>
+                           <field name="sku"/>
+                         </list>
+                     </field>
+                 </page>
+                 <page string="Orders">
+                     <field name="mercadolibre_orders">
+                         <list>
+                           <field name="name"/>
+                           <field name="sale_order"/>
+                           <field name="status"/>
+                           <field name="shipment_status"/>
+                         </list>
+                     </field>
+                 </page>
+                 <page string="Info ML / Multi-Seller">
+                     <group string="Multi-Seller">
+                         <group>
+                             <field name="seller_id" readonly="1"/>
+                             <field name="meli_additional_seller_ids"/>
+                         </group>
+                         <group>
+                             <p class="text-muted">
+                                 Agregue IDs de sellers adicionales separados por coma si esta cuenta
+                                 maneja múltiples vendedores con la misma aplicación.
+                             </p>
+                         </group>
+                     </group>
+                     <group string="Debug / Monitoreo CRON Stock">
+                         <group>
+                             <field name="meli_cron_log_chatter"/>
+                             <field name="meli_cron_stock_top_commit"/>
+                             <field name="meli_cron_stock_minutes" placeholder="0,15,30,45"/>
+                             <field name="meli_cron_stock_timeout"/>
+                         </group>
+                         <group>
+                             <p class="text-muted">
+                                 <b>Log CRON en Chatter:</b> Active para ver logs detallados del CRON de stock
+                                 en el chatter (plan, duración, errores).<br/><br/>
+                                 <b>Top Commit:</b> Cantidad máxima de productos a procesar por ejecución.
+                                 Por defecto: 40. Aumente si el cron termina rápido o reduzca si tarda demasiado.<br/><br/>
+                                 <b>Minutos de ejecución:</b> Especifique en qué minutos exactos ejecutar el cron
+                                 (separados por coma). Ej: "0,15,30,45" para cada 15 min.
+                                 Dejar vacío para usar el intervalo por defecto.<br/><br/>
+                                 <b>Timeout POST:</b> Tiempo máximo (segundos) para cada POST de stock.
+                                 Si un producto excede este tiempo, el CRON se aborta. Por defecto: 10s.
+                             </p>
+                         </group>
+                     </group>
+                     <group string="Info del Usuario ML (/users/me)">
+                         <div class="oe_button_box mb-3">
+                             <button name="action_fetch_user_me" type="object"
+                                     string="Actualizar Info ML"
+                                     class="btn btn-primary"
+                                     icon="fa-refresh"
+                                     invisible="status == 'disconnected'"/>
+                             <button name="action_refresh_multiwarehouse_info" type="object"
+                                     string="Actualizar Info Multiwarehouse"
+                                     class="btn btn-secondary"
+                                     icon="fa-cubes"
+                                     title="Sincroniza el flag multiwarehouse y actualiza meli_user_product_id en productos vinculados"
+                                     invisible="status == 'disconnected'"/>
+                             <button name="action_check_multiwarehouse" type="object"
+                                     string="Check &amp; Test Multiwarehouse"
+                                     class="btn btn-warning"
+                                     icon="fa-stethoscope"
+                                     title="Diagnóstico completo: prueba /users/me, /items/{id} y /user-products/{id}/stock"
+                                     invisible="status == 'disconnected'"/>
+                             <button name="action_diagnose_stock_config" type="object"
+                                     string="Diagnóstico de Stock"
+                                     class="btn btn-info"
+                                     icon="fa-medkit"
+                                     title="Verifica almacén, ubicaciones activas, publicaciones pausadas y consistencia de configuración de stock"
+                                     invisible="status == 'disconnected'"/>
+                         </div>
+                     </group>
+                     <group string="Depósitos ML (stock_location)" invisible="not multiwarehouse">
+                         <field name="meli_stock_location_ids" nolabel="1">
+                             <list string="Depósitos ML" editable="bottom">
+                                 <field name="meli_store_id" readonly="1"/>
+                                 <field name="name" readonly="1"/>
+                                 <field name="status" widget="badge" readonly="1"
+                                        decoration-success="status == 'active'"
+                                        decoration-muted="status == 'inactive'"/>
+                                 <field name="city" readonly="1"/>
+                                 <field name="state_name" readonly="1"/>
+                                 <field name="network_node_id" readonly="1"/>
+                                 <field name="services_stock_location" readonly="1"/>
+                                 <field name="odoo_location_id"
+                                        domain="[('usage', '=', 'internal')]"
+                                        options="{'no_create': True}"/>
+                             </list>
+                         </field>
+                     </group>
+                     <group>
+                         <group string="Datos básicos">
+                             <field name="meli_user_nickname"/>
+                             <field name="meli_user_first_name"/>
+                             <field name="meli_user_last_name"/>
+                             <field name="meli_user_email"/>
+                             <field name="meli_user_phone"/>
+                             <field name="meli_user_type"/>
+                             <field name="meli_user_site_id"/>
+                             <field name="meli_user_status"/>
+                             <field name="meli_user_permalink" widget="url"/>
+                             <field name="meli_user_address"/>
+                         </group>
+                         <group string="Reputación">
+                             <field name="meli_user_reputation_level"/>
+                             <field name="meli_user_reputation_power_seller"/>
+                             <field name="meli_user_transactions_completed"/>
+                             <field name="meli_user_transactions_canceled"/>
+                             <field name="meli_user_ratings_positive"/>
+                             <field name="meli_user_ratings_negative"/>
+                             <field name="meli_user_ratings_neutral"/>
+                             <field name="meli_user_last_sync"/>
+                         </group>
+                     </group>
+                     <field name="meli_user_raw_json" invisible="1"/>
+                     <group invisible="not meli_user_raw_json">
+                         <group>
+                             <button name="action_view_raw_json_popup" type="object"
+                                     string="Ver JSON Completo"
+                                     class="btn btn-secondary"
+                                     icon="fa-code"/>
+                         </group>
+                     </group>
+                 </page>
+                 <page string="CRONs" name="crons_page">
+                     <div class="d-flex flex-wrap gap-2 mb-3">
+                         <button name="action_init_cron_status" type="object"
+                                 string="Inicializar CRONs"
+                                 class="btn btn-secondary"
+                                 icon="fa-cogs"/>
+                         <button name="action_view_cron_executions" type="object"
+                                 string="Ver Historial"
+                                 class="btn btn-secondary"
+                                 icon="fa-history"/>
+                         <button name="action_reset_cron_stats" type="object"
+                                 string="Reset Estadísticas"
+                                 class="btn btn-outline-warning"
+                                 icon="fa-refresh"
+                                 confirm="¿Resetear todas las estadísticas de tiempo a cero?"/>
+                     </div>
+                     <group string="Configuración de CRONs">
+                         <group>
+                             <field name="cron_refresh" string="Auto-refresh Token"/>
+                             <field name="meli_cron_log_chatter" string="Log en Chatter"/>
+                         </group>
+                         <group>
+                             <field name="meli_cron_stock_top_commit" string="Max productos Stock"/>
+                             <field name="meli_cron_stock_minutes" string="Minutos ejecución" placeholder="0,15,30,45"/>
+                             <field name="meli_cron_stock_timeout" string="Timeout (seg)"/>
+                         </group>
+                         <group>
+                             <field name="meli_cron_price_batch_hour" string="Hora batch precio"/>
+                             <field name="meli_cron_price_batch_minute" string="Minuto batch precio"/>
+                             <field name="meli_cron_price_top_commit" string="Batch size precio"/>
+                             <div class="d-flex align-items-center gap-2">
+                                 <field name="meli_cron_price_batch_running" string="Batch en curso" readonly="1" widget="boolean"/>
+                                 <button name="action_reset_price_batch" type="object"
+                                     string="Detener" class="btn btn-sm btn-outline-danger"
+                                     icon="fa-stop" title="Detener batch en curso"
+                                     invisible="not meli_cron_price_batch_running"
+                                     confirm="¿Detener el batch de precios en curso?"/>
+                             </div>
+                             <field name="meli_cron_price_batch_last_display" string="Último batch" readonly="1"/>
+                         </group>
+                     </group>
+                     <separator string="Estado de CRONs"/>
+                     <field name="cron_company_warning" widget="html" nolabel="1" colspan="2"
+                            invisible="not cron_company_warning"/>
+                     <field name="cron_status_ids" mode="kanban" context="{'default_connection_account': id}">
+                         <kanban class="o_kanban_small_column" quick_create="false" create="false">
+                             <field name="id"/>
+                             <field name="cron_type"/>
+                             <field name="cron_name"/>
+                             <field name="is_enabled"/>
+                             <field name="last_run_date"/>
+                             <field name="last_run_state"/>
+                             <field name="last_run_duration"/>
+                             <field name="avg_duration"/>
+                             <field name="total_executions"/>
+                             <field name="success_rate"/>
+                             <field name="kanban_color"/>
+                             <field name="next_call"/>
+                             <field name="interval_display"/>
+                             <field name="ir_cron_id"/>
+                             <field name="ir_cron_active"/>
+                             <field name="cron_mode"/>
+                             <field name="individual_cron_id"/>
+                             <field name="last_items_processed"/>
+                             <field name="next_call_relative"/>
+                             <field name="price_batch_active"/>
+                             <field name="price_batch_running"/>
+                             <field name="price_batch_progress"/>
+                             <templates>
+                                 <t t-name="card">
+                                     <div t-attf-class="oe_kanban_color_#{kanban_color} oe_kanban_global_click oe_kanban_card p-2"
+                                          t-attf-style="#{record.last_run_state.raw_value == 'error' ? 'border-left: 3px solid #dc3545;' : record.last_run_state.raw_value == 'success' ? 'border-left: 3px solid #198754;' : record.last_run_state.raw_value == 'running' ? 'border-left: 3px solid #0d6efd;' : ''}">
+                                         <!-- Row 1: Name + Toggle -->
+                                         <div class="d-flex align-items-center justify-content-between mb-1">
+                                             <strong class="text-truncate" style="font-size:13px;">
+                                                 <field name="cron_name"/>
+                                             </strong>
+                                             <div t-attf-class="d-flex align-items-center gap-1 #{!record.ir_cron_active.raw_value ? 'cron_toggle_warn' : ''}"
+                                                 t-attf-style="#{!record.ir_cron_active.raw_value ? 'filter: hue-rotate(60deg) saturate(1.5);' : ''}">
+                                                 <field name="is_enabled" widget="boolean_toggle"/>
+                                             </div>
+                                         </div>
+
+                                         <!-- Row 2: State + Last run + Interval -->
+                                         <div class="d-flex align-items-center gap-1 mb-1" style="font-size:11px;">
+                                             <field name="last_run_state" widget="badge"
+                                                 decoration-success="last_run_state == 'success'"
+                                                 decoration-warning="last_run_state == 'warning'"
+                                                 decoration-danger="last_run_state == 'error'"
+                                                 decoration-info="last_run_state == 'running'"
+                                                 decoration-muted="last_run_state == 'never'"/>
+                                             <span class="text-muted ms-1">
+                                                 <t t-if="record.last_run_date.value">
+                                                     <field name="last_run_date"/>
+                                                 </t>
+                                                 <t t-else="">Nunca</t>
+                                             </span>
+                                             <t t-if="record.interval_display.value">
+                                                 <span class="badge rounded-pill bg-light text-dark border ms-auto" style="font-size:10px;">
+                                                     <i class="fa fa-repeat me-1"/><t t-esc="record.interval_display.value"/>
+                                                 </span>
+                                             </t>
+                                         </div>
+
+                                         <!-- Row 3: Next call -->
+                                         <div class="mb-1" style="font-size:11px;" t-if="record.next_call.value">
+                                             <span class="text-muted">
+                                                 <i class="fa fa-calendar me-1"/>Próx:
+                                                 <t t-if="record.next_call_relative.value">
+                                                     <b><field name="next_call_relative"/></b>
+                                                     <span style="font-size:10px;"> (<field name="next_call"/>)</span>
+                                                 </t>
+                                                 <t t-else="">
+                                                     <field name="next_call"/>
+                                                 </t>
+                                             </span>
+                                         </div>
+
+                                         <!-- Batch indicator (only for price) -->
+                                         <t t-if="record.price_batch_active.raw_value">
+                                             <div class="mb-1" style="font-size:11px;">
+                                                 <t t-if="record.price_batch_running.raw_value">
+                                                     <span class="badge text-bg-warning">
+                                                         <i class="fa fa-refresh fa-spin me-1"/>BATCH <field name="price_batch_progress"/>
+                                                     </span>
+                                                 </t>
+                                                 <t t-else="">
+                                                     <span class="badge text-bg-info">
+                                                         <i class="fa fa-clock-o me-1"/>Modo BATCH — vía Internal Jobs
+                                                     </span>
+                                                 </t>
+                                             </div>
+                                             <div class="mb-1" style="font-size:10px; color: #6c757d;">
+                                                 <i class="fa fa-info-circle me-1"/>CRON Price deshabilitado automáticamente
+                                             </div>
+                                         </t>
+
+                                         <!-- Row 4: Duration + Stats pills -->
+                                         <div class="d-flex flex-wrap gap-1 align-items-center">
+                                             <t t-if="!record.ir_cron_active.raw_value">
+                                                 <span class="badge rounded-pill text-bg-danger" style="font-size:10px;">
+                                                     <i class="fa fa-exclamation-triangle me-1"/>OFF
+                                                 </span>
+                                             </t>
+                                             <span class="badge rounded-pill text-bg-light border" style="font-size:10px;">
+                                                 <t t-if="record.last_run_duration.raw_value">
+                                                     <t t-if="record.last_run_duration.raw_value &lt; 60">
+                                                         <t t-esc="record.last_run_duration.raw_value.toFixed(1)"/>s
+                                                     </t>
+                                                     <t t-else="">
+                                                         <t t-esc="(record.last_run_duration.raw_value / 60).toFixed(1)"/>m
+                                                     </t>
+                                                 </t>
+                                                 <t t-else="">-</t>
+                                             </span>
+                                             <t t-if="record.last_items_processed.raw_value">
+                                                 <span class="badge rounded-pill text-bg-info" style="font-size:10px;">
+                                                     <field name="last_items_processed"/> items
+                                                 </span>
+                                             </t>
+                                             <span class="badge rounded-pill text-bg-secondary" style="font-size:10px;">
+                                                 <field name="total_executions"/> ejec.
+                                             </span>
+                                             <span t-attf-class="badge rounded-pill #{record.success_rate.raw_value >= 90 ? 'text-bg-success' : record.success_rate.raw_value >= 70 ? 'text-bg-warning' : 'text-bg-danger'}" style="font-size:10px;">
+                                                 <field name="success_rate" widget="float" digits="[3,0]"/>%
+                                             </span>
+                                             <div class="d-flex gap-2 ms-auto" style="font-size:11px;">
+                                                 <button name="action_view_executions" type="object"
+                                                         class="btn btn-sm btn-link p-0"
+                                                         title="Ver historial">
+                                                     <i class="fa fa-history"/>
+                                                 </button>
+                                                 <t t-if="record.cron_mode.raw_value == 'individual'">
+                                                     <button name="action_set_global" type="object"
+                                                             class="btn btn-sm btn-link p-0 text-info"
+                                                             title="Volver a CRON global compartido">
+                                                         <i class="fa fa-globe"/>
+                                                     </button>
+                                                 </t>
+                                                 <t t-elif="['orders','stock','stock_rt','products_post','products_get','price'].indexOf(record.cron_type.raw_value) >= 0">
+                                                     <button name="action_set_individual" type="object"
+                                                             class="btn btn-sm btn-link p-0 text-muted"
+                                                             title="Crear CRON exclusivo para esta cuenta">
+                                                         <i class="fa fa-user"/>
+                                                     </button>
+                                                 </t>
+                                                 <button name="action_open_ir_cron" type="object"
+                                                         class="btn btn-sm btn-link p-0"
+                                                         t-attf-style="color: #{!record.ir_cron_id.raw_value ? '#adb5bd' : (record.ir_cron_active.raw_value ? '#495057' : '#dc3545')} !important; #{record.ir_cron_id.raw_value and !record.ir_cron_active.raw_value ? 'font-size:14px; font-weight:bold;' : ''}"
+                                                         t-attf-title="#{!record.ir_cron_id.raw_value ? 'Buscar/editar ir.cron del sistema' : (record.ir_cron_active.raw_value ? 'Editar CRON del sistema' : 'CRON del sistema INACTIVO - click para editar/activar')}">
+                                                     <i class="fa fa-cog"/>
+                                                 </button>
+                                                 <button name="action_run_now" type="object"
+                                                         class="btn btn-sm btn-link p-0 text-primary"
+                                                         title="Ejecutar ahora">
+                                                     <i class="fa fa-play"/>
+                                                 </button>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 </t>
+                             </templates>
+                         </kanban>
+                     </field>
+                     <group string="Últimas Ejecuciones">
+                         <field name="cron_execution_ids" mode="list" limit="20" context="{'default_connection_account': id}">
+                             <list create="false" decoration-success="state == 'success'" decoration-danger="state == 'error'" decoration-warning="state == 'warning'" decoration-info="state == 'running'">
+                                 <field name="date_start" optional="show"/>
+                                 <field name="cron_type" optional="show"/>
+                                 <field name="state" widget="badge" optional="show"
+                                     decoration-success="state == 'success'"
+                                     decoration-warning="state == 'warning'"
+                                     decoration-danger="state == 'error'"
+                                     decoration-info="state == 'running'"/>
+                                 <field name="progress_display" string="Progreso" optional="show"/>
+                                 <field name="duration_display" string="Duración" optional="show"/>
+                                 <field name="items_processed" optional="hide"/>
+                                 <field name="items_success" optional="hide"/>
+                                 <field name="items_error" optional="hide"/>
+                             </list>
+                         </field>
+                     </group>
+                 </page>
+                </notebook>
+							</sheet>
+                                                    <chatter/>
+						</form>
+
+
+					</field>
+			</record>
+
+
+      <record model="ir.ui.view" id="view_connection_configuration_mercadolibre">
+					<field name="name">mercadolibre.configuration.form</field>
+					<field name="model">mercadolibre.configuration</field>
+					<field name="arch" type="xml">
+						<form string="MercadoLibre Configuration">
+							<header>
+								<field name="mode" widget="statusbar"/>
+							</header>
+							<sheet>
+								<div class="oe_title">
+									<h1><field name="name"/></h1>
+								</div>
+                  <div class="oe_button_box" name="button_box_mel" style="width: auto;">
+                    <button name='copy_from_company' type="object"
+  											string="Copiar de Cia"
+  											title="Copiar de Cia"
+  											class="oe_stat_button"
+  											icon="fa-user-circle"/>
+                  </div>
+                <group name="accounts" string="Account">
+                  <field name="connection_account"/>
+                  <field name="account_state" widget="badge"
+                      decoration-success="account_state == 'active'"
+                      decoration-warning="account_state in ('configuring', 'paused')"
+                      decoration-danger="account_state in ('error', 'disconnected')"
+                      decoration-info="account_state == 'new'"/>
+                  <field name="account_status" widget="badge"
+                      decoration-success="account_status == 'connected'"
+                      decoration-danger="account_status == 'disconnected'"
+                      decoration-warning="account_status == 'warning'"/>
+                </group>
+                <field name="accounts"/>
+                <group name="accounts_detail" string="Account Detail">
+                  <field name="company_id"/>
+                  <field name="mode" />
+                </group>
+                <group string="Configuración básica" col="2">
+                  <group>
+                    <field name="mercadolibre_pricelist" invisible="0"/>
+                    <field name="mercadolibre_pricelist_usd" invisible="0"/>
+                    <field name="mercadolibre_tax_included" invisible="0" groups="base.group_no_one"/>
+                    <field name="mercadolibre_buying_mode" invisible="0"/>
+                    <field name="mercadolibre_currency" invisible="0"/>
+                    <field name="mercadolibre_condition" invisible="0"/>
+                    <field name="mercadolibre_payment_term" invisible="0"/>
+                    <field name="mercadolibre_official_store_id" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_warranty" invisible="0"/>
+                    <field name="mercadolibre_listing_type" invisible="0"/>
+                    <field name="mercadolibre_channel_mkt" invisible="0"/>
+                    <field name="mercadolibre_banner" invisible="0"/>
+                    <field name="mercadolibre_seller_user" invisible="0"/>
+
+                    <field name="mercadolibre_contact_partner" invisible="0"/>
+                    <field name="mercadolibre_shipping_partner" invisible="0"/>
+                    <field name="mercadolibre_invoice_partner" invisible="0"/>
+                    <field name="mercadolibre_generic_vats" invisible="0"
+                           placeholder="XAXX010101000,XEXX010101000"/>
+                    <field name="mercadolibre_days_to_availability" invisible="0"/>
+                    <field name="mercadolibre_merge_same_name_contacts" invisible="0"/>
+                    <field name="mercadolibre_skip_same_name_billing_contact" invisible="0"/>
+                    <field name="mercadolibre_billing_force_on_main" invisible="0"/>
+                    <field name="mercadolibre_set_fiscal_position" invisible="0"/>
+                    <field name="mercadolibre_cron_get_orders_client_set_company"/>
+
+                    <field name="mercadolibre_seller_team" invisible="0"/>
+                    <button name="action_meli_assign_seller_permissions" type="object"
+                            string="Asignar permisos ML al Vendedor / Equipo" class="btn-link" icon="fa-shield"
+                            confirm="Se agregarán los grupos de MercadoLibre Manager al Vendedor ML y a los miembros del Equipo de ventas ML, necesarios para que el cron de pedidos opere la cuenta. ¿Confirmar?"/>
+                    <field name="mercadolibre_attributes" invisible="0"/>
+                    <field name="mercadolibre_exclude_attributes"  widget="many2many" options="{'no_create': True}">
+                      <list>
+                        <field name="attribute_id"/>
+                        <field name="name"/>
+                      </list>
+                    </field>
+                    <field name="mercadolibre_remove_unsync_images" invisible="0"/>
+                  </group>
+                  <group string="ocapi basic" invisible="1">
+                    <field name="seller_user"/>
+                  </group>
+                </group>
+                <group string="Categorías" name="Categories"  col="2">
+                  <group>
+                    <field name="mercadolibre_category_import" invisible="0"/>
+                    <field name="mercadolibre_recursive_import" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_create_website_categories" invisible="0"/>
+                  </group>
+                </group>
+                <group string="Automatización ML a Odoo" name="autoget"  col="2">
+                  <group>
+                    <field name="mercadolibre_process_notifications" invisible="0"/>
+                    <field name="mercadolibre_cron_get_orders" invisible="0"/>
+                    <field name="mercadolibre_cron_orders_limit" invisible="0"/>
+                    <field name="mercadolibre_filter_order_datetime_start" invisible="0"/>
+                    <field name="mercadolibre_filter_order_datetime" invisible="0"/>
+                    <field name="mercadolibre_filter_order_datetime_to" invisible="0"/>
+                    <field name="mercadolibre_cron_get_orders_shipment" invisible="0"/>
+                    <field name="mercadolibre_cron_get_orders_client_set_company" invisible="0"/>
+                    <field name="mercadolibre_including_shipping_cost" invisible="0"/>
+                    <field name="mercadolibre_use_payment_shipping_amount" invisible="0"/>
+                    <field name="mercadolibre_cron_get_orders_shipment_client" invisible="0"/>
+                    <field name="mercadolibre_cron_get_questions" invisible="0"/>
+                    <field name="mercadolibre_import_search_sku" invisible="0"/>
+                    <field name="mercadolibre_order_total_config" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_create_product_from_order" invisible="0"/>
+                    <field name="mercadolibre_update_product_company" invisible="0"/>
+                    <field name="mercadolibre_update_existings_variants" invisible="0"/>
+                    <field name="mercadolibre_cron_get_update_products" invisible="0"/>
+                    <field name="mercadolibre_cron_get_new_products" invisible="0"/>
+                    <field name="mercadolibre_cron_get_new_products_mode"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_cron_get_new_products_batch_size"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_cron_get_new_products_post_state"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_cron_get_new_products_force_dont_create"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_cron_get_new_products_force_meli_pub"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_cron_get_new_products_force_import_images"
+                           invisible="not mercadolibre_cron_get_new_products"/>
+                    <field name="mercadolibre_update_local_stock" invisible="0"/>
+                    <field name="mercadolibre_order_confirmation" invisible="0"/>
+                    <field name="mercadolibre_order_confirmation_full" invisible="0"/>
+                    <field name="mercadolibre_so_name_tracking" invisible="0"/>
+                    <!--
+                      <field name="mercadolibre_overwrite_template" invisible="0"/>
+                      <field name="mercadolibre_overwrite_variant" invisible="0"/>
+                    -->
+                  </group>
+                  <group string="ocapi" invisible="1">
+                    <field name="import_sales"/>
+                    <field name="import_products"/>
+                    <field name="import_price_list"/>
+                    <field name="import_stock"/>
+                    <field name="import_stock_locations"/>
+                    <field name="import_price_lists"/>
+                    <field name="import_sales_action"/>
+                  </group>
+
+                </group>
+                <group string="Automatización Odoo a ML" name="autopost"  col="2">
+                  <group>
+                    <field name="mercadolibre_cron_post_update_products" invisible="0"/>
+                    <field name="mercadolibre_cron_post_new_products" invisible="0"/>
+                    <field name="mercadolibre_cron_post_update_stock" invisible="0"/>
+                    <field name="mercadolibre_cron_post_update_price" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_post_default_code" invisible="0"/>
+                    <field name="mercadolibre_post_barcode" invisible="0"/>
+                    <field name="mercadolibre_product_template_override_variant" invisible="0"/>
+                    <field name="mercadolibre_product_template_override_method" invisble="0"/>
+                    <hr/>
+                    <field name="mercadolibre_product_attribute_creation" invisible="0"/>
+                    <field name="mercadolibre_do_not_use_first_image" invisible="0"/>
+                    <field name="mercadolibre_process_offset" invisible="1"/>
+                  </group>
+                  <group string="ocapi" invisible="1">
+                    <field name="publish_products"/>
+                    <field name="publish_price_list"/>
+                    <field name="publish_stock"/>
+                    <field name="publish_stock_locations" invisible="not publish_stock"/>
+                    <field name="publish_price_lists"/>
+                  </group>
+                </group>
+                <group string="Configuración Stock" name="meli_oerp_stock"  col="2">
+                  <group>
+                    <field name="mercadolibre_stock_virtual_available" invisible="0"/>
+                    <field name="mercadolibre_stock_warehouse" invisible="0"/>
+                    <field name="mercadolibre_stock_location_to_post" invisible="0"/>
+                    <field name="publish_stock"/>
+                    <field name="publish_stock_locations" invisible="not publish_stock" domain="[('usage','=','internal')]"/>
+                    <!--field name="mercadolibre_stock_location_to_post" invisible="0"  domain = "[('mercadolibre_active','=',True),('company_id', '=', id)]"/-->
+                    <!--field name="mercadolibre_stock_location_to_post_many" invisible="0" domain = "[('mercadolibre_active','=',True)]"/-->
+                  </group>
+                  <group string="Multi-warehouse">
+                    <field name="mercadolibre_stock_update_mode"/>
+                    <field name="mercadolibre_stock_update_type" invisible="mercadolibre_stock_update_mode != 'user_product_type'"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_stock_warehouse_full" invisible="0"/>
+                    <field name="mercadolibre_stock_location_to_post_full" invisible="0"/>
+                    <!--field name="mercadolibre_stock_location_to_post_full" invisible="0"  domain = "[('mercadolibre_logistic_type','=','fulfillment'),'|',('mercadolibre_active','=',True),('company_id', '=', id)]"/-->
+                    <field name="mercadolibre_full_lot_policy" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_order_confirmation_delivery" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_order_confirmation_delivery_full" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_stock_sku_mapping" invisible="0">
+                      <list>
+                        <field name="type"/>
+                        <field name="name"/>
+                        <field name="sku"/>
+                        <field name="security_virtual_stock_to_pause"/>
+                        <field name="security_quantity_stock_to_pause"/>
+                      </list>
+                    </field>
+                    <field name="mercadolibre_stock_sku_mapping_rt" invisible="0">
+                        <list>
+                          <field name="formula"/>
+                          <field name="type"/>
+                          <field name="name"/>
+                          <field name="sku"/>
+                          <field name="security_virtual_stock_to_pause"/>
+                          <field name="security_quantity_stock_to_pause"/>
+                        </list>
+                      </field>
+                  </group>
+                </group>
+                <group string="Configuración Contabilidad" name="meli_oerp_accounting"  col="2">
+                  <group string="Payments configuration" name="payments_config">
+                    <field name="mercadolibre_process_payments_res_partner" invisible="0"/>
+                    <field name="mercadolibre_process_payments_journal" domain="[('company_id','=',company_id),('type','!=','sale')]" invisible="0"/>
+                    <field name="mercadolibre_process_payments_res_partner_shp" invisible="0"/>
+                    <field name="mercadolibre_process_payments_journal_shp" domain="[('company_id','=',company_id),('type','!=','sale')]" invisible="0"/>
+
+                    <field name="mercadolibre_invoice_journal_report_id" invisible="0"/>
+                    <field name="mercadolibre_analytic_account_id" invisible="0"/>
+                    <!--field name="mercadolibre_account_payment_receiptbook_id"  domain="[('company_id','=',company_id)]" invisible="0"/>
+                    <field name="mercadolibre_account_payment_supplier_receiptbook_id"  domain="[('company_id','=',company_id)]" invisible="0"/-->
+                  </group>
+                  <group string="Automatic Record Payment" name="automatic_payment">
+                    <field name="mercadolibre_process_payments_customer" invisible="0"/>
+                    <field name="mercadolibre_process_payments_supplier_fea" invisible="0"/>
+                    <field name="mercadolibre_process_payments_supplier_shipment" invisible="0"/>
+                    <field name="mercadolibre_payment_receipt_validation" invisible="0"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_invoice_journal_id"  domain="[('company_id','=',company_id),('type','=','sale')]" invisible="0"/>
+                    <field name="mercadolibre_invoice_journal_id_full"  domain="[('company_id','=',company_id),('type','=','sale')]" invisible="0"/>
+                    <field name="mercadolibre_order_confirmation_invoice" invisible="0"/>
+                    <field name="meli_coupon_invoice_mode"/>
+                  </group>
+                  <group>
+                    <field name="mercadolibre_order_confirmation_invoice_full" invisible="0"/>
+                    <field name="mercadolibre_order_add_fea" />
+                    <field name="mercadolibre_product_fea" />
+                  </group>
+                </group>
+                <group>
+                  <group>
+                    <field name="mercadolibre_shipment_print_guide" invisible="0"/>
+                    <field name="mercadolibre_shipment_print_guide_mode" invisible="0"/>
+                    <field name="mercadolibre_shipment_printer_name" invisible="0" placeholder="Ej: Zebra ZD421 - Despacho"/>
+                    <field name="mercadolibre_post_invoice" invisible="0"/>
+                    <field name="mercadolibre_post_invoice_dont_send" invisible="0"/>
+                  </group>
+                </group>
+              </sheet>
+            </form>
+          </field>
+      </record>
+
+
+      <!-- Popup view for JSON -->
+      <record model="ir.ui.view" id="view_mercadolibre_account_json_popup">
+          <field name="name">mercadolibre.account.json.popup</field>
+          <field name="model">mercadolibre.account</field>
+          <field name="arch" type="xml">
+              <form string="JSON Usuario ML">
+                  <sheet>
+                      <group>
+                          <field name="meli_user_raw_json" nolabel="1" readonly="1"
+                                 widget="text" style="font-family: monospace; white-space: pre;"/>
+                      </group>
+                  </sheet>
+                  <footer>
+                      <button string="Cerrar" class="btn btn-primary" special="cancel"/>
+                  </footer>
+              </form>
+          </field>
+      </record>
+
+      </data>
+</odoo>

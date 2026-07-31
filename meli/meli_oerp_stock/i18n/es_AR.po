@@ -1,0 +1,420 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* meli_oerp_stock
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0+e\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-11-27 16:18+0000\n"
+"PO-Revision-Date: 2025-11-28 17:09+0000\n"
+"Last-Translator: Moldeo Interactive <info@moldeointeractive.com.ar>\n"
+"Language-Team: Spanish (Argentina) <es_AR@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_order_confirmation_delivery_full
+msgid "(FULL) Acción sobre la entrega al confirmar un pedido"
+msgstr "(FULL) Acción sobre la entrega al confirmar un pedido"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_order_confirmation_delivery_full
+msgid ""
+"(FULL) Acción sobre la entrega al confirmar una orden o pedido de venta"
+msgstr ""
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_order_confirmation_delivery
+msgid "Acción sobre la entrega al confirmar un pedido"
+msgstr "Acción sobre la entrega al confirmar un pedido"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_order_confirmation_delivery
+msgid "Acción sobre la entrega al confirmar una orden o pedido de venta"
+msgstr "Acción sobre la entrega al confirmar una orden o pedido de venta"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_warehouse
+msgid "Almacen predeterminado"
+msgstr "Almacén predeterminado"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_warehouse_full
+msgid "Almacen predeterminado para modo fulfillment"
+msgstr "Almacén predeterminado para modo fulfillment"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__barcode
+msgid "Barcode"
+msgstr "Código de Barras"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__barcode
+msgid "Barcode Map in Odoo"
+msgstr "Mapeo de Código de Barras en Odoo"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_virtual_available
+msgid "Cantidad disponible"
+msgstr "Cantidad disponible"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_virtual_available__qty_reserved
+msgid "Cantidad menos reservado (quantity - reserved)"
+msgstr "Cantidad menos reservado (quantity - reserved)"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_res_company
+msgid "Companies"
+msgstr "Empresas"
+
+#. module: meli_oerp_stock
+#: model_terms:ir.ui.view,arch_db:meli_oerp_stock.view_company_page_mercadolibre_stock
+msgid "Configuración Stock"
+msgstr "Configuración de Stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__create_uid
+msgid "Created by"
+msgstr "Creado por"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__create_date
+msgid "Created on"
+msgstr "Creado el"
+
+#. module: meli_oerp_stock
+#: model:ir.actions.server,name:meli_oerp_stock.ir_cron_module_cron_meli_shipments_ir_actions_server
+#: model_terms:ir.ui.view,arch_db:meli_oerp_stock.view_company_page_mercadolibre_stock
+msgid "Cron Meli Shipments"
+msgstr "Tarea Programada de Envíos MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_delivery_carrier__ml_tracking_url
+msgid "Default tracking url"
+msgstr "URL de seguimiento predeterminada"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__display_name
+msgid "Display Name"
+msgstr "Nombre para Mostrar"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_virtual_available__theoretical
+msgid "En mano (quantity)"
+msgstr "En mano (quantity)"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_cron_get_shipments
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_cron_get_shipments
+msgid "Force shipment validation"
+msgstr "Forzar validación de envío"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__formula
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__meli_oerp_sku_rule__type__regex
+msgid "Formula"
+msgstr "Fórmula"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__group
+msgid "Group"
+msgstr "Grupo"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__id
+msgid "ID"
+msgstr "ID"
+
+#. module: meli_oerp_stock
+#: model_terms:ir.ui.view,arch_db:meli_oerp_stock.view_location_form_meli
+msgid "Inventario MercadoLibre"
+msgstr "Inventario MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_stock_location
+msgid "Inventory Locations"
+msgstr "Ubicaciones de Inventario"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__write_uid
+msgid "Last Updated by"
+msgstr "Última actualización por"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__write_date
+msgid "Last Updated on"
+msgstr "Última actualización el"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_location__mercadolibre_logistic_type
+msgid "Logistic Type Asociado"
+msgstr "Tipo Logístico Asociado"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__meli_oerp_sku_rule__type__map
+msgid "Map"
+msgstr "Mapeo"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_location_operation__maximum
+msgid "Maximo"
+msgstr "Máximo"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_picking__meli_shipment
+msgid "Meli Shipment Obj"
+msgstr "Objeto de Envío MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_meli_oerp_sku_rule
+msgid "Meli Sku Rule"
+msgstr "Regla de SKU MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_picking__meli_shipment_status_brief
+msgid "Meli Status Brief"
+msgstr "Resumen de Estado MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model_terms:ir.ui.view,arch_db:meli_oerp_stock.view_stock_picking_form_meli
+msgid "MercadoLibre"
+msgstr "MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__name
+msgid "Name"
+msgstr "Nombre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery__manual
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery_full__manual
+msgid "No entregar"
+msgstr "No entregar"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_location_operation
+msgid "Operación sobre las ubicaciones"
+msgstr "Operación sobre las ubicaciones"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_filter_order_datetime
+msgid "Order Closed Date (Forcing shipment validation)"
+msgstr "Fecha de Cierre de Pedido (Forzar validación de envío)"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_filter_order_datetime_to
+msgid "Order Closed Date To (Forcing shipment validation)"
+msgstr "Fecha de Cierre de Pedido Hasta (Forzar validación de envío)"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery__paid_confirm_shipped_deliver
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery_full__paid_confirm_shipped_deliver
+msgid "Pagado > Entregado > Entregar"
+msgstr "Pagado > Entregado > Entregar"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery__paid_confirm_deliver
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_order_confirmation_delivery_full__paid_confirm_deliver
+msgid "Pagado > Entregar"
+msgstr "Pagado > Entregar"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_picking__meli_shipment_print_pdf
+msgid "Pdf File"
+msgstr "Archivo PDF"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_picking__meli_shipment_print
+msgid "Pdf Filename"
+msgstr "Nombre de Archivo PDF"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_stock_picking__meli_order
+msgid "Pedido de venta relacionado en Odoo"
+msgstr "Pedido de venta relacionado en Odoo"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_mercadolibre_orders
+msgid "Pedidos en MercadoLibre"
+msgstr "Pedidos en MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_virtual_available__virtual_absoluto
+msgid "Planificado (no suma negativos)"
+msgstr "Planificado (no suma negativos)"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_virtual_available__virtual
+msgid "Planificado (virtual_available)"
+msgstr "Planificado (virtual_available)"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_product_template
+msgid "Product"
+msgstr "Producto"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_stock_move_line
+msgid "Product Moves (Stock Move Line)"
+msgstr "Movimientos de Producto (Línea de Movimiento de Stock)"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_product_product
+msgid "Product Variant"
+msgstr "Variante de Producto"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__security_quantity_stock_to_pause
+msgid "Quantity Stock"
+msgstr "Cantidad de Stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.constraint,message:meli_oerp_stock.constraint_meli_oerp_sku_rule_unique_meli_oerp_sku_rule
+msgid "Rule name already exists!"
+msgstr "¡El nombre de la regla ya existe!"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__type
+msgid "Rule type"
+msgstr "Tipo de regla"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_picking__meli_order
+msgid "Sale Order"
+msgstr "Pedido de Venta"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_sale_order
+msgid "Sales Order"
+msgstr "Pedido de Venta"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_delivery_carrier
+msgid "Shipping Methods"
+msgstr "Métodos de Envío"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__sku
+msgid "Sku"
+msgstr "SKU"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__sku
+msgid "Sku Map in Odoo"
+msgstr "Mapeo de SKU en Odoo"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__name
+msgid "Sku Name received"
+msgstr "Nombre de SKU recibido"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__formula
+msgid "Sku Regex Formula"
+msgstr "Fórmula Regex de SKU"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__group
+msgid "Sku Regex Group"
+msgstr "Grupo Regex de SKU"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_meli_oerp_sku_rule__test
+msgid "Sku Regex Test"
+msgstr "Prueba Regex de SKU"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_sku_mapping
+msgid "Sku Rules"
+msgstr "Reglas de SKU"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post
+msgid "Stock Location To Post"
+msgstr "Ubicación de Stock a Publicar"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post_full
+msgid "Stock Location To Post for Full"
+msgstr "Ubicación de Stock a Publicar para Full"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post_many
+msgid "Stock Locations To Post"
+msgstr "Ubicaciones de Stock a Publicar"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_stock_move
+msgid "Stock Move"
+msgstr "Movimiento de Stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__meli_oerp_sku_rule__type__stock
+msgid "Stock Rule"
+msgstr "Regla de Stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_warehouse
+msgid "Stock Warehouse Default"
+msgstr "Almacén de Stock Predeterminado"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_warehouse_full
+msgid "Stock Warehouse Default for FULL"
+msgstr "Almacén de Stock Predeterminado para FULL"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields.selection,name:meli_oerp_stock.selection__res_company__mercadolibre_stock_location_operation__sum
+msgid "Suma de las ubicaciones"
+msgstr "Suma de las ubicaciones"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_location_operation
+msgid ""
+"Suma, maximo o minimo como operacion de las diferentes ubicaciones activas "
+"para MercadoLibre"
+msgstr ""
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__test
+msgid "Test"
+msgstr "Prueba"
+
+#. module: meli_oerp_stock
+#: model:ir.model,name:meli_oerp_stock.model_stock_picking
+msgid "Transfer"
+msgstr "Transferencia"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_stock_location__mercadolibre_active
+msgid "Ubicacion activa para MercadoLibre"
+msgstr "Ubicación activa para MercadoLibre"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post_many
+msgid "Ubicaciones desde dónde publicar el stock"
+msgstr "Ubicaciones desde dónde publicar el stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post
+msgid "Ubicación desde dónde publicar el stock"
+msgstr "Ubicación desde dónde publicar el stock"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,help:meli_oerp_stock.field_res_company__mercadolibre_stock_location_to_post_full
+msgid "Ubicación desde dónde publicar el stock en modo Full"
+msgstr "Ubicación desde dónde publicar el stock en modo Full"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_res_company__mercadolibre_stock_website_sale
+msgid "Use Meli Stock for Ecommerce"
+msgstr "Usar Stock de MercadoLibre para E-commerce"
+
+#. module: meli_oerp_stock
+#: model:ir.model.fields,field_description:meli_oerp_stock.field_meli_oerp_sku_rule__security_virtual_stock_to_pause
+msgid "Virtual Stock"
+msgstr "Stock Virtual"

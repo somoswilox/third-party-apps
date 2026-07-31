@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Wizard form -->
+    <record id="view_meli_afip_sequence_sync_wizard_form" model="ir.ui.view">
+        <field name="name">meli.afip.sequence.sync.wizard.form</field>
+        <field name="model">meli.afip.sequence.sync.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Sincronizar secuencia con AFIP">
+                <sheet>
+                    <div class="oe_title">
+                        <h2>Sincronizar secuencia con AFIP</h2>
+                        <p>
+                            Consulta <code>FECompUltimoAutorizado</code> en ARCA/AFIP para cada tipo
+                            de documento ya emitido por este diario y propone alinear la secuencia
+                            de Odoo con la de AFIP. Útil para resolver el error <b>Code 10016</b>
+                            sin tocar facturas ya posteadas.
+                        </p>
+                    </div>
+
+                    <group col="4">
+                        <field name="journal_id" readonly="True"/>
+                        <field name="pos_number" readonly="True"/>
+                        <field name="company_id" readonly="True" groups="base.group_multi_company"/>
+                    </group>
+
+                    <field name="line_ids" nolabel="1">
+                        <list create="false" delete="false" edit="false"
+                              decoration-success="gap == 0 and not afip_error"
+                              decoration-warning="gap != 0 and not afip_error"
+                              decoration-danger="afip_error">
+                            <field name="doc_type_name"/>
+                            <field name="doc_code" optional="show" string="Cod. AFIP"/>
+                            <field name="odoo_last_number" string="Odoo"/>
+                            <field name="afip_last_number" string="AFIP"/>
+                            <field name="gap"/>
+                            <field name="action_summary" string="Acción al aplicar"/>
+                            <field name="afip_error" optional="show" string="Error" widget="text"/>
+                            <field name="last_move_id" optional="hide"/>
+                        </list>
+                    </field>
+
+                    <field name="status_message" widget="html" readonly="True" nolabel="1"/>
+                </sheet>
+                <footer>
+                    <button name="action_apply" string="Aplicar" type="object"
+                            class="btn-primary"
+                            confirm="¿Confirmás aplicar los ajustes de secuencia? Esto modifica el
+                                     sequence_number de la última factura posteada de cada tipo
+                                     afectado, pero no altera ningún dato fiscal ni emite facturas
+                                     nuevas."/>
+                    <button name="action_confirm_drafts" string="Confirmar borradores" type="object"
+                            class="btn-warning"
+                            confirm="¿Confirmás postear todas las facturas borrador con número asignado de este diario?
+                                     Esto las enviará a AFIP. Asegurate de haber aplicado el ajuste de secuencia primero."
+                            help="Postea (confirma) todas las facturas en estado Borrador que ya tienen un número
+                                  de secuencia asignado (no son '/'). Útil para re-enviar a AFIP las facturas
+                                  que fallaron con Code 10016 una vez que la secuencia fue alineada."/>
+                    <button name="action_refresh" string="Re-consultar AFIP" type="object"
+                            class="btn-secondary"/>
+                    <button string="Cerrar" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Server action that account.journal button calls.
+         Uses python code so we can only instantiate the wizard when the
+         journal has an AFIP POS number. This keeps the button innocuous on
+         non-Argentine journals. -->
+    <record id="action_meli_afip_sequence_sync_wizard" model="ir.actions.server">
+        <field name="name">Sincronizar secuencia con AFIP</field>
+        <field name="model_id" ref="account.model_account_journal"/>
+        <field name="binding_model_id" ref="account.model_account_journal"/>
+        <field name="state">code</field>
+        <field name="code">
+if records:
+    journal = records[0]
+    if 'l10n_ar_afip_pos_number' not in journal._fields or not journal.l10n_ar_afip_pos_number:
+        raise UserError("Este diario no tiene Punto de Venta AFIP configurado. "
+                        "Esta acción sólo aplica a diarios argentinos con facturación electrónica.")
+    action = env['meli.afip.sequence.sync.wizard'].action_open_from_journal(journal.id)
+        </field>
+    </record>
+
+    <!-- Button on the account.journal form view (header).
+         Visible on all journals; the server action validates at click-time
+         that the journal has an AFIP POS number and shows a clean error
+         otherwise. We do NOT reference l10n_ar_afip_pos_number in the view
+         so this module stays installable on non-Argentine tenants without
+         l10n_ar_edi. -->
+    <record id="view_account_journal_form_meli_afip_sync" model="ir.ui.view">
+        <field name="name">account.journal.form.meli.afip.sync</field>
+        <field name="model">account.journal</field>
+        <field name="inherit_id" ref="account.view_account_journal_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="before">
+                <header>
+                    <button name="%(action_meli_afip_sequence_sync_wizard)d"
+                            type="action"
+                            string="Sincronizar secuencia con AFIP"
+                            icon="fa-refresh"
+                            invisible="type != 'sale'"
+                            help="Consulta FECompUltimoAutorizado en ARCA/AFIP y alinea la
+                                  secuencia de Odoo con el último número autorizado por AFIP.
+                                  Resuelve el error Code 10016 sin tocar facturas posteadas.
+                                  Sólo aplica a diarios de venta argentinos con Punto de Venta AFIP."/>
+                </header>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,32 @@
+# -*- coding: utf-8 -*-
+##############################################################################
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+##############################################################################
+
+from . import versions
+from . import warning
+from . import meli_util
+from . import company
+from . import product_image
+from . import product
+from . import category
+from . import banner
+from . import posting
+from . import product_post
+from . import questions
+from . import claim
+from . import orders
+from . import res_partner
+#from . import currency
+from . import shipment
+#from . import stock_inventory
+from . import stock_move
+from . import stock_warehouse
+from . import product_attribute
+from . import notification
+from . import carrier_mapping
+from . import product_template_attribute_line
+#from . import res_config_settings

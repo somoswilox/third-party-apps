@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+
+    <!-- ========================================================
+         mercadolibre.account.stock_location — List view
+         ======================================================== -->
+    <record id="view_meli_account_stock_location_list" model="ir.ui.view">
+      <field name="name">mercadolibre.account.stock_location.list</field>
+      <field name="model">mercadolibre.account.stock_location</field>
+      <field name="arch" type="xml">
+        <list string="Depósitos ML" editable="bottom">
+          <field name="account_id" optional="show"/>
+          <field name="meli_store_id"/>
+          <field name="name"/>
+          <field name="status" widget="badge"
+                 decoration-success="status == 'active'"
+                 decoration-muted="status == 'inactive'"/>
+          <field name="city"/>
+          <field name="state_name"/>
+          <field name="network_node_id"/>
+          <field name="services_stock_location"/>
+          <field name="odoo_location_id"/>
+        </list>
+      </field>
+    </record>
+
+    <!-- ========================================================
+         mercadolibre.account.stock_location — Form view
+         ======================================================== -->
+    <record id="view_meli_account_stock_location_form" model="ir.ui.view">
+      <field name="name">mercadolibre.account.stock_location.form</field>
+      <field name="model">mercadolibre.account.stock_location</field>
+      <field name="arch" type="xml">
+        <form string="Depósito ML">
+          <sheet>
+            <group>
+              <group string="Datos ML">
+                <field name="account_id"/>
+                <field name="meli_store_id"/>
+                <field name="name"/>
+                <field name="status" widget="badge"
+                       decoration-success="status == 'active'"
+                       decoration-muted="status == 'inactive'"/>
+                <field name="network_node_id"/>
+                <field name="services_stock_location"/>
+              </group>
+              <group string="Mapeo Odoo">
+                <field name="odoo_location_id"
+                       domain="[('usage', '=', 'internal')]"
+                       options="{'no_create': True}"/>
+              </group>
+            </group>
+            <group string="Ubicación geográfica (ML)">
+              <group>
+                <field name="address_line"/>
+                <field name="city"/>
+                <field name="state_name"/>
+                <field name="zip_code"/>
+              </group>
+              <group>
+                <field name="latitude"/>
+                <field name="longitude"/>
+              </group>
+            </group>
+          </sheet>
+        </form>
+      </field>
+    </record>
+
+    <!-- ========================================================
+         Action + Menu
+         ======================================================== -->
+    <record id="action_meli_account_stock_location" model="ir.actions.act_window">
+      <field name="name">Depósitos ML (stock_location)</field>
+      <field name="type">ir.actions.act_window</field>
+      <field name="res_model">mercadolibre.account.stock_location</field>
+      <field name="view_mode">list,form</field>
+      <field name="help" type="html">
+        <p class="o_view_nocontent_smiling_face">
+          No hay depósitos ML sincronizados.
+        </p>
+        <p>
+          Ejecute <b>Actualizar Info Multiwarehouse</b> desde la cuenta ML para sincronizar
+          los stores con tag <code>stock_location</code> desde la API de MercadoLibre.
+        </p>
+      </field>
+    </record>
+
+    <menuitem id="menu_meli_stock_locations"
+              action="action_meli_account_stock_location"
+              parent="meli_oerp.menu_meli"
+              name="Depósitos ML"
+              sequence="12"/>
+
+  </data>
+</odoo>

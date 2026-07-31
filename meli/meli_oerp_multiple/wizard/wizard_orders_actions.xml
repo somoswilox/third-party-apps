@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- ================================================================
+             VISTA DEL WIZARD - Acciones de Pedidos ML
+             ================================================================ -->
+        <record id="view_mercadolibre_orders_actions_wiz" model="ir.ui.view">
+            <field name="name">Acciones de Pedidos MercadoLibre</field>
+            <field name="model">mercadolibre.orders.actions.wiz</field>
+            <field name="type">form</field>
+            <field name="arch" type="xml">
+                <form string="Acciones de Pedidos ML">
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="source_model" readonly="1" string="Origen"/>
+                                <field name="records_count" readonly="1" string="Registros"/>
+                            </group>
+                        </group>
+                        <group string="Seleccione la accion a realizar">
+                            <field name="action_type" widget="radio"/>
+                        </group>
+                        <group string="Opciones adicionales">
+                            <field name="cancel_blocked"
+                                invisible="action_type != 'force_cancel_sales'"/>
+                            <field name="force_reconcile_after_invoice"
+                                invisible="action_type != 'force_invoice'"/>
+                        </group>
+                        <group string="Opciones de Cancelacion de Pagos" invisible="action_type != 'force_cancel_payments'">
+                            <field name="cancel_payments_mode" widget="radio"/>
+                            <field name="include_supplier_payments"/>
+                            <field name="unlink_cancelled_payments"/>
+                        </group>
+                        <group string="Opciones de Ajuste de Redondeo (Pagos)" invisible="action_type != 'adjust_payment_rounding'">
+                            <field name="rounding_mode" widget="radio"/>
+                            <field name="rounding_tolerance"/>
+                            <field name="round_to_integer"/>
+                        </group>
+                        <group string="Opciones de Ajuste de Redondeo (Ordenes)" invisible="action_type != 'adjust_order_rounding'">
+                            <field name="rounding_tolerance"/>
+                            <field name="round_to_integer"/>
+                        </group>
+                        <group string="Opciones de Correccion de Conciliacion" invisible="action_type != 'fix_reconciliation_rounding'">
+                            <field name="rounding_tolerance"/>
+                            <field name="ignore_tolerance"/>
+                        </group>
+                        <group string="Opciones de Verificacion de Montos" invisible="action_type != 'verify_amounts'">
+                            <field name="rounding_tolerance"/>
+                        </group>
+                        <group string="Opciones de Auto-asignacion de Lotes FULL (FIFO)" invisible="action_type != 'assign_lots_full'">
+                            <field name="assign_lots_also_validate"/>
+                        </group>
+                    </sheet>
+                    <footer>
+                        <button name="action_execute" string="Ejecutar Accion" type="object" class="btn-primary oe_highlight"/>
+                        <button string="Cancelar" class="oe_link" special="cancel"/>
+                    </footer>
+                </form>
+            </field>
+        </record>
+
+        <!-- ================================================================
+             ACCION DESDE SALE.ORDER (Ordenes de Venta)
+             ================================================================ -->
+        <record id="action_mercadolibre_orders_actions_from_sale" model="ir.actions.act_window">
+            <field name="name">Acciones Pedidos ML</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="binding_model_id" ref="sale.model_sale_order"/>
+            <field name="res_model">mercadolibre.orders.actions.wiz</field>
+            <field name="view_id" ref="view_mercadolibre_orders_actions_wiz"/>
+            <field name="binding_type">action</field>
+            <field name="binding_view_types">list,form</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+
+        <!-- ================================================================
+             ACCION DESDE ACCOUNT.MOVE (Facturas)
+             ================================================================ -->
+        <record id="action_mercadolibre_orders_actions_from_invoice" model="ir.actions.act_window">
+            <field name="name">Acciones Pedidos ML</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="binding_model_id" ref="account.model_account_move"/>
+            <field name="res_model">mercadolibre.orders.actions.wiz</field>
+            <field name="view_id" ref="view_mercadolibre_orders_actions_wiz"/>
+            <field name="binding_type">action</field>
+            <field name="binding_view_types">list,form</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+
+        <!-- ================================================================
+             ACCION DESDE STOCK.PICKING (Entregas)
+             ================================================================ -->
+        <record id="action_mercadolibre_orders_actions_from_picking" model="ir.actions.act_window">
+            <field name="name">Acciones Pedidos ML</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="binding_model_id" ref="stock.model_stock_picking"/>
+            <field name="res_model">mercadolibre.orders.actions.wiz</field>
+            <field name="view_id" ref="view_mercadolibre_orders_actions_wiz"/>
+            <field name="binding_type">action</field>
+            <field name="binding_view_types">list,form</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+
+        <!-- ================================================================
+             ACCION DESDE MERCADOLIBRE.ORDERS (Ordenes ML)
+             ================================================================ -->
+        <record id="action_mercadolibre_orders_actions_from_meli_orders" model="ir.actions.act_window">
+            <field name="name">Acciones Pedidos ML</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="binding_model_id" ref="meli_oerp.model_mercadolibre_orders"/>
+            <field name="res_model">mercadolibre.orders.actions.wiz</field>
+            <field name="view_id" ref="view_mercadolibre_orders_actions_wiz"/>
+            <field name="binding_type">action</field>
+            <field name="binding_view_types">list,form</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+
+    </data>
+</odoo>

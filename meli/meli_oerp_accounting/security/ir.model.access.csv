@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_mercadolibre_public_wizard,mercadolibre.public.wizard,model_mercadolibre_public_wizard,base.group_user,1,1,1,1
+access_mercadolibre_tax,mercadolibre.tax,model_mercadolibre_tax,base.group_user,1,1,1,1
+access_mercadolibre_payment_charge,mercadolibre.payment.charge,model_mercadolibre_payment_charge,base.group_user,1,1,1,1
+access_meli_afip_sequence_sync_wizard,meli.afip.sequence.sync.wizard,model_meli_afip_sequence_sync_wizard,account.group_account_manager,1,1,1,1
+access_meli_afip_sequence_sync_line,meli.afip.sequence.sync.line,model_meli_afip_sequence_sync_line,account.group_account_manager,1,1,1,1

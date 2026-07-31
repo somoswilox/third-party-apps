@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.tax: Tree View                                   -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_tax_tree" model="ir.ui.view">
+        <field name="name">mercadolibre.tax.tree</field>
+        <field name="model">mercadolibre.tax</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'draft'"
+                       decoration-success="state == 'confirmed'"/>
+                <field name="meli_charge_type"/>
+                <field name="meli_charge_name"/>
+                <field name="meli_financial_entity"/>
+                <field name="account_tax_id"/>
+                <field name="is_withholding_on_payment" widget="boolean"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.tax: Form View                                   -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_tax_form" model="ir.ui.view">
+        <field name="name">mercadolibre.tax.form</field>
+        <field name="model">mercadolibre.tax</field>
+        <field name="arch" type="xml">
+            <form string="Mapeo de Impuesto MercadoLibre">
+                <header>
+                    <button name="action_confirm" type="object" string="Confirmar"
+                            class="btn-primary"
+                            invisible="state != 'draft'"/>
+                    <button name="action_draft" type="object" string="Volver a borrador"
+                            invisible="state != 'confirmed'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,confirmed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box"/>
+                    <widget name="web_ribbon" title="Archivado" bg_color="text-bg-danger"
+                            invisible="active == True"/>
+                    <group>
+                        <group string="General">
+                            <field name="name"/>
+                            <field name="sequence"/>
+                            <field name="active" invisible="1"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                        <group string="Mapeo a Odoo">
+                            <field name="account_tax_id"/>
+                            <field name="is_withholding_on_payment" readonly="1"/>
+                            <div colspan="2" class="text-muted small"
+                                 invisible="not account_tax_id or is_withholding_on_payment">
+                                Para retenciones (ISR, IVA retenido): instalar el módulo
+                                <strong>Withholding Taxes on Payment</strong>
+                                (l10n_account_withholding_tax) y marcar el impuesto como
+                                "Es retención al pago" en Contabilidad &gt; Configuración &gt; Impuestos.
+                            </div>
+                        </group>
+                    </group>
+                    <group string="Criterios de matching con MercadoPago">
+                        <group>
+                            <field name="meli_charge_type"/>
+                            <field name="meli_charge_name"
+                                   placeholder="Ej: tax_withholding-isr"/>
+                        </group>
+                        <group>
+                            <field name="meli_financial_entity"
+                                   placeholder="Ej: isr, iva"/>
+                            <field name="meli_source_detail"
+                                   placeholder="Ej: isr_charge, iva_charge"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.tax: Search View                                 -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_tax_search" model="ir.ui.view">
+        <field name="name">mercadolibre.tax.search</field>
+        <field name="model">mercadolibre.tax</field>
+        <field name="arch" type="xml">
+            <search string="Mapeo de Impuestos MeLi">
+                <field name="name"/>
+                <field name="meli_charge_name"/>
+                <field name="meli_financial_entity"/>
+                <field name="account_tax_id"/>
+                <filter name="filter_draft" string="Borrador" domain="[('state','=','draft')]"/>
+                <filter name="filter_confirmed" string="Confirmado" domain="[('state','=','confirmed')]"/>
+                <separator/>
+                <filter name="filter_tax" string="Retenciones" domain="[('meli_charge_type','=','tax')]"/>
+                <filter name="filter_fee" string="Comisiones" domain="[('meli_charge_type','=','fee')]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archivado" domain="[('active','=',False)]"/>
+                <separator/>
+                <filter name="group_type" string="Tipo de cargo" context="{'group_by': 'meli_charge_type'}"/>
+            </search>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.tax: Action & Menu                               -->
+    <!-- ============================================================ -->
+    <record id="action_mercadolibre_tax" model="ir.actions.act_window">
+        <field name="name">Mapeo de Impuestos MeLi</field>
+        <field name="res_model">mercadolibre.tax</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Crear regla de mapeo de impuestos
+            </p>
+            <p>
+                Configure el mapeo entre los tipos de retenciones e impuestos de MercadoPago
+                (ISR, IVA, etc.) y los impuestos de Odoo correspondientes.
+            </p>
+            <p>
+                Las reglas se importan automaticamente en estado Borrador al procesar pagos.
+                Asigne el impuesto Odoo correspondiente y confirme la regla para que se aplique.
+            </p>
+            <p>
+                <strong>Retenciones (ISR, IVA retenido):</strong> para que se apliquen al momento
+                del pago (sin reducir el total de la factura), instalar el módulo
+                <em>Withholding Taxes on Payment</em> (l10n_account_withholding_tax) desde
+                Aplicaciones, y marcar cada impuesto de retención como "Es retención al pago"
+                en Contabilidad &gt; Configuración &gt; Impuestos.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_mercadolibre_tax"
+              name="Mapeo Impuestos MeLi"
+              parent="meli_oerp.menu_meli"
+              action="action_mercadolibre_tax"
+              sequence="50"/>
+
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.payment.charge: Tree View                        -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_payment_charge_tree" model="ir.ui.view">
+        <field name="name">mercadolibre.payment.charge.tree</field>
+        <field name="model">mercadolibre.payment.charge</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="charge_id"/>
+                <field name="name"/>
+                <field name="charge_type"/>
+                <field name="amount_original"/>
+                <field name="base_amount"/>
+                <field name="rate"/>
+                <field name="mov_financial_entity"/>
+                <field name="account_tax_id"/>
+                <field name="tax_status"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.payment.charge: Search View                      -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_payment_charge_search" model="ir.ui.view">
+        <field name="name">mercadolibre.payment.charge.search</field>
+        <field name="model">mercadolibre.payment.charge</field>
+        <field name="arch" type="xml">
+            <search string="Cargos MercadoPago">
+                <field name="name"/>
+                <field name="charge_id"/>
+                <field name="mov_financial_entity"/>
+                <field name="payment_id"/>
+                <filter name="filter_tax" string="Retenciones"
+                        domain="[('charge_type','=','tax')]"/>
+                <filter name="filter_fee" string="Comisiones"
+                        domain="[('charge_type','=','fee')]"/>
+                <filter name="filter_shipping" string="Envío"
+                        domain="[('charge_type','=','shipping')]"/>
+                <separator/>
+                <filter name="filter_mapped" string="Con regla asignada"
+                        domain="[('meli_tax_id','!=',False)]"/>
+                <filter name="filter_unmapped" string="Sin regla asignada"
+                        domain="[('meli_tax_id','=',False)]"/>
+                <separator/>
+                <filter name="group_charge_type" string="Tipo de cargo"
+                        context="{'group_by': 'charge_type'}"/>
+                <filter name="group_entity" string="Entidad financiera"
+                        context="{'group_by': 'mov_financial_entity'}"/>
+                <filter name="group_payment" string="Pago"
+                        context="{'group_by': 'payment_id'}"/>
+            </search>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.payment.charge: Form View                        -->
+    <!-- ============================================================ -->
+    <record id="view_mercadolibre_payment_charge_form" model="ir.ui.view">
+        <field name="name">mercadolibre.payment.charge.form</field>
+        <field name="model">mercadolibre.payment.charge</field>
+        <field name="arch" type="xml">
+            <form string="Cargo MercadoPago">
+                <sheet>
+                    <group>
+                        <group string="Información del cargo">
+                            <field name="payment_id"/>
+                            <field name="order_id"/>
+                            <field name="charge_id"/>
+                            <field name="external_charge_id"/>
+                            <field name="name"/>
+                            <field name="charge_type"/>
+                            <field name="date_created"/>
+                        </group>
+                        <group string="Montos">
+                            <field name="amount_original"/>
+                            <field name="amount_refunded"/>
+                            <field name="base_amount"/>
+                            <field name="rate" widget="percentage"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Metadata">
+                            <field name="mov_detail"/>
+                            <field name="mov_financial_entity"/>
+                            <field name="mov_type"/>
+                            <field name="source"/>
+                            <field name="source_detail"/>
+                            <field name="tax_status"/>
+                        </group>
+                        <group string="Cuentas y Mapeo">
+                            <field name="account_from"/>
+                            <field name="account_to"/>
+                            <field name="meli_tax_id"/>
+                            <field name="account_tax_id"/>
+                        </group>
+                    </group>
+                    <group string="JSON Original">
+                        <field name="raw_json" widget="text" nolabel="1" colspan="2"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- mercadolibre.payments: Form View (new, base module has none)   -->
+    <!-- ============================================================ -->
+    <record id="view_meli_payments_charges_form" model="ir.ui.view">
+        <field name="name">mercadolibre.payments.form.charges</field>
+        <field name="model">mercadolibre.payments</field>
+        <field name="arch" type="xml">
+            <form string="Pago MercadoPago">
+                <header>
+                    <button name="button_import_taxes" type="object"
+                            string="Importar Impuestos"
+                            class="btn-primary"
+                            icon="fa-download"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Pago">
+                            <field name="payment_id"/>
+                            <field name="order_id"/>
+                            <field name="status"/>
+                            <field name="currency_id"/>
+                            <field name="date_created"/>
+                        </group>
+                        <group string="Montos">
+                            <field name="transaction_amount"/>
+                            <field name="total_paid_amount"/>
+                            <field name="fee_amount"/>
+                            <field name="shipping_amount"/>
+                            <field name="taxes_amount"/>
+                            <field name="net_received_amount"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Pagos en Odoo">
+                            <group>
+                                <group>
+                                    <field name="account_payment_id"/>
+                                    <field name="account_supplier_payment_id"/>
+                                </group>
+                                <group>
+                                    <field name="account_supplier_payment_shipment_id"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Cargos / Retenciones">
+                            <group>
+                                <group>
+                                    <field name="tax_withholding_amount"/>
+                                    <field name="fee_charges_amount"/>
+                                </group>
+                                <group>
+                                    <field name="shipping_charges_amount"/>
+                                </group>
+                            </group>
+                            <field name="charge_ids" nolabel="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="charge_type"/>
+                                    <field name="amount_original"/>
+                                    <field name="base_amount"/>
+                                    <field name="rate"/>
+                                    <field name="mov_financial_entity"/>
+                                    <field name="account_tax_id"/>
+                                    <field name="tax_status"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Detalle Pago">
+                            <group>
+                                <group>
+                                    <field name="payment_method_id"/>
+                                    <field name="payment_type"/>
+                                    <field name="installments"/>
+                                    <field name="operation_type"/>
+                                </group>
+                                <group>
+                                    <field name="date_approved"/>
+                                    <field name="authorization_code"/>
+                                    <field name="marketplace_fee"/>
+                                    <field name="coupon_amount"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="JSON MercadoPago">
+                            <field name="full_payment" widget="text" nolabel="1" readonly="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- Extend payments tree to show import button and withholdings    -->
+    <!-- ============================================================ -->
+    <record model="ir.ui.view" id="meli_oerp_acct_payment_charges_tree">
+        <field name="name">mercadolibre.payments.tree.charges</field>
+        <field name="model">mercadolibre.payments</field>
+        <field name="inherit_id" ref="meli_oerp.view_meli_payments_tree"/>
+        <field name="arch" type="xml">
+            <field name="taxes_amount" position="after">
+                <field name="tax_withholding_amount"/>
+                <field name="net_received_amount"/>
+                <button name="button_import_taxes" type="object"
+                        string="Importar Impuestos"
+                        icon="fa-download"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- Extend orders form to add import taxes button                 -->
+    <!-- ============================================================ -->
+    <record model="ir.ui.view" id="meli_oerp_acct_orders_import_taxes">
+        <field name="name">mercadolibre.orders.import.taxes</field>
+        <field name="model">mercadolibre.orders</field>
+        <field name="inherit_id" ref="meli_oerp.view_meli_orders_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box_mel']" position="inside">
+                <button name="button_import_payment_taxes" type="object"
+                        string="Importar Impuestos"
+                        class="oe_stat_button"
+                        icon="fa-download"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================ -->
+    <!-- Extend company view to add charges config                     -->
+    <!-- ============================================================ -->
+    <record model="ir.ui.view" id="view_company_page_mercadolibre_charges">
+        <field name="name">res.company.form.meli.charges</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="meli_oerp_accounting.view_company_page_mercadolibre_accounting"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='automatic_payment']" position="inside">
+                <field name="mercadolibre_process_charges"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,70 @@
+<odoo>
+  <data>
+  <!--record model="ir.ui.view" id="product_normal_mercadolibre_form_view">
+      <field name="name">product.normal.mercadolibre.form.inherit</field>
+      <field name="model">product.product</field>
+      <field name="inherit_id" ref="product.product_normal_form_view" />
+      <field name="arch" type="xml">
+        <field name="product_default_code"/>
+        <field name="product_barcode"/>
+      </field>
+  </record-->
+
+
+
+
+      <record model="ir.ui.view" id="view_mercadolibre_sku_rule_tree">
+        <field name="name">meli_oerp.sku.rule.tree</field>
+        <field name="model">meli_oerp.sku.rule</field>
+        <field name="arch" type="xml">
+          <list create="1" edit="1" delete="1" default_order='name asc'>
+            <field name="configuration_id"/>
+            <field name="name"/>
+            <field name="type"/>
+            <field name="sku"/>
+          </list>
+        </field>
+      </record>
+
+      <record model="ir.actions.act_window" id="action_mercadolibre_sku_rule_tree">
+  			<field name="name">Reglas mapeo SKU</field>
+  			<field name="type">ir.actions.act_window</field>
+  			<field name="res_model">meli_oerp.sku.rule</field>
+  			<!--field name="view_type">form</field-->
+  			<field name="view_mode">list,form</field>
+  			<!--field name="search_view_id" ref="producteca_configuration_search_view" /-->
+  		</record>
+
+      <menuitem id="menu_mercadolibre_sku_rules"
+              action="action_mercadolibre_sku_rule_tree"
+              parent="meli_oerp.menu_meli"
+              name="Reglas de SKU" sequence="5"/>
+
+    <!-- stock.location: mostrar depósitos ML vinculados -->
+    <record model="ir.ui.view" id="view_stock_location_meli_inherit">
+      <field name="name">stock.location.form.meli.inherit</field>
+      <field name="model">stock.location</field>
+      <field name="inherit_id" ref="stock.view_location_form"/>
+      <field name="arch" type="xml">
+        <xpath expr="//sheet" position="inside">
+          <group string="Depósitos ML vinculados" invisible="not meli_stock_location_ids">
+            <field name="meli_stock_location_ids" nolabel="1">
+              <list string="Depósitos ML" create="0" delete="0">
+                <field name="account_id"/>
+                <field name="meli_store_id"/>
+                <field name="name"/>
+                <field name="status" widget="badge"
+                       decoration-success="status == 'active'"
+                       decoration-muted="status == 'inactive'"/>
+                <field name="city"/>
+                <field name="network_node_id"/>
+                <field name="services_stock_location"/>
+              </list>
+            </field>
+          </group>
+        </xpath>
+      </field>
+    </record>
+
+    </data>
+</odoo>

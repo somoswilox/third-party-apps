@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+
+        <!-- Search View -->
+        <record id="ocapi_connector_registry_search_view" model="ir.ui.view">
+            <field name="name">ocapi.connector.registry.search</field>
+            <field name="model">ocapi.connector.registry</field>
+            <field name="arch" type="xml">
+                <search>
+                    <field name="name"/>
+                    <field name="connector_type"/>
+                    <field name="module_name"/>
+                    <separator/>
+                    <filter string="Nativos Odoo" name="filter_native" domain="[('is_native_odoo','=',True)]"/>
+                    <filter string="Propios OCAPI" name="filter_own" domain="[('is_native_odoo','=',False)]"/>
+                </search>
+            </field>
+        </record>
+
+        <!-- Tree View -->
+        <record model="ir.ui.view" id="ocapi_connector_registry_tree_view">
+            <field name="name">ocapi.connector.registry.tree</field>
+            <field name="model">ocapi.connector.registry</field>
+            <field name="arch" type="xml">
+                <list default_order="sequence, name">
+                    <field name="sequence" widget="handle"/>
+                    <field name="name"/>
+                    <field name="connector_type"/>
+                    <field name="account_model"/>
+                    <field name="module_name"/>
+                    <field name="is_native_odoo" widget="boolean_toggle"/>
+                    <field name="is_installed" widget="boolean"/>
+                    <field name="account_count"/>
+                </list>
+            </field>
+        </record>
+
+        <!-- Form View -->
+        <record model="ir.ui.view" id="ocapi_connector_registry_form_view">
+            <field name="name">ocapi.connector.registry.form</field>
+            <field name="model">ocapi.connector.registry</field>
+            <field name="arch" type="xml">
+                <form>
+                    <sheet>
+                        <div class="oe_button_box" name="button_box">
+                            <button name="action_open_accounts" type="object"
+                                class="oe_stat_button" icon="fa-users">
+                                <field name="account_count" widget="statinfo" string="Cuentas"/>
+                            </button>
+                        </div>
+                        <div class="oe_title">
+                            <h1><field name="name" placeholder="Nombre del Conector"/></h1>
+                        </div>
+                        <group>
+                            <group string="Identificacion">
+                                <field name="connector_type"/>
+                                <field name="sequence"/>
+                                <field name="icon"/>
+                                <field name="color"/>
+                                <field name="active"/>
+                            </group>
+                            <group string="Modelos">
+                                <field name="account_model"/>
+                                <field name="binding_model"/>
+                                <field name="configuration_model"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group string="Modulos">
+                                <field name="module_name"/>
+                                <field name="bridge_module"/>
+                                <field name="is_native_odoo"/>
+                            </group>
+                            <group string="Estado">
+                                <field name="is_installed"/>
+                            </group>
+                        </group>
+                        <group string="Notas">
+                            <field name="notes" nolabel="1"/>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <!-- Kanban View -->
+        <record model="ir.ui.view" id="ocapi_connector_registry_kanban_view">
+            <field name="name">ocapi.connector.registry.kanban</field>
+            <field name="model">ocapi.connector.registry</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile">
+                    <field name="name"/>
+                    <field name="connector_type"/>
+                    <field name="is_installed"/>
+                    <field name="is_native_odoo"/>
+                    <field name="account_count"/>
+                    <field name="icon"/>
+                    <field name="color"/>
+                    <templates>
+                        <t t-name="card">
+                            <div t-attf-class="oe_kanban_color_#{record.color.raw_value} oe_kanban_global_click">
+                                <div class="oe_kanban_content">
+                                    <div class="o_kanban_record_top">
+                                        <div class="o_kanban_record_headleft">
+                                            <i t-attf-class="fa #{record.icon.raw_value} fa-2x me-2" title="Icono del conector"/>
+                                            <strong><field name="name"/></strong>
+                                        </div>
+                                    </div>
+                                    <div class="o_kanban_record_body">
+                                        <field name="connector_type"/> |
+                                        <t t-if="record.is_native_odoo.raw_value">
+                                            <span class="badge text-bg-info">Nativo Odoo</span>
+                                        </t>
+                                        <t t-else="">
+                                            <span class="badge text-bg-primary">OCAPI</span>
+                                        </t>
+                                    </div>
+                                    <div class="o_kanban_record_bottom">
+                                        <div class="oe_kanban_bottom_left">
+                                            <span><field name="account_count"/> cuentas</span>
+                                        </div>
+                                        <div class="oe_kanban_bottom_right">
+                                            <t t-if="record.is_installed.raw_value">
+                                                <span class="badge text-bg-success">Instalado</span>
+                                            </t>
+                                            <t t-else="">
+                                                <span class="badge text-bg-secondary">No instalado</span>
+                                            </t>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <!-- Action -->
+        <record model="ir.actions.act_window" id="action_ocapi_connector_registry">
+            <field name="name">Conectores Registrados</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">ocapi.connector.registry</field>
+            <field name="view_mode">kanban,list,form</field>
+            <field name="search_view_id" ref="ocapi_connector_registry_search_view"/>
+            <field name="help" type="html">
+                <p class="o_view_nocontent_smiling_face">
+                    No hay conectores registrados
+                </p>
+                <p>
+                    Los conectores se registran automaticamente al instalarse.
+                    Instala un modulo conector (MercadoLibre, Producteca, etc.)
+                    para verlo aqui.
+                </p>
+            </field>
+        </record>
+
+        <!-- Menu item under OCAPI > Conectores -->
+        <menuitem id="menu_ocapi_registry"
+            action="action_ocapi_connector_registry"
+            parent="menu_ocapi_connectors_section"
+            name="Conectores Registrados"
+            sequence="1"/>
+
+    </data>
+</odoo>
