@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="account_move_form_view_inherit_automatic_account_change" model="ir.ui.view">
+        <field name="name">account.move.form.view.inherit.automatic_account_change</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <field name="invoice_origin" position="after">
+                <field name="pay_sell_force_account_id"/>
+            </field>
+        </field>
+    </record>
+
+</odoo>

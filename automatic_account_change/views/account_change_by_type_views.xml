@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="account_change_by_type_view_tree" model="ir.ui.view">
+        <field name="name">account.change.by.type.tree.view</field>
+        <field name="model">account.change.by.type</field>
+        <field name="arch" type="xml">
+            <list string="Cambio Cuenta" editable="bottom">
+                <field name="journal_id"/>
+                <field name="currency_id"/>
+                <field name="sale_account_id"/>
+                <field name="purchase_account_id"/>
+                <field name="company_id"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_account_change_by_type" model="ir.actions.act_window">
+        <field name="name">Cambio Cuenta</field>
+        <field name="res_model">account.change.by.type</field>
+        <field name="view_mode">list</field>
+        <field name="view_id" ref="account_change_by_type_view_tree"/>
+    </record>
+
+</odoo>

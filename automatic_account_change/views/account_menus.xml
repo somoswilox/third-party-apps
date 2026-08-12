@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <menuitem id="account_account_change_by_type_menu"
+              name="Cambiar cuenta factura"
+              parent="account.account_account_menu"
+              action="action_account_change_by_type"/>
+
+</odoo>

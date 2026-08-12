@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<odoo>
+    
+    <record id="account_payment_term_line_view_form_inherit_payment_term_lines_extension" model="ir.ui.view">
+        <field name="name">account.payment.term.line.view.form.inherit.payment_term_lines_extension</field>
+        <field name="model">account.payment.term.line</field>
+        <field name="inherit_id" ref="payment_term_lines.account_payment_term_line_form_view_inherit_payment_term_lines"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group/group/field[@name='delay_type']" position="after">
+                <field name="option"/>
+                <field name="factor_round" invisible="value == 'balance'"/>
+            </xpath>
+            <xpath expr="//group[@name='group_fields']" position="after">
+                <h1 class="account_title">Cuentas Contables</h1>
+                <field name="term_extension">
+                    <list string="Accounting Accounts" editable="top" no_open="True">
+                        <field name="currency" 
+                               optional="hide"
+                               class="account_currency"/>
+
+                        <field name="ledger_account_custom"
+                               domain="[('related_user_account_name','in', ('asset_receivable', 'asset_current'))]"
+                               filter_domain="[('related_user_account_name','in', ('asset_receivable', 'asset_current'))]"
+                               optional="hide"
+                               class="account_ledger_account"/>
+
+                        <field name="ledger_account_payable_custom"
+                               domain="[('related_user_account_name','in', ('liability_payable', 'liability_current'))]"
+                               filter_domain="[('related_user_account_name','in', ('liability_payable', 'liability_current'))]"
+                               optional="hide"
+                               class="account_ledger_account_payable"/>
+                    </list>
+                </field>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

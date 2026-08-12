@@ -1,0 +1,15 @@
+.account_title{
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+.account_currency{
+    width:100px ;
+}
+
+.account_ledger_account{
+    width: 1000px;
+
+}
+.account_ledger_account_payable{
+    width: 500px;
+}

@@ -1,0 +1,54 @@
+---Models in module 'payment_term_lines_extension'---
+    change model account.payment.term.line.extension to payment_term_lines
+    add _onchange_account_id to change when choose invoice_payment_term_id and currency_id
+
+---Fields in module 'payment_term_lines_extension'---
+payment_term_lines_extension / account.account / related_user_account_name (Selection) : NEW
+payment_term_lines_extension / account.account / related_user_account_name (Char) : DEL
+
+payment_term_lines_extension / account.account / related_user_account_name (Selection): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line / factor_round (Float): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line / currency (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line / ledger_account (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line / ledger_account_payable (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line / term_extension (One2many): module change to payment_term_lines
+
+payment_term_lines_extension / account.payment.term.line.extension / payment_term_line_id (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line.extension / currency (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line.extension / ledger_account (Many2one): module change to payment_term_lines
+payment_term_lines_extension / account.payment.term.line.extension / ledger_account_payable (Many2one): module change to payment_term_lines
+
+---XML records in module 'payment_term_lines_extension'---
+NEW ir.ui.view: account.view_payment_term_form
+DEL ir.ui.view: account.view_payment_term_line_form
+--------------------------------------------------------------------------------
+DEPENDS [payment_term_lines]
+module: account.account
+field:  related_user_account_name
+xml_id: 
+        account.view_move_form
+        payment_term_lines.account_payment_term_line_form_view_inherit_payment_term_lines
+
+module: account.payment.term.line
+field:  l10n_pe_is_detraction_retention
+xml_id: 
+
+module: account.move.line
+field:  tmp_date_maturity,
+        l10n_pe_is_detraction_retention
+xml_id: 
+
+DEPENDS [automatic_account_change]
+module: account.move
+field:  pay_sell_force_account_id
+xml_id: 
+
+module: account.change.by.type
+field:  journal_id,
+        currency_id,
+        sale_account_id,
+        purchase_account_id,
+        company_id
+xml_id: 
+
+    

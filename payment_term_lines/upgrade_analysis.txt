@@ -1,0 +1,10 @@
+---Models in module 'payment_term_lines'---
+
+---Fields in module 'payment_term_lines'---
+change fields in model account.payment.term.line Fields: delete discount_percentage,end_months,months
+change fields in model account.payment.term.line Fields: modify days_after-->delay_type ,days---->nb_days
+change fields in model account.payment.term.line Fields: value --->balance,percent,fixed at value --->percent,fixed
+
+---XML records in module 'payment_term_lines'---
+change in the xpath for field discount_days ---> delay_type
+change in atrs for invisible value == 'balance'
