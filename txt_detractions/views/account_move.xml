@@ -13,8 +13,13 @@
                     </group>
                     <group name='info_voucher_2' invisible="move_type not in ('in_invoice','in_refund', 'out_invoice')">
                         <field name="operation_type_detraction"/>
-                        <field name="l10n_pe_detraction_date"/>
-                        <field name="l10n_pe_detraction_number"/>
+                        <!-- CAMPOS COMENTADOS: l10n_pe_detraction_date y l10n_pe_detraction_number
+                             ya son agregados por el módulo Enterprise l10n_pe_reports
+                             (enterprise/l10n_pe_reports/views/account_move_view.xml) con condiciones
+                             más precisas (country_code == 'PE' + tipo de documento).
+                             Mantenerlos aquí genera campos duplicados en el formulario de factura. -->
+                        <!-- <field name="l10n_pe_detraction_date"/> -->
+                        <!-- <field name="l10n_pe_detraction_number"/> -->
                     </group>
             </xpath>
         </field>
