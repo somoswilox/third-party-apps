@@ -7,7 +7,7 @@ import logging
 _logger = logging.getLogger(__name__)
 import json
 import re
-from markupsafe import Markup
+from markupsafe import Markup, escape as markup_escape
 # Odoo version 18.0
 
 # Odoo 18.0 -> type='json', Odoo 19.0 -> type='jsonrpc'
@@ -117,11 +117,57 @@ cl_vat_sep_million = "."
 order_message_type = "notification"
 product_message_type = "notification"
 
-def meli_message_post(record, body, config=None):
+def meli_once_marker(once_key):
+    """Marca HTML invisible que identifica un mensaje "postear una sola vez"."""
+    return "<!-- meli-once:%s -->" % once_key
+
+
+def meli_message_already_posted(record, once_key):
+    """True si el chatter de `record` ya tiene el mensaje marcado con `once_key`."""
+    if not record or not once_key:
+        return False
+    try:
+        # sudo: el cron corre con un usuario de permisos acotados y esto es sólo lectura.
+        return bool(record.env['mail.message'].sudo().search_count([
+            ('model', '=', record._name),
+            ('res_id', '=', record.id),
+            ('body', 'like', meli_once_marker(once_key)),
+        ]))
+    except Exception as e:
+        # Ante cualquier problema leyendo el chatter preferimos postear de más
+        # (perder un aviso es peor que repetirlo).
+        _logger.warning("meli_message_already_posted failed on %s(%s): %s", record._name, record.id, e)
+        return False
+
+
+def meli_message_body_with_marker(body, once_key):
+    """Devuelve `body` con la marca `once_key` pegada al final, invisible en el chatter.
+
+    Ojo con la diferencia entre versiones de Odoo (verificada en el core):
+      - 16.0: `message_post` NO escapa el body → un str plano se guarda como HTML.
+      - 17.0/18.0/19.0: `message_post` hace `escape(body)` salvo que sea `Markup`
+        (mail_thread.py: "escape if text, keep if markup") → un comentario HTML
+        en un str plano se vería literal, `<!-- meli-once:... -->`, en el chatter.
+    Por eso devolvemos un `Markup` con el body YA escapado + la marca cruda: el texto
+    se ve igual que siempre en las 4 versiones y la marca queda invisible.
+    Sólo se usa en los avisos con `once_key` (los demás callers no cambian).
+    """
+    return markup_escape(body) + Markup(meli_once_marker(once_key))
+
+
+def meli_message_post(record, body, config=None, once_key=None):
     """Post a message respecting the MeLi notification mode setting.
 
     config: res.company or connection_account record with mercadolibre_notification_mode field.
            If None, falls back to the record's company.
+
+    once_key: si viene, el mensaje se postea UNA SOLA VEZ por record. El body se
+           marca con `<!-- meli-once:<once_key> -->` y en las llamadas siguientes,
+           si esa marca ya está en el chatter, no se repostea (sí queda en el log).
+           Se usa en los avisos que nacen de un cron que reintenta indefinidamente
+           (orden ML cancelada que no se puede cancelar en Odoo): sin esto el mismo
+           aviso se repetía cada ~5 min para siempre — visto en prod con 1215 y 832
+           mensajes en el chatter de dos órdenes.
 
     Modes:
       - 'notification': standard notification (appears in user inbox)
@@ -140,8 +186,18 @@ def meli_message_post(record, body, config=None):
         _logger.info("MELI [%s] %s: %s", record._name, getattr(record, 'name', record.id), body)
         return
 
+    if once_key:
+        if meli_message_already_posted(record, once_key):
+            _logger.info("MELI [%s] %s (ya posteado, once_key=%s): %s",
+                         record._name, getattr(record, 'name', record.id), once_key, body)
+            return
+        body = meli_message_body_with_marker(body, once_key)
+
     body_val = body
-    if isinstance(body_val, str) and '<' in body_val and '>' in body_val:
+    if isinstance(body_val, Markup):
+        # Ya viene armado por once_key (body escapado + marca cruda): no tocarlo.
+        pass
+    elif isinstance(body_val, str) and '<' in body_val and '>' in body_val:
         body_val = Markup(body_val)
     else:
         body_val = str(body_val)
@@ -697,26 +753,65 @@ def get_delivery_line(sorder):
 
 
 def set_delivery_line( sorder, delivery_price, delivery_message ):
+    """Setea el precio de la linea de envio SIN riesgo de perderla.
+
+    El core (delivery/models/sale_order.py::set_delivery_line) ejecuta, EN ESTE ORDEN:
+        _remove_delivery_line()  ->  carrier_id = carrier.id  ->  _create_delivery_line(...)
+    Si el carrier viene VACIO, o si la escritura/creacion posterior falla (compania
+    incompatible, orden facturada, impuestos), el BORRADO ya ocurrio: la venta queda sin
+    linea de envio y sin transportista, y el flete no se factura nunca mas. Antes esa
+    excepcion se tragaba con un 'except:' pelado ("order invoiced") y el borrado quedaba
+    consumado.
+
+    Por eso:
+      1) sin carrier valido NO se llama al core -> se actualiza el precio de la linea existente;
+      2) la llamada al core va dentro de un savepoint -> si falla despues del borrado, se
+         deshace el borrado en vez de dejar la venta pelada;
+      3) los fallos se loguean con la venta y el error reales.
+
+    Caso que lo destapo (Elvimarta, jul-2026): 47 ordenes quedaron sin flete en 7 semanas y
+    20 se facturaron por debajo de lo cobrado al comprador.
+    """
     #check version
     delivery_line = get_delivery_line(sorder)
-    if not delivery_line:
-        sorder.set_delivery_line(sorder.carrier_id, delivery_price)
+    carrier = sorder.carrier_id
+
+    if not carrier:
+        # Sin transportista el core borraria la linea y no podria recrearla.
+        if delivery_line and abs(delivery_line.price_unit - float(delivery_price)) > 0.01:
+            delivery_line.price_unit = delivery_price
+        _logger.warning("MELI set_delivery_line: venta %s sin transportista; se conserva la "
+                        "linea de envio (precio %s) en vez de recrearla.",
+                        sorder.name, delivery_price)
+        _meli_write_delivery_message(sorder, False, delivery_message)
+        return delivery_line
+
+    recompute_delivery_price = False
+    if not delivery_line or abs(delivery_line.price_unit - float(delivery_price)) > 1.1:
+        recompute_delivery_price = bool(delivery_line)
+        try:
+            with sorder.env.cr.savepoint():
+                sorder.set_delivery_line(carrier, delivery_price)
+        except Exception as e:
+            # El savepoint deshizo el borrado: la linea previa sigue viva.
+            _logger.warning("MELI set_delivery_line: no se pudo reescribir la linea de envio "
+                            "de %s (%s); se conserva la existente.", sorder.name, e)
         delivery_line = get_delivery_line(sorder)
+
+    _meli_write_delivery_message(sorder, recompute_delivery_price, delivery_message)
+
+    return delivery_line
+
+
+def _meli_write_delivery_message( sorder, recompute_delivery_price, delivery_message ):
     try:
-        recompute_delivery_price = False
-
-        if (delivery_line and abs(delivery_line.price_unit - float(delivery_price)) > 1.1 ):
-            recompute_delivery_price = True
-            sorder.set_delivery_line(sorder.carrier_id, delivery_price)
-
         sorder.write({
         	'recompute_delivery_price': recompute_delivery_price,
         	'delivery_message': delivery_message,
         })
-    except:
-            _logger.info("Error set_delivery_line failed (order invoiced)")
-
-    return delivery_line
+    except Exception as e:
+        _logger.warning("MELI set_delivery_line: no se pudo escribir delivery_message en %s: %s",
+                        sorder.name, e)
 
 def remove_delivery_line( sorder, delivery_price=0):
     sorder._remove_delivery_line()
