@@ -116,4 +116,27 @@
 			</field>
 	</record-->
 
+
+	<!--
+		un caso - Visibilidad del fallo de facturacion. Hasta ahora una venta ML que no
+		se pudo facturar quedaba `to invoice` como cualquier otra: el error solo vivia
+		en el chatter y nadie se enteraba. Este filtro la hace buscable de un click.
+	-->
+	<record id="view_search_meli_invoice_stranded" model="ir.ui.view">
+		<field name="name">sale.order.search.meli.invoice.stranded</field>
+		<field name="model">sale.order</field>
+		<field name="inherit_id" ref="sale.view_sales_order_filter"/>
+		<field name="arch" type="xml">
+			<filter name="my_sale_orders_filter" position="after">
+				<separator/>
+				<filter string="ML: factura trabada" name="meli_invoice_stranded"
+					domain="[('meli_invoice_stranded','=',True)]"
+					help="Ventas de MercadoLibre que agotaron los reintentos automaticos de facturacion y necesitan revision manual."/>
+				<filter string="ML: reintentando factura" name="meli_invoice_retrying"
+					domain="[('meli_invoice_retry_count','&gt;',0),('meli_invoice_stranded','=',False)]"
+					help="Ventas de MercadoLibre cuya factura fallo al menos una vez y el barrido sigue reintentando."/>
+			</filter>
+		</field>
+	</record>
+
 </odoo>

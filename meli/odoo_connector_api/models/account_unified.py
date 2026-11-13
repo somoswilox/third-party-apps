@@ -128,7 +128,10 @@ class OcapiAccountUnified(models.Model):
 
         query = " UNION ALL ".join(unions)
 
-        self.env.cr.execute(f"""
+        # {self._table} y {query} salen del codigo: tablas de `known_tables` (filtradas contra information_schema)
+        # y columnas de `_get_table_columns`; no entra ningun dato de usuario (F8b 20.0)
+        self.env.cr.execute(  # pylint: disable=sql-injection
+            f"""
             CREATE OR REPLACE VIEW {self._table} AS ({query})
         """)
 

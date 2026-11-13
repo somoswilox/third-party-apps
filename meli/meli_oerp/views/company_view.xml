@@ -78,22 +78,26 @@
                           <group col="1">
                             <group  string="Información de conexión" name="Account" col="2">
               								<field name="mercadolibre_state" invisible="0"/>
-              								<field name="mercadolibre_client_id" groups="base.group_no_one" />
-              								<field name="mercadolibre_secret_key" groups="base.group_no_one" />
-              								<field name="mercadolibre_redirect_uri" groups="base.group_no_one" />
-                              <field name="mercadolibre_seller_id" invisible="0" groups="base.group_no_one"/>
+              								<field name="mercadolibre_client_id" groups="base.group_system" />
+              								<field name="mercadolibre_secret_key" password="True" groups="base.group_system" />
+              								<field name="mercadolibre_redirect_uri" groups="base.group_system" placeholder="https://su-dominio/meli_login"/>
+              								<field name="mercadolibre_redirect_uri_suggested" groups="base.group_system" invisible="mercadolibre_redirect_uri"/>
+                              <field name="mercadolibre_seller_id" invisible="0" groups="base.group_system"/>
                               <field name="mercadolibre_user_product_seller" invisible="0" groups="base.group_no_one"/>
                               
-              								<field name="mercadolibre_access_token" invisible="0" groups="base.group_no_one" />
-              								<field name="mercadolibre_refresh_token" invisible="0" groups="base.group_no_one" />
+              								<field name="mercadolibre_access_token" invisible="0" password="True" groups="base.group_system" />
+              								<field name="mercadolibre_refresh_token" invisible="0" password="True" groups="base.group_system" />
               								<field name="mercadolibre_code" invisible="0" groups="base.group_no_one" />
+              								<field name="meli_api_url" groups="base.group_system" />
                               <field name="mercadolibre_cron_refresh" invisible="0"/>
                               <field name="mercadolibre_cron_mail" invisible="0"/>
                             </group>
                             <group string="Configuración básica" col="2">
                               <group>
                                 <field name="mercadolibre_pricelist" invisible="0"/>
-                                <field name="mercadolibre_tax_included" invisible="0" groups="base.group_no_one"/>
+                                <field name="mercadolibre_product_invoice_policy" invisible="0"
+                                       placeholder="Usar el valor por defecto de Odoo"/>
+                                <field name="mercadolibre_tax_included" invisible="0" groups="base.group_system"/>
                                 <field name="mercadolibre_buying_mode" invisible="0"/>
                                 <field name="mercadolibre_currency" invisible="0"/>
                                 <field name="mercadolibre_condition" invisible="0"/>
@@ -114,6 +118,7 @@
                                        placeholder="XAXX010101000,XEXX010101000"/>
                                 <field name="mercadolibre_days_to_availability" invisible="0"/>
                                 <field name="mercadolibre_merge_same_name_contacts" invisible="0"/>
+                                <field name="mercadolibre_mx_cfdi_override_default" invisible="0"/>
 
                                 <field name="mercadolibre_attributes" invisible="0"/>
                                 <field name="mercadolibre_exclude_attributes"  widget="many2many" options="{'no_create': True}">
@@ -150,6 +155,7 @@
                                 <field name="mercadolibre_cron_get_questions" invisible="0"/>
                                 <field name="mercadolibre_import_search_sku" invisible="0"/>
                                 <field name="mercadolibre_order_total_config" invisible="0"/>
+                                <field name="meli_seller_discount_cap_mode" invisible="0"/>
                               </group>
                               <group>
                                 <field name="mercadolibre_create_product_from_order" invisible="0"/>
@@ -159,8 +165,12 @@
                                 <field name="mercadolibre_update_local_stock" invisible="0"/>
                                 <field name="mercadolibre_order_confirmation" invisible="0"/>
                                 <field name="mercadolibre_order_confirmation_full" invisible="0"/>
+                                <field name="mercadolibre_order_confirm_no_stock_mode" invisible="0"/>
                                 <field name="mercadolibre_payment_term" invisible="0"/>
                                 <field name="mercadolibre_notification_mode" invisible="0"/>
+                                <field name="mercadolibre_return_mode" invisible="0"/>
+                                <field name="mercadolibre_cancel_mode" invisible="0"/>
+                                <field name="mercadolibre_cancel_auto_from" invisible="0"/>
                                 <!--
                                   <field name="mercadolibre_overwrite_template" invisible="0"/>
                                   <field name="mercadolibre_overwrite_variant" invisible="0"/>
@@ -172,11 +182,13 @@
                                 <field name="mercadolibre_cron_post_update_products" invisible="0"/>
                                 <field name="mercadolibre_cron_post_new_products" invisible="0"/>
                                 <field name="mercadolibre_cron_post_update_stock" invisible="0"/>
+                                <field name="mercadolibre_stock_diag_reactivate"/>
                                 <field name="mercadolibre_cron_post_update_price" invisible="0"/>
                               </group>
                               <group>
                                 <field name="mercadolibre_post_default_code" invisible="0"/>
                                 <field name="mercadolibre_post_barcode" invisible="0"/>
+                                <field name="mercadolibre_manufacturer_source"/>
                                 <field name="mercadolibre_product_template_override_variant" invisible="0"/>
                                 <field name="mercadolibre_product_template_override_method" invisble="0"/>
                                 <hr/>

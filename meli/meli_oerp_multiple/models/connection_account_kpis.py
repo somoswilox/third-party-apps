@@ -299,7 +299,8 @@ class MercadoLibreAccountKPIsImpl(models.Model):
         query += f" GROUP BY {group_by} ORDER BY order_count DESC"
 
         try:
-            self._cr.execute(query, tuple(params))
+            # `group_by` validado contra valid_group_fields; fechas como parametro (F8b 20.0)
+            self._cr.execute(query, tuple(params))  # pylint: disable=sql-injection
             results = []
             for row in self._cr.fetchall():
                 results.append({
@@ -362,7 +363,8 @@ class MercadoLibreAccountKPIsImpl(models.Model):
         query += f" GROUP BY {date_expr} ORDER BY period"
 
         try:
-            self._cr.execute(query, tuple(params))
+            # `date_expr` sale de interval_map (literales); fechas como parametro (F8b 20.0)
+            self._cr.execute(query, tuple(params))  # pylint: disable=sql-injection
             results = []
             for row in self._cr.fetchall():
                 results.append({

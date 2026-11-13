@@ -34,7 +34,7 @@ class MercadolibreAccountStockLocation(models.Model):
         readonly=True,
     )
     network_node_id = fields.Char(string='Network Node ID', readonly=True,
-        help='Identificador de nodo en la red logística de ML, ej: MXP13767317941')
+        help='Identificador de nodo en la red logística de ML, ej: MXP00000000000')
     services_stock_location = fields.Char(
         string='Servicios ML',
         readonly=True,
@@ -54,6 +54,7 @@ class MercadolibreAccountStockLocation(models.Model):
         'stock.location',
         string='Ubicación Odoo',
         domain=[('usage', '=', 'internal')],
+        index='btree_not_null',
         help='Ubicación interna de Odoo que corresponde a este depósito de ML. '
              'Este mapeo define qué stock de Odoo se publica en este nodo logístico.',
     )
@@ -63,12 +64,8 @@ class MercadolibreAccountStockLocation(models.Model):
         message='Ya existe un registro para este store en esta cuenta ML.',
     )
 
-    def name_get(self):
-        result = []
-        for rec in self:
-            city = (' — ' + rec.city) if rec.city else ''
-            result.append((rec.id, '%s%s' % (rec.name, city)))
-        return result
+    # (F8b 20.0) borrado `name_get`: el ORM no lo llama desde 17 (deprecado). Mostrar la ciudad en el nombre
+    # requeriria `_compute_display_name` = cambio visible ⇒ anotado como C en compat-20-backport.md.
 
 
 class StockLocationMeli(models.Model):

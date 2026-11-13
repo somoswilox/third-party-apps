@@ -8,10 +8,12 @@
 
 from odoo import api, models, fields, _
 from odoo.exceptions import UserError, ValidationError
+from odoo.tools import float_compare
 
 import logging
 _logger = logging.getLogger(__name__)
 from odoo.addons.meli_oerp_accounting.models.versions import *
+from odoo.addons.meli_oerp.models.versions import meli_payment_method_line_for
 
 class MercadoLibreOrdersActionsWizard(models.TransientModel):
     """
@@ -616,7 +618,11 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                 message="No se encontraron ordenes de venta"
             )
 
+        # #caso-K71: hay que contar el RESULTADO, no el intento. Ver el bloque de abajo.
         reconciled_count = 0
+        partial_count = 0
+        unchanged_count = 0
+        attempted_count = 0
         errors = []
 
         for so in sale_orders:
@@ -627,8 +633,34 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                             if inv.state == 'posted' and inv.payment_state in ('not_paid', 'partial'):
                                 try:
                                     if hasattr(so, 'meli_reconcile'):
+                                        # #caso-K71: `reconciled_count += 1` despues de LLAMAR a
+                                        # meli_reconcile contaba intentos, no resultados: el wizard
+                                        # respondia "Se conciliaron 1 facturas" habiendo conciliado
+                                        # cero. Eso fue lo que mantuvo invisible tres semanas el bug
+                                        # del guard de conciliacion (meli_oerp_accounting 26.47).
+                                        # Se mide el estado de la factura ANTES y DESPUES en vez de
+                                        # confiar en el retorno, porque los dos modulos pueden estar
+                                        # en versiones distintas en un mismo cliente.
+                                        attempted_count += 1
+                                        _before_state = inv.payment_state
+                                        _before_residual = inv.amount_residual
                                         so.meli_reconcile(invoice=inv)
-                                        reconciled_count += 1
+                                        inv.invalidate_recordset(['payment_state', 'amount_residual'])
+                                        _moved = (
+                                            inv.payment_state != _before_state
+                                            or float_compare(
+                                                inv.amount_residual, _before_residual,
+                                                precision_rounding=inv.currency_id.rounding) != 0)
+                                        if inv.payment_state in ('paid', 'in_payment', 'reversed'):
+                                            reconciled_count += 1
+                                        elif _moved:
+                                            partial_count += 1
+                                        else:
+                                            unchanged_count += 1
+                                            _logger.info(
+                                                "force_reconcile: factura %s de la orden %s sin cambio "
+                                                "— no hay credito aplicable de esa orden ML",
+                                                inv.name, so.name)
                                     else:
                                         errors.append("Orden %s: metodo meli_reconcile no disponible" % so.name)
                                 except Exception as e:
@@ -640,7 +672,14 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                 _logger.error("Error conciliando orden %s: %s", so.name, str(e))
                 errors.append("Orden %s: %s" % (so.name, str(e)))
 
-        message = "Se conciliaron %d facturas" % reconciled_count
+        # #caso-K71: el mensaje reporta lo que PASO, no lo que se intento.
+        message = "Se conciliaron %d facturas de %d intentadas" % (reconciled_count, attempted_count)
+        if partial_count:
+            message += ("\n%d quedaron conciliadas PARCIALMENTE (siguen con saldo pendiente)"
+                        % partial_count)
+        if unchanged_count:
+            message += ("\n%d NO se pudieron conciliar: no hay credito disponible de esa misma "
+                        "orden de MercadoLibre" % unchanged_count)
         if errors:
             message += "\n\nErrores:\n" + "\n".join(errors[:10])
             if len(errors) > 10:
@@ -977,7 +1016,7 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                     ('state', 'in', ['draft', 'posted'])
                 ])
 
-                # Buscar por meli_order_id en memo (formato: "ML 2000010313988177 OP xxx TOT")
+                # Buscar por meli_order_id en memo (formato: "ML <order_id> OP xxx TOT")
                 if not payments and so.meli_order_id:
                     payments = self.env['account.payment'].search([
                         (ref_field, 'ilike', so.meli_order_id),
@@ -1314,6 +1353,20 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                         original_date = pay.date
                         meli_payment_id = pay.meli_payment_id
 
+                        # [26.269] Linea del cobro nuevo: la del original si tiene cuenta de pagos
+                        # pendientes; si no, la primera valida del diario. Se resuelve ANTES de
+                        # cancelar el original: si no hay ninguna, el original queda como estaba.
+                        new_method_line = pay.payment_method_line_id
+                        if not (new_method_line and new_method_line in original_journal._get_available_payment_method_lines('inbound')
+                                and (new_method_line.payment_account_id
+                                     or ('account_journal_payment_debit_account_id' in original_journal.company_id._fields
+                                         and original_journal.company_id.account_journal_payment_debit_account_id))):
+                            new_method_line, pml_reason = meli_payment_method_line_for(
+                                original_journal, 'inbound', partner=original_partner)
+                            if not new_method_line:
+                                errors.append("Pago %s: no se corrigio, %s" % (pay.name, pml_reason))
+                                continue
+
                         # Si esta posted, revertir
                         if pay.state == 'posted':
                             try:
@@ -1373,8 +1426,8 @@ class MercadoLibreOrdersActionsWizard(models.TransientModel):
                             'meli_rounding_difference': current_amount - correct_amount,
                         }
 
-                        if payment_method:
-                            new_pay_vals['payment_method_id'] = payment_method.id
+                        new_pay_vals['payment_method_id'] = new_method_line.payment_method_id.id
+                        new_pay_vals['payment_method_line_id'] = new_method_line.id
 
                         if meli_payment_id:
                             new_pay_vals['meli_payment_id'] = meli_payment_id.id

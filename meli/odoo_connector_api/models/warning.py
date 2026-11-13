@@ -161,7 +161,7 @@ class warning(models.TransientModel):
         }
         return res
         
-    def copy(self):
+    def copy(self, default=None):
         self.ensure_one()
         _logger.info("copy_error:"+str(self.copy_error))    
         return {'type': 'ir.actions.act_window_close'}

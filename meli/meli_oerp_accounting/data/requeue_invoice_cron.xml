@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!--
+            un caso - Reintento de facturacion de ventas MercadoLibre que quedaron
+            SIN factura posteada (rechazo de ARCA, 503 del webservice, tipo de
+            documento faltante, datos fiscales que llegaron tarde).
+            El cron de importacion NO las vuelve a mirar: con
+            `mercadolibre_cron_orders_limit` seteado la ventana date_desc no
+            pagina (tope deliberado), asi que una venta que cae fuera de las N
+            mas nuevas no se reintenta nunca mas.
+
+            NACE DESACTIVADO (active=False) A PROPOSITO: postear una factura
+            electronica emite un CAE real e IRREVERSIBLE. Activarlo es una
+            decision por instancia, no algo que pase por actualizar el modulo.
+            Antes de activarlo conviene una pasada en seco desde odoo shell:
+              env['sale.order']._meli_requeue_uninvoiced(dry_run=True)
+        -->
+        <record id="ir_cron_meli_invoice_requeue" model="ir.cron">
+            <field name="name">MELI: reintentar facturas que quedaron sin emitir</field>
+            <field name="model_id" ref="base.model_res_company"/>
+            <field name="state">code</field>
+            <field name="code">model.cron_meli_invoice_requeue()</field>
+            <field name="interval_number">2</field>
+            <field name="interval_type">hours</field>
+            <field name="active" eval="False"/>
+        </record>
+    </data>
+</odoo>

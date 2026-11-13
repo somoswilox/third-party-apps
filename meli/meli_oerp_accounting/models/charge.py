@@ -26,7 +26,7 @@ class MercadolibrePaymentCharge(models.Model):
     # --- Datos directos del JSON de MercadoPago charges_details ---
     charge_id = fields.Char(
         string="Charge ID",
-        help="ID del cargo en MercadoPago (ej: '153001226550-001')",
+        help="ID del cargo en MercadoPago (ej: '000000000000-001')",
         index=True,
     )
     external_charge_id = fields.Char(string="External Charge ID")

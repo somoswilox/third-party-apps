@@ -21,6 +21,7 @@
 
 from odoo import fields, models, api
 from odoo.tools.translate import _
+from odoo.tools import float_compare
 import logging
 from datetime import timedelta
 _logger = logging.getLogger(__name__)
@@ -29,6 +30,22 @@ import pdb
 
 import requests
 
+
+
+def _meli_moves_vivos(moves, ret):
+    """[#caso-K65 543, 26.383] moves sobre los que corre el hook de meli DESPUES del super()._action_done.
+
+    mrp (18+: mrp/models/stock_move.py _action_done -> action_explode) explota los moves de KIT
+    que llegan sin explotar y BORRA el move original: `self` queda con un registro inexistente y
+    leerle cualquier campo tira MissingError ("El registro no existe o fue eliminado"), que
+    revierte la validacion del picking entero. Se usan los moves de `self` que siguen existiendo
+    mas los que devolvio el super (los hechos, incluye los componentes del kit). Para productos
+    normales `ret` esta contenido en `self`: el conjunto no cambia.
+    """
+    vivos = moves.exists()
+    if isinstance(ret, models.BaseModel) and ret._name == 'stock.move':
+        vivos |= ret.exists().with_env(moves.env)
+    return vivos
 
 class stock_move(models.Model):
 
@@ -43,7 +60,7 @@ class stock_move(models.Model):
         #_logger.info("meli_oerp_stock >> stock.move _action_done ")
         ret = super( stock_move, self)._action_done(cancel_backorder=cancel_backorder)
         #_logger.info("meli_oerp_stock >> stock.move _action_done OK ")
-        for st in self:
+        for st in _meli_moves_vivos(self, ret):
             #_logger.info("Moved products, put all this product stock state on batch for inmediate update: #"+str(len(st.product_id))+" >> "+str(st.product_id.ids) )
             for p in st.product_id:
                 _logger.info("post stock for: "+p.display_name)
@@ -62,7 +79,8 @@ class stock_picking( models.Model):
     
     meli_shipment_logistic_type = fields.Char( related="meli_shipment.logistic_type", readonly=True, store=True, index=True )
     meli_handling_limit = fields.Datetime(
-        related="meli_shipment.estimated_handling_limit",
+        related="sale_id.meli_handling_limit",
+        store=True, index=True,
         readonly=True, string="Límite despacho ML")
 
     meli_handling_limit_status = fields.Selection([
@@ -172,16 +190,8 @@ class stock_picking( models.Model):
                         #m.product_uom_qty = qty
                         #m.state = 'assigned'
 
-    # Comprobar disponibilidad
-    def __action_assign( self ):
-        _logger.info("meli_oerp_stock re-assign: "+str(self))
-        #puede llegar a asignar varios stocks asociados
-        ret = super( stock_picking, self).action_assign()
-
-        self.action_reassign()
-
-
-        return ret
+    # (F8b 20.0) borrado `__action_assign` (doble guion bajo => `_stock_picking__action_assign`): el ORM nunca lo
+    # llamaba, codigo muerto. `action_reassign` sigue disponible.
 
     def _meli_full_lot_policy(self):
         """Retorna la política activa de auto-asignación FIFO para FULL.
@@ -264,8 +274,12 @@ class stock_picking( models.Model):
             for move in moves:
                 qty_needed = move.product_uom_qty
                 # Ya asignado lo que hay en las move_lines existentes
+                # FIX 26.381 (6-nov-2026): cuenta TODO lo reservado, con y sin lote. Antes sólo
+                # sumaba las líneas CON lote: si el move ya tenía una reserva SIN lote, el hook
+                # creaba líneas con lote ENCIMA (doble reserva) y la línea sin lote seguía
+                # trabando la validación. Además `ml.quantity` no existe en 16.0.
                 qty_already_reserved = sum(
-                    ml.quantity for ml in move.move_line_ids if ml.lot_id
+                    picking._meli_ml_reserved_qty(ml) for ml in move.move_line_ids
                 )
                 qty_missing = qty_needed - qty_already_reserved
                 if qty_missing <= 0:
@@ -390,10 +404,10 @@ class stock_picking( models.Model):
         return ret
 
     # ------------------------------------------------------------------
-    # FIX #353: reserva fantasma también en el CIERRE MANUAL desde el UI
+    # FIX un caso: reserva fantasma también en el CIERRE MANUAL desde el UI
     # ------------------------------------------------------------------
     def _meli_is_ml_out(self):
-        """True si el picking es una salida ML a cliente candidata a saneo #353.
+        """True si el picking es una salida ML a cliente candidata a saneo un caso.
 
         Mismo criterio que sale.order.meli_deliver: picking outgoing, origen
         internal/transit → destino customer, no devolución, no crossdock/compra.
@@ -410,6 +424,11 @@ class stock_picking( models.Model):
             return False
         if p.location_dest_id.usage != 'customer':
             return False
+        # FIX #caso-K41-K42: SÓLO entregas vinculadas a una venta de Mercado Libre.
+        # Antes entraba toda entrega a cliente (ventas comunes incluidas) y el
+        # saneo #caso-K43 les re-reservaba las cantidades cargadas por el operador.
+        if not p._meli_has_ml_link():
+            return False
         moves = getattr(p, 'move_ids_without_package', None) or p.move_ids
         # devolución: algún move nacido como return
         if any(moves.mapped('origin_returned_move_id')):
@@ -421,8 +440,126 @@ class stock_picking( models.Model):
             return False
         return True
 
+    def _meli_has_ml_link(self):
+        """FIX #caso-K41-K42: True si la entrega está vinculada a una venta ML real
+        (id de orden ML, órdenes ML asociadas o envío ML)."""
+        self.ensure_one()
+        so = getattr(self, 'sale_id', False)
+        if not so:
+            return False
+        return bool(getattr(so, 'meli_order_id', False)
+                    or getattr(so, 'meli_orders', False)
+                    or getattr(so, 'meli_shipment', False))
+
+    @api.model
+    def _meli_is_storable(self, product):
+        """FIX #caso-K41-K42: producto con control de stock (18/19 is_storable;
+        16/17 type == 'product'). Los no almacenables no tienen reserva en
+        quants: compararlos contra stock.quant da un "fantasma" siempre."""
+        if 'is_storable' in product._fields:
+            return bool(product.is_storable)
+        return product.type == 'product'
+
+    def _meli_operator_loaded_qty(self):
+        """FIX #caso-K41-K42: True si el operador ya cargó cantidades en la entrega.
+
+        16: alguna línea con qty_done > 0. 17+: algún move picked, o algún move
+        con cantidad distinta de la demanda (entrega parcial: en 18 editar la
+        cantidad en el formulario NO marca picked; lo marca button_validate
+        recién después de este hook). En ese caso el saneo no re-reserva: un
+        do_unreserve()+action_assign() pisaría lo cargado con la demanda.
+        """
+        self.ensure_one()
+        moves = self.move_ids.filtered(lambda m: m.state not in ('done', 'cancel'))
+        for mv in moves:
+            if 'qty_done' in mv.move_line_ids._fields:
+                rounding = mv.product_uom.rounding
+                if any(float_compare(ml.qty_done, 0.0, precision_rounding=rounding) > 0
+                       for ml in mv.move_line_ids):
+                    return True
+                continue
+            if getattr(mv, 'picked', False):
+                return True
+            if float_compare(mv.quantity, mv.product_uom_qty,
+                             precision_rounding=mv.product_uom.rounding) != 0:
+                return True
+        return False
+
+    def _meli_ml_reserved_qty(self, ml):
+        """Cantidad reservada/cargada de una move line, cross-versión (16: reserved_uom_qty /
+        qty_done; 17+: quantity)."""
+        if 'reserved_uom_qty' in ml._fields:
+            return (ml.reserved_uom_qty or 0.0) or (ml.qty_done or 0.0)
+        return ml.quantity or 0.0
+
+    def _meli_heal_lotless_reserve(self):
+        """FIX 26.381 (6-nov-2026) — re-reserva CON lote las líneas que quedaron reservadas SIN lote.
+
+        Caso de producción (un cliente, 19.0): 335 salidas FULL de un producto con tracking='lot'
+        quedaron reservadas contra un quant SIN lote (cantidad 0, reservado 446) y el cierre
+        automático fallaba en cada pasada con «Debe proporcionar un número de lote/serie»,
+        aunque el lote tenía ~1000 u. en la misma ubicación. Origen: versiones previas al
+        savepoint de meli_deliver: `_force_qty_done` creaba la línea sin lote (en 17+ el
+        `create` de la línea reserva en el quant con lot_id=False y lo crea en 0),
+        `button_validate` marcaba `picked` y fallaba por el lote, y el except sin rollback
+        dejaba la línea commiteada. Con el savepoint ya no nacen; las viejas no se sanaban:
+        `_meli_heal_phantom_reserve` compara por ubicación sin mirar el lote y además se
+        saltea por `picked` (guarda #caso-K41-K42), y el core `_do_unreserve` ignora los
+        moves `picked`.
+
+        Alcance (sólo el camino AUTOMÁTICO de meli_deliver, entrega ya hecha en ML):
+        moves de productos con lote/serie que tienen alguna línea sin lote (ni lot_id ni
+        lot_name) y la reserva COMPLETA (una entrega parcial cargada por un operador no se
+        toca). Se des-marca `picked` (16: qty_done=0 en esas líneas), se des-reserva y se
+        vuelve a reservar con el core (que toma quants con lote) + hook FIFO. Si no hay
+        stock con lote, la validación siguiente falla igual que antes y el savepoint de
+        meli_deliver deja el picking como estaba: nunca queda peor.
+        """
+        healed = self.env['stock.move']
+        for spick in self:
+            if spick.state in ('done', 'cancel'):
+                continue
+            todo = self.env['stock.move']
+            for mv in spick.move_ids.filtered(
+                    lambda m: m.state not in ('done', 'cancel') and m.product_id
+                    and m.product_id.tracking in ('lot', 'serial')
+                    and spick._meli_is_storable(m.product_id)):
+                lotless = mv.move_line_ids.filtered(
+                    lambda l: not l.lot_id and not l.lot_name and spick._meli_ml_reserved_qty(l) > 0)
+                if not lotless:
+                    continue
+                uom = mv.product_uom if 'product_uom' in mv._fields else mv.uom_id
+                if 'reserved_availability' in mv._fields:
+                    reserved = mv.reserved_availability or mv.quantity_done
+                else:
+                    reserved = mv.quantity
+                if 'rounding' in uom._fields:
+                    _cmp = float_compare(reserved, mv.product_uom_qty, precision_rounding=uom.rounding)
+                else:  # 20.0: uom.uom sin `rounding`
+                    _cmp = uom.compare(reserved, mv.product_uom_qty)
+                if _cmp != 0:
+                    continue
+                todo |= mv
+            if not todo:
+                continue
+            if 'picked' in todo._fields:
+                todo.write({'picked': False})
+            else:
+                todo.move_line_ids.filtered(
+                    lambda l: not l.lot_id and not l.lot_name).write({'qty_done': 0.0})
+            todo._do_unreserve()
+            spick.action_assign()
+            healed |= todo
+            _logger.info(
+                "[meli_heal_lot 26.381] %s (%s): %d move(s) con reserva SIN lote re-reservados (%s) -> lotes %s",
+                spick.name, spick.id, len(todo),
+                ','.join(todo.mapped(lambda m: m.product_id.default_code or m.product_id.name or '')),
+                ','.join(sorted(set(n for n in todo.move_line_ids.mapped('lot_id.name') if n))) or '-',
+            )
+        return healed
+
     def _meli_heal_phantom_reserve(self):
-        """FIX #353 v2 — sanea reservas fantasma antes de validar (idempotente).
+        """FIX un caso v2 — sanea reservas fantasma antes de validar (idempotente).
 
         Caso degenerado: la move_line reserva > 0 pero stock_quant.reserved_quantity
         no la cubre (desync ML↔quant). Ocurre cuando la mercadería ya salió
@@ -454,9 +591,28 @@ class stock_picking( models.Model):
             if spick.state in ('done', 'cancel'):
                 continue
 
+            # FIX #caso-K41-K42: si el operador ya cargó cantidades (parcial / picked)
+            # no se toca nada: re-reservar pisaría lo cargado con la demanda.
+            # FIX cierre sin stock (29-oct-2026): la guarda protege lo que cargó un
+            # OPERADOR. Si la cantidad la forzó el cierre automático (meli_deliver, entrega
+            # ya entregada en ML) no hay nada que proteger, y en 16.0 la línea forzada nace
+            # RESERVADA sin quant (_prepare_move_line_vals(quantity=…) => reserved_uom_qty):
+            # sin este saneo _action_done tira "No es posible deshacer la reserva" y la
+            # venta queda sin factura. Antes de la guarda este saneo la destrababa.
+            if (spick._meli_operator_loaded_qty()
+                    and not spick.env.context.get('meli_deliver_forced_qty')):
+                _logger.info(
+                    "[meli_heal #caso-K43] %s (%s): cantidades cargadas por el operador — "
+                    "saneo omitido (#caso-K41-K42)", spick.name, spick.id,
+                )
+                continue
+
             # --- Detección: ¿alguna ML reserva más de lo que el quant tiene reservado?
             needs_fix = False
             for mv in spick.move_ids.filtered(lambda m: m.state not in ('done', 'cancel')):
+                # FIX #caso-K41-K42: no almacenables no reservan en quants.
+                if not spick._meli_is_storable(mv.product_id):
+                    continue
                 for ml in mv.move_line_ids:
                     ml_reserved = (getattr(ml, 'reserved_uom_qty', None)
                                    or getattr(ml, 'quantity', None)
@@ -471,7 +627,7 @@ class stock_picking( models.Model):
                     if quant_reserved < ml_reserved:
                         needs_fix = True
                         _logger.warning(
-                            "[meli_heal #353] %s (%s): SKU %s ml.reserved=%.4f > "
+                            "[meli_heal] %s (%s): SKU %s ml.reserved=%.4f > "
                             "quant.reserved=%.4f — reserva fantasma detectada (desync ML↔quant)",
                             spick.name, spick.id,
                             ml.product_id.default_code or ml.product_id.name,
@@ -489,16 +645,18 @@ class stock_picking( models.Model):
                 spick.do_unreserve()
                 spick.action_assign()
                 _logger.info(
-                    "[meli_heal #353] %s (%s): reservas saneadas vía do_unreserve (state=%s)",
+                    "[meli_heal] %s (%s): reservas saneadas vía do_unreserve (state=%s)",
                     spick.name, spick.id, spick.state,
                 )
             except Exception as unreserve_err:
                 # --- Paso 2: fallback SQL quant-align
                 _logger.warning(
-                    "[meli_heal #353] %s (%s): do_unreserve falló (%s) — activando "
+                    "[meli_heal] %s (%s): do_unreserve falló (%s) — activando "
                     "fallback SQL quant-align", spick.name, spick.id, unreserve_err,
                 )
                 for mv2 in spick.move_ids.filtered(lambda m: m.state not in ('done', 'cancel')):
+                    if not spick._meli_is_storable(mv2.product_id):
+                        continue
                     for ml2 in mv2.move_line_ids:
                         ml_res2 = (getattr(ml2, 'reserved_qty', None)
                                    or getattr(ml2, 'quantity_product_uom', None)
@@ -521,7 +679,7 @@ class stock_picking( models.Model):
                                 (gap, best_q.id)
                             )
                             _logger.info(
-                                "[meli_heal #353] %s (%s): quant id=%s SKU=%s reserved_quantity +%.4f (quant-align)",
+                                "[meli_heal] %s (%s): quant id=%s SKU=%s reserved_quantity +%.4f (quant-align)",
                                 spick.name, spick.id, best_q.id,
                                 ml2.product_id.default_code or ml2.product_id.name, gap,
                             )
@@ -536,7 +694,7 @@ class stock_picking( models.Model):
                                 (ml2.product_id.id, ml2.location_id.id, gap, spick.company_id.id)
                             )
                             _logger.info(
-                                "[meli_heal #353] %s (%s): quant creado SKU=%s quantity=0 reserved=%.4f (quant-align, stock-neg)",
+                                "[meli_heal] %s (%s): quant creado SKU=%s quantity=0 reserved=%.4f (quant-align, stock-neg)",
                                 spick.name, spick.id,
                                 ml2.product_id.default_code or ml2.product_id.name, gap,
                             )
@@ -544,7 +702,7 @@ class stock_picking( models.Model):
         return True
 
     def button_validate(self):
-        """Override: sanea reserva fantasma (#353) también en el cierre MANUAL.
+        """Override: sanea reserva fantasma (un caso) también en el cierre MANUAL.
 
         El saneo de meli_deliver sólo corre en el path automático (cron/conector).
         Cuando el usuario valida a mano desde el UI ("Validar" en Expediciones),
@@ -561,7 +719,7 @@ class stock_picking( models.Model):
                 ml_pickings._meli_heal_phantom_reserve()
             except Exception as e:
                 _logger.warning(
-                    "meli_oerp_stock button_validate: heal #353 falló (%s); "
+                    "meli_oerp_stock button_validate: heal falló (%s); "
                     "se delega al core", e,
                 )
         return super().button_validate()

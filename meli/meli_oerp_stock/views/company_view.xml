@@ -32,6 +32,7 @@
                           <field name="type"/>
                           <field name="name"/>
                           <field name="sku"/>
+                          <field name="meli_stock_rule_mode" optional="show"/>
                           <field name="security_virtual_stock_to_pause"/>
                           <field name="security_quantity_stock_to_pause"/>
                         </list>

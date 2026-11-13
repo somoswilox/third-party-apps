@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- [26.392] Categoría propia «Conectores (OCAPI)» (dentro de Ventas en el form de usuario). Antes iba en
+         base.module_category_sales_sales y rompía el selector de Ventas (casillas sólo en modo desarrollador). -->
+    <record model="ir.module.category" id="module_category_ocapi">
+        <field name="name">Conectores (OCAPI)</field>
+        <field name="sequence">26</field>
+        <field name="parent_id" ref="base.module_category_sales"/>
+        <field name="description">Acceso a la app Conectores (OCAPI): cuentas, vinculaciones y notificaciones de los conectores.</field>
+    </record>
+
     <record id="group_ocapi_connectors_manager" model="res.groups">
         <field name="name">Odoo Connectors Api Manager</field>
-        <field name="category_id" ref="base.module_category_sales_sales"/>
+        <field name="category_id" ref="module_category_ocapi"/>
+        <field name="comment">Administrador de la app Conectores (OCAPI).</field>
         <field name="users" eval="[(4, ref('base.user_root')), (4, ref('base.user_admin'))]"/>
     </record>
 

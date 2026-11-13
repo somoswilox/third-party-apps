@@ -4,6 +4,7 @@ from odoo import models, fields, api, _
 
 from odoo import api, models, fields
 import logging
+from markupsafe import escape as html_escape
 from odoo.exceptions import UserError
 from odoo.exceptions import ValidationError
 from .warning import warning
@@ -12,6 +13,57 @@ from odoo.addons.meli_oerp.models.versions import get_ref_view, MeliCommit
 from .connection_binding import _resolve_ml_site_urls
 
 _logger = logging.getLogger(__name__)
+
+
+def _binder_notification(ok, fail, env=None):
+    """Devuelve el resultado de una vinculacion a la PANTALLA.
+
+    Las acciones de vincular descartaban el retorno de mercadolibre_bind_to y no
+    notificaban nada: el dialogo cerraba igual hubiera vinculado o no. Medido en el
+    caso-K34 el 22-sep-2026 -- el cliente reportaba "no tira ningun mensaje, error o nada"
+    y era literal. Sin esto, cualquier arreglo del binder es inevaluable desde la UI.
+    """
+    # Funcion de modulo: sin `self` en el frame, `_()` de Odoo 20 no detecta idioma y loguea
+    # un WARNING por llamada. Con `env._` (Odoo 18+) traduce con el idioma del usuario.
+    tr = env._ if env is not None and hasattr(env, '_') else _
+    if fail and not ok:
+        tipo, titulo = 'danger', tr("No se pudo vincular")
+    elif fail:
+        tipo, titulo = 'warning', tr("Vinculacion parcial")
+    else:
+        tipo, titulo = 'success', tr("Vinculacion creada")
+    lineas = ["\u2713 %s" % x for x in ok] + ["\u2717 %s" % x for x in fail]
+    return {
+        'type': 'ir.actions.client',
+        'tag': 'display_notification',
+        'params': {
+            'title': titulo,
+            'message': "\n".join(lineas) or tr("No habia nada para vincular."),
+            'type': tipo,
+            'sticky': bool(fail),
+        },
+    }
+
+def _binder_variant_check(env, products, account, meli_id):
+    """[#caso-K70] Motivo legible si ninguna VARIANTE de `products` quedo vinculada a `meli_id`, o ''.
+
+    El bind de plantilla devuelve el binding de PLANTILLA aunque todas las variantes se hayan
+    salteado (SKU de ML distinto de la referencia interna): el asistente reportaba exito y el
+    import de ventas seguia usando la vinculacion anterior. Se mide el resultado, no el retorno.
+    """
+    variants = products.mapped('product_variant_ids') if products._name == 'product.template' else products
+    Bind = env['mercadolibre.product']
+    dom_pub = [('conn_id', '=', meli_id), ('connection_account', '=', account.id)]
+    if Bind.search_count(dom_pub + [('product_id', 'in', variants.ids)]):
+        return ''
+    tr = env._ if hasattr(env, '_') else _
+    refs = ", ".join(sorted(set(v.default_code for v in variants if v.default_code))) or "-"
+    otros = Bind.search(dom_pub).mapped('product_id')
+    msg = tr("ninguna variante quedo vinculada (referencia interna: %s). Si el SKU de la publicacion en "
+             "ML es otro, la vinculacion por SKU la saltea: igualá el SKU en ML o la referencia del producto.") % refs
+    if otros:
+        msg += " " + tr("Hoy la publicacion esta vinculada a: %s.") % ", ".join(otros.mapped('display_name')[:3])
+    return msg
 
 import base64
 
@@ -81,24 +133,38 @@ class ProductTemplateBindToMercadoLibre(models.TransientModel):
         product_ids = context['active_ids']
         product_obj = self.env['product.template']
 
-        res = {}
+        # Mismo criterio que el wizard de variante: sin cuenta o sin id no se llama al
+        # bind con False, se avisa. Y el resultado va a la pantalla.
+        if not self.connectors:
+            raise UserError(_("Elegi la cuenta de MercadoLibre a la que queres vincular."))
+        if not self.meli_id:
+            raise UserError(_("Ingresa el Id de la publicacion de MercadoLibre (MLA...) que queres vincular."))
+
+        ok, fail = [], []
         for product_id in product_ids:
 
             product = product_obj.browse(product_id)
 
             for mercadolibre in self.connectors:
-                meli_id = False
-                bind_only = False
-                #_logger.info(_("Check %s in %s") % (product.display_name, mercadolibre.name))
-                #Binding to
-                if self.meli_id:
-                    meli_id = self.meli_id.split(",")
-                else:
-                    meli_id = [False]
-                if self.bind_only:
-                    bind_only = self.bind_only
+                bind_only = self.bind_only or False
+                meli_id = [m.strip() for m in self.meli_id.split(",") if m and m.strip()]
                 for mid in meli_id:
-                    product.mercadolibre_bind_to( mercadolibre, meli_id=mid, bind_variants=True, bind_only=bind_only )
+                    etiqueta = "%s -> %s" % (mid, product.display_name)
+                    try:
+                        pt_bind = product.mercadolibre_bind_to( mercadolibre, meli_id=mid, bind_variants=True, bind_only=bind_only )
+                    except Exception as e:
+                        _logger.error("product_template_add_to_connector > %s: %s", etiqueta, e, exc_info=True)
+                        fail.append("%s: %s" % (etiqueta, e))
+                        continue
+                    motivo = pt_bind and _binder_variant_check(self.env, product, mercadolibre, mid)
+                    if pt_bind and not motivo:
+                        ok.append(etiqueta)
+                    elif pt_bind:
+                        fail.append("%s: %s" % (etiqueta, motivo))
+                    else:
+                        fail.append(_("%s: no se creo la vinculacion") % etiqueta)
+
+        return _binder_notification(ok, fail, env=self.env)
 
 
     def product_template_remove_from_connector(self, context=None):
@@ -1570,26 +1636,44 @@ class ProductVariantBindToMercadoLibre(models.TransientModel):
         product_ids = context['active_ids']
         product_obj = self.env['product.product']
 
-        res = {}
+        # Sin cuenta o sin id no hay nada que vincular, y el codigo anterior seguia
+        # igual: llamaba al bind con meli_id=False y el dialogo cerraba en silencio.
+        if not self.connectors:
+            raise UserError(_("Elegi la cuenta de MercadoLibre a la que queres vincular."))
+        if not self.meli_id:
+            raise UserError(_("Ingresa el Id de la publicacion de MercadoLibre (MLA...) que queres vincular."))
+
+        ok, fail = [], []
         for product_id in product_ids:
 
             product = product_obj.browse(product_id)
 
             for mercadolibre in self.connectors:
-                #_logger.info(_("Check %s in %s") % (product.display_name, mercadolibre.name))
-                meli_id = False
-                meli_id_variation = False
-                #Binding to
-                if self.meli_id:
-                    meli_id = self.meli_id
+                meli_id = self.meli_id or False
+                meli_id_variation = self.meli_id_variation or False
+                # bind_only se asignaba SOLO dentro de `if self.bind_only:`. Con el tilde
+                # apagado la variable no existia y la accion reventaba con
+                # UnboundLocalError ANTES de llamar al bind -- medido en el log del caso-K34:
+                # 2026-09-22 16:13:39 "cannot access local variable 'bind_only'".
+                # Y el tilde no estaba en la vista, asi que no habia forma de encenderlo:
+                # este wizard fallaba el 100% de las veces. El hermano de plantilla
+                # (product_template_add_to_connector) SI inicializa antes del if.
+                bind_only = self.bind_only or False
 
-                if self.meli_id_variation:
-                    meli_id_variation = self.meli_id_variation
+                etiqueta = "%s -> %s" % (meli_id, product.display_name)
+                try:
+                    pv_bind = product.mercadolibre_bind_to( mercadolibre, meli_id=meli_id, meli_id_variation=meli_id_variation, bind_only=bind_only  )
+                except Exception as e:
+                    _logger.error("product_product_add_to_connector > %s: %s", etiqueta, e, exc_info=True)
+                    fail.append("%s: %s" % (etiqueta, e))
+                    continue
+                if pv_bind:
+                    ok.append(etiqueta)
+                else:
+                    motivo = _binder_variant_check(self.env, product, mercadolibre, meli_id)
+                    fail.append("%s: %s" % (etiqueta, motivo or _("no se creo la vinculacion")))
 
-                if self.bind_only:
-                    bind_only = self.bind_only
-
-                product.mercadolibre_bind_to( mercadolibre, meli_id=meli_id, meli_id_variation=meli_id_variation, bind_only=bind_only  )
+        return _binder_notification(ok, fail, env=self.env)
 
 
     def product_product_remove_from_connector(self, context=None):
@@ -1618,15 +1702,383 @@ class ProductVariantBindToMercadoLibre(models.TransientModel):
                     meli_id_variation = self.meli_id_variation
                 product.mercadolibre_unbind_from( account=mercadolibre, meli_id=meli_id, meli_id_variation=meli_id_variation )
 
+def html2plaintext_safe(html):
+    try:
+        from odoo.tools import html2plaintext
+        return html2plaintext(html or '')
+    except Exception:
+        return html or ''
+
+
+class MeliDryStop(Exception):
+    """La revisión en seco cortó el armado (llegó a POST /items o se bloqueó una escritura)."""
+
+
+class _MeliDryRollback(Exception):
+    pass
+
+
+class MeliDryValidateClient(object):
+    """26.345 P5: cliente ML en MODO SECO para «Revisar en ML (sin publicar)».
+
+    Envuelve la instancia real (SDK o requests) y deja pasar sólo lecturas, la subida de imágenes
+    (/pictures: no crea ni edita publicaciones) y POST /items, que se REDIRIGE a /items/validate. Todo
+    otro POST/PUT/DELETE se bloquea. Al validar corta el armado con MeliDryStop y guarda la respuesta
+    en `result` (también si el código de más arriba se traga la excepción)."""
+
+    _WRITE = ('post', 'post_mini', 'put', 'put_mini', 'delete')
+
+    def __init__(self, meli):
+        self._meli = meli
+        self.result = None
+        self.blocked = []
+
+    def __getattr__(self, name):
+        if name in self._WRITE:
+            return getattr(self, '_dry_' + name.replace('_mini', ''))
+        return getattr(self._meli, name)
+
+    @staticmethod
+    def _norm(path):
+        return '/' + str(path or '').split('mercadolibre.com', 1)[-1].lstrip('/').split('?', 1)[0].rstrip('/')
+
+    def _dry_post(self, path, body=None, params=None, *a, **k):
+        p = self._norm(path)
+        if p.startswith('/pictures'):
+            return self._meli.post(path, body, params or {}, *a, **k)
+        if p == '/items':
+            r = self._meli.post('/items/validate', body, params or {}, *a, **k)
+            self.result = self._read(r)
+            raise MeliDryStop('validated')
+        self.blocked.append('POST ' + p)
+        raise MeliDryStop('POST ' + p)
+
+    def _dry_put(self, path, *a, **k):
+        self.blocked.append('PUT ' + self._norm(path))
+        raise MeliDryStop('PUT')
+
+    def _dry_delete(self, path, *a, **k):
+        self.blocked.append('DELETE ' + self._norm(path))
+        raise MeliDryStop('DELETE')
+
+    @staticmethod
+    def _read(r):
+        status, j = None, None
+        resp = getattr(r, 'response', None)
+        status = getattr(resp, 'status_code', None) or getattr(r, 'status_code', None)
+        try:
+            j = r.json()
+        except Exception:
+            j = getattr(r, 'rjson', None)
+        if status is None and isinstance(j, dict):
+            status = j.get('status')
+        return {'status': status, 'json': j if isinstance(j, (dict, list)) else {}}
+
+    def summary(self):
+        """(estado, mensaje) para la fila: ok / warn / error. ML responde 400 aun cuando todas las
+        causas son 'warning' (medido 28-oct en cliente F): eso cuenta como OK con avisos."""
+        res = self.result or {}
+        st, j = res.get('status'), res.get('json') or {}
+        causes = j.get('cause') if isinstance(j, dict) else None
+        causes = causes if isinstance(causes, list) else []
+        errs = [c for c in causes if isinstance(c, dict) and c.get('type') != 'warning']
+        warns = [c for c in causes if isinstance(c, dict) and c.get('type') == 'warning']
+        top_error = isinstance(j, dict) and j.get('error') and not causes
+        if not errs and not warns and not top_error and (st is None or st < 400):
+            return 'ok', _("Mercado Libre aceptaría la publicación.")
+        lines = ["✖ %s" % (c.get('message') or c.get('code')) for c in errs] + \
+                ["⚠ %s" % (c.get('message') or c.get('code')) for c in warns]
+        if not lines and isinstance(j, dict):
+            lines = ["✖ %s" % (j.get('message') or j.get('error') or st)]
+        if errs or (not causes and isinstance(j, dict) and j.get('error')):
+            return 'error', "\n".join(lines)[:2000]
+        return 'warn', (_("Mercado Libre aceptaría la publicación, con avisos:") + "\n" + "\n".join(lines))[:2000]
+
+
+class ProductTemplatePostLine(models.TransientModel):
+    """26.345 P2: una fila por producto en el asistente Publicar. Lo que se carga acá se guarda en la
+    plantilla al Revisar o Publicar (sólo lo cambiado y no vacío)."""
+
+    _name = "mercadolibre.product.template.post.line"
+    _description = "Producto a publicar en Mercado Libre (asistente)"
+    _order = "p_state_order, id"
+
+    wizard_id = fields.Many2one("mercadolibre.product.template.post", ondelete="cascade", required=True)
+    product_tmpl_id = fields.Many2one("product.template", string="Producto", required=True, readonly=True)
+    default_code = fields.Char(related="product_tmpl_id.default_code", string="SKU")
+    image_128 = fields.Image(related="product_tmpl_id.image_128", string="Imagen")
+    meli_category = fields.Many2one("mercadolibre.category", string="Categoría ML")
+    category_suggested = fields.Boolean(string="Sugerida por ML", readonly=True)
+    meli_brand = fields.Char(string="Marca")
+    meli_model = fields.Char(string="Modelo")
+    meli_seller_package_height = fields.Char(string="Alto")
+    meli_seller_package_width = fields.Char(string="Ancho")
+    meli_seller_package_length = fields.Char(string="Largo")
+    meli_seller_package_weight = fields.Char(string="Peso")
+    meli_description = fields.Text(string="Descripción")
+    p_published = fields.Boolean(string="Publicado", readonly=True)
+    p_missing = fields.Char(string="Falta", compute="_compute_p_state", store=True)
+    p_state = fields.Selection([("ready", "Listo"), ("missing", "Faltan datos"), ("published", "Ya publicado")],
+                               string="Estado", compute="_compute_p_state", store=True)
+    p_state_order = fields.Integer(compute="_compute_p_state", store=True)
+    ml_check_state = fields.Selection([("ok", "ML OK"), ("warn", "ML OK con avisos"), ("error", "ML rechaza"),
+                                       ("skip", "No revisado")], string="Revisión ML", readonly=True)
+    ml_check_msg = fields.Text(string="Respuesta de ML", readonly=True)
+
+    # Precio por fila (HOOK de extensión: meli_oerp_campaign suma margen/aviso heredando este modelo y
+    # dependiendo de p_price / p_pricelist_id / p_binding_id). Sólo lectura: no escribe nada.
+    p_account_id = fields.Many2one("mercadolibre.account", related="wizard_id.connectors", string="Cuenta")
+    p_binding_id = fields.Many2one("mercadolibre.product_template", string="Vinculación",
+                                   compute="_compute_p_price",
+                                   help="Vinculación de la plantilla con la cuenta del asistente, si existe.")
+    p_pricelist_id = fields.Many2one("product.pricelist", string="Lista", compute="_compute_p_price",
+                                     help="Lista con la que se calcula el precio: la de la vinculación, si no la "
+                                          "elegida en el asistente, si no la de la configuración de la cuenta.")
+    p_currency_id = fields.Many2one("res.currency", string="Moneda", compute="_compute_p_price")
+    p_price = fields.Monetary(string="Precio (lista)", currency_field="p_currency_id", compute="_compute_p_price",
+                              help="Precio de la lista para 1 unidad (referencia).")
+    # 26.352 (caso-K21 C): lo que se completa solo al publicar (sólo lectura, sin red: datos de Odoo).
+    p_manufacturer = fields.Char(string="Fabricante", compute="_compute_p_auto",
+                                 help="Se envía como Fabricante si el producto no lo tiene cargado: el proveedor "
+                                      "principal (o la Marca, según la configuración de la cuenta).")
+    p_vat = fields.Char(string="IVA", compute="_compute_p_auto",
+                        help="IVA que se envía a Mercado Libre: el IVA [meli] del producto o el de su impuesto de venta.")
+
+    _P_EDIT = ['meli_category', 'meli_brand', 'meli_model', 'meli_seller_package_height',
+               'meli_seller_package_width', 'meli_seller_package_length', 'meli_seller_package_weight',
+               'meli_description']
+    _P_LABELS = {'meli_category': "categoría", 'meli_brand': "marca", 'meli_model': "modelo",
+                 'meli_seller_package_height': "alto", 'meli_seller_package_width': "ancho",
+                 'meli_seller_package_length': "largo", 'meli_seller_package_weight': "peso",
+                 'meli_description': "descripción"}
+
+    @api.model
+    def _p_vals_from_template(self, tmpl):
+        vals = {'product_tmpl_id': tmpl.id}
+        for f in self._P_EDIT:
+            if f in tmpl._fields:
+                v = tmpl[f]
+                vals[f] = v.id if f == 'meli_category' else (v or False)
+        # 26.352 (caso-K21 C): la Marca llega completa desde la marca del producto (se guarda al publicar).
+        if not vals.get('meli_brand') and hasattr(tmpl, '_meli_brand_auto'):
+            vals['meli_brand'] = tmpl._meli_brand_auto() or False
+        ids = [i for i in tmpl.product_variant_ids.mapped('meli_id') if i]
+        binds = tmpl.mercadolibre_bindings if 'mercadolibre_bindings' in tmpl._fields else []
+        vals['p_published'] = bool(ids or binds)
+        return vals
+
+    @api.depends('p_published', 'meli_category', 'meli_brand', 'meli_model', 'meli_seller_package_height',
+                 'meli_seller_package_width', 'meli_seller_package_length', 'meli_seller_package_weight',
+                 'meli_description', 'product_tmpl_id')
+    def _compute_p_state(self):
+        for line in self:
+            missing = [self._P_LABELS[f] for f in self._P_EDIT if not line[f]]
+            if line.product_tmpl_id and not line.product_tmpl_id.image_1920:
+                missing.append("imagen")
+            line.p_missing = ", ".join(missing)
+            if line.p_published:
+                line.p_state, line.p_state_order = 'published', 3
+            elif missing:
+                line.p_state, line.p_state_order = 'missing', 1
+            else:
+                line.p_state, line.p_state_order = 'ready', 2
+
+    @api.depends('product_tmpl_id', 'meli_brand', 'meli_category', 'wizard_id.connectors', 'wizard_id.meli_vat_default')
+    def _compute_p_auto(self):
+        for line in self:
+            tmpl = line.product_tmpl_id
+            manu = vat = False
+            if tmpl and hasattr(tmpl, '_meli_manufacturer_auto'):
+                account = line.wizard_id.connectors
+                config = (account and account.configuration) or None
+                manu = tmpl._meli_manufacturer_auto(config=config) or line.meli_brand
+                cid = (line.meli_category and line.meli_category.meli_category_id or '').upper()
+                site = cid[:3] if cid.startswith('ML') else tmpl._meli_publish_site(config)
+                if site == 'MLA':
+                    vat = ('meli_vat' in tmpl._fields and tmpl.meli_vat) or tmpl._meli_vat_from_taxes() \
+                          or line.wizard_id.meli_vat_default
+            line.p_manufacturer = manu
+            line.p_vat = vat
+
+    def _p_binding_for(self, tmpl, account):
+        binds = tmpl.mercadolibre_bindings if 'mercadolibre_bindings' in tmpl._fields else self.env['mercadolibre.product_template']
+        return binds.filtered(lambda b: b.connection_account == account)[:1] if account else binds[:0]
+
+    def _p_pricelist_for(self, binding, account):
+        wiz = self.wizard_id
+        pl = binding and binding.meli_pricelist
+        pl = pl or (wiz and wiz.force_meli_new_pricelist)
+        conf = account and account.configuration
+        pl = pl or (conf and 'mercadolibre_pricelist' in conf._fields and conf.mercadolibre_pricelist)
+        return pl or self.env['product.pricelist']
+
+    @api.depends('product_tmpl_id', 'wizard_id.connectors', 'wizard_id.force_meli_new_pricelist')
+    def _compute_p_price(self):
+        """Hook: precio/lista/vinculación por fila. Para extender (margen, promo), heredar el modelo y
+        agregar un compute propio que dependa de p_price/p_pricelist_id/p_binding_id, o hacer super()."""
+        for line in self:
+            tmpl, account = line.product_tmpl_id, line.wizard_id.connectors
+            binding = line._p_binding_for(tmpl, account) if tmpl else self.env['mercadolibre.product_template']
+            pl = line._p_pricelist_for(binding, account)
+            price = tmpl.list_price if tmpl else 0.0
+            if tmpl and pl:
+                try:
+                    price = pl._get_product_price(tmpl, 1.0)
+                except Exception:
+                    _logger.info("P2: no se pudo calcular el precio de %s con %s", tmpl.id, pl.id, exc_info=True)
+            line.p_binding_id = binding
+            line.p_pricelist_id = pl
+            line.p_currency_id = (pl and pl.currency_id) or (tmpl and tmpl.currency_id) or self.env.company.currency_id
+            line.p_price = price
+
+    def _p_write_template(self):
+        for line in self:
+            tmpl = line.product_tmpl_id
+            vals = {}
+            for f in self._P_EDIT:
+                if f not in tmpl._fields:
+                    continue
+                new = line[f]
+                if not new:
+                    continue
+                cur = tmpl[f]
+                if f == 'meli_category':
+                    if new != cur:
+                        vals[f] = new.id
+                elif (new or '') != (cur or ''):
+                    vals[f] = new
+            if vals:
+                tmpl.write(vals)
+
+
 class ProductTemplatePostExtended(models.TransientModel):
 
     _inherit = "mercadolibre.product.template.post"
 
+    # 26.339 (caso-K21, capacitación 29-oct): MENOS CLICS. Los campos típicos vienen
+    # preseleccionados y los defaults salen de la compañía/cuenta (no de un cliente):
+    #  W1 cuenta única de la compañía preseleccionada; W2 «Marcar para publicar» y
+    #  «Activación» tildados; W3 lista de precios de la config de la cuenta; W4 IVA /
+    #  impuesto interno por sitio; W6 categoría sugerida si falta; W7 lista única de
+    #  faltantes por producto al abrir (no un error por intento).
+    def _w_default_connector(self):
+        accounts = self.env.user.company_id.mercadolibre_connections
+        return accounts[:1] if len(accounts) == 1 else False
+
+    def _w_default_pricelist(self):
+        account = self._w_default_connector()
+        return (account and account.configuration and account.configuration.mercadolibre_pricelist) or False
+
+    def _w_site_defaults(self, account):
+        # Valores típicos por sitio (D6 del acta 462). Sólo MLA tiene default; en el
+        # resto quedan vacíos y no se escribe nada.
+        site = account and (getattr(account, 'meli_user_site_id', False) or '').upper()
+        if account and (site == 'MLA' or (not site and account.country_id.code == 'AR')):
+            return {'vat': '21 %', 'import_duty': '0 %'}
+        return {'vat': False, 'import_duty': False}
+
+    def _w_default_vat(self):
+        return self._w_site_defaults(self._w_default_connector())['vat']
+
+    def _w_default_import_duty(self):
+        return self._w_site_defaults(self._w_default_connector())['import_duty']
+
+    force_meli_pub = fields.Boolean(default=True)
+    force_meli_active = fields.Boolean(default=True)
     force_meli_new_pub = fields.Boolean(string="Crear una nueva publicación")
-    connectors = fields.Many2one("mercadolibre.account",string="MercadoLibre Account",required=True)
+    connectors = fields.Many2one("mercadolibre.account",string="MercadoLibre Account",required=True,
+                                 default=_w_default_connector)
+    meli_vat_default = fields.Char(string="IVA si el producto no tiene impuesto", default=_w_default_vat,
+                                   help="Cada producto lleva el IVA de su impuesto de venta de Odoo (21 %, 10.5 %, 0 %…). "
+                                        "Este valor se usa sólo si el producto no tiene IVA [meli] ni un impuesto de IVA. "
+                                        "No pisa valores cargados.")
+    meli_import_duty_default = fields.Char(string="Impuesto interno (si falta)", default=_w_default_import_duty,
+                                           help="Se completa en los productos que no tienen Impuesto interno [meli]. No pisa valores cargados.")
+    w_precheck_html = fields.Html(string="Antes de publicar", compute="_compute_w_precheck_html", sanitize=False)
+
+    _W_PRECHECK = [
+        ('meli_category', "categoría (se sugiere sola al publicar)"),
+        ('meli_brand', "marca"),
+        ('meli_model', "modelo"),
+        ('meli_seller_package_weight', "peso del paquete"),
+        ('meli_seller_package_height', "alto del paquete"),
+        ('meli_seller_package_width', "ancho del paquete"),
+        ('meli_seller_package_length', "largo del paquete"),
+        ('meli_description', "descripción"),
+        ('image_1920', "imagen"),
+    ]
+
+    def _w_missing(self, tmpl):
+        missing = []
+        for fname, label in self._W_PRECHECK:
+            if fname == 'meli_brand' and hasattr(tmpl, '_meli_brand_auto') and tmpl._meli_brand_auto():
+                continue  # 26.352: la marca del producto se usa sola
+            if fname in tmpl._fields and not tmpl[fname]:
+                missing.append(label)
+        return missing
+
+    @api.depends('connectors')
+    def _compute_w_precheck_html(self):
+        ids = self.env.context.get('active_ids') or []
+        model = self.env.context.get('active_model')
+        tmpls = self.env['product.template'].browse(ids).exists() if model in (None, 'product.template') else self.env['product.template']
+        for wiz in self:
+            rows = []
+            for tmpl in tmpls[:200]:
+                missing = wiz._w_missing(tmpl)
+                if missing:
+                    rows.append("<li><b>%s</b>: falta %s</li>" % (
+                        html_escape(tmpl.display_name or ''), html_escape(", ".join(missing))))
+            if rows:
+                wiz.w_precheck_html = "<ul>%s</ul>" % "".join(rows)
+            elif tmpls:
+                wiz.w_precheck_html = "<p>Todo listo para publicar.</p>"
+            else:
+                wiz.w_precheck_html = False
+
+    @api.onchange('connectors')
+    def _onchange_w_connectors(self):
+        for wiz in self:
+            if wiz.connectors:
+                if wiz.connectors.configuration and wiz.connectors.configuration.mercadolibre_pricelist:
+                    wiz.force_meli_new_pricelist = wiz.connectors.configuration.mercadolibre_pricelist
+                d = wiz._w_site_defaults(wiz.connectors)
+                wiz.meli_vat_default = wiz.meli_vat_default or d['vat']
+                wiz.meli_import_duty_default = wiz.meli_import_duty_default or d['import_duty']
+
+    @api.onchange('action_pause')
+    def _onchange_w_action_pause(self):
+        for wiz in self:
+            if wiz.action_pause:
+                wiz.force_meli_active = False
+
+    def _w_prepare_template(self, productT):
+        """W4/W6: completa lo típico ANTES de publicar, sólo donde falta."""
+        vals = {}
+        if self.meli_vat_default and 'meli_vat' in productT._fields and not productT.meli_vat:
+            # 26.352 (caso-K21 C): por producto, desde su impuesto de venta; el del asistente es el respaldo.
+            _vat = hasattr(productT, '_meli_vat_from_taxes') and productT._meli_vat_from_taxes()
+            vals['meli_vat'] = _vat or self.meli_vat_default
+        if self.meli_import_duty_default and 'meli_import_duty' in productT._fields and not productT.meli_import_duty:
+            vals['meli_import_duty'] = self.meli_import_duty_default
+        if vals:
+            productT.write(vals)
+        if not productT.meli_category and hasattr(productT, '_get_meli_category_from_predictor'):
+            try:
+                categs, _rjson = productT._get_meli_category_from_predictor()
+                categ = categs[:1] if categs else False
+                if categ:
+                    try:
+                        self.env['mercadolibre.category'].import_category(
+                            categ.meli_category_id, create_missing_website=False)
+                    except Exception:
+                        _logger.exception("W6: no se pudo hidratar la categoría %s", categ.meli_category_id)
+                    productT.meli_category = categ
+            except Exception:
+                _logger.exception("W6: sugerencia de categoría falló para %s", productT.id)
     force_meli_new_title = fields.Char(string="New Title")
     force_meli_new_price = fields.Float(string="New Price")
-    force_meli_new_pricelist = fields.Many2one("product.pricelist",string="New Price List")
+    force_meli_new_pricelist = fields.Many2one("product.pricelist",string="New Price List",default=_w_default_pricelist)
     force_meli_listing_type = fields.Selection([("free","Libre"),
                                                 ("bronze","Bronce/Clásica-(UY)"),
                                                 ("silver","Plata"),
@@ -1639,11 +2091,191 @@ class ProductTemplatePostExtended(models.TransientModel):
 
     force_meli_channel_mkt = fields.Many2many( "meli.channel.mkt", string="Channels", index=True )
 
+    # ------------------------------------------------------------------ 26.345 (caso-K21 FASE 2): MENOS PASOS
+    # P2 grilla editable por producto (lo que falta se carga AHÍ y se guarda en la plantilla), P3 resumen,
+    # P4 «qué hacer» en un radio, P5 «Revisar en ML (sin publicar)» = body real contra POST /items/validate.
+    p_line_ids = fields.One2many("mercadolibre.product.template.post.line", "wizard_id", string="Productos")
+    p_operation = fields.Selection([("full", "Publicar / actualizar todo"),
+                                    ("stock", "Sólo stock"),
+                                    ("price", "Sólo precio"),
+                                    ("pause", "Pausar")],
+                                   string="Qué hacer", default="full",
+                                   help="Publicar/actualizar todo: arma la publicación completa (alta o edición). "
+                                        "Sólo stock / Sólo precio: no toca el resto. Pausar: actualiza con la publicación pausada.")
+    p_count_ready = fields.Integer(string="Listos", compute="_compute_p_counts")
+    p_count_missing = fields.Integer(string="Con faltantes", compute="_compute_p_counts")
+    p_count_published = fields.Integer(string="Ya publicados", compute="_compute_p_counts")
+    p_count_checked = fields.Integer(string="Revisados OK", compute="_compute_p_counts")
+    p_count_check_error = fields.Integer(string="Con error de ML", compute="_compute_p_counts")
+
+    P_MAX_LINES = 200
+    P_MAX_SUGGEST = 20
+    P_MAX_VALIDATE = 20
+
+    @api.depends('p_line_ids.p_state', 'p_line_ids.ml_check_state')
+    def _compute_p_counts(self):
+        for wiz in self:
+            lines = wiz.p_line_ids
+            wiz.p_count_ready = len(lines.filtered(lambda l: l.p_state == 'ready'))
+            wiz.p_count_missing = len(lines.filtered(lambda l: l.p_state == 'missing'))
+            wiz.p_count_published = len(lines.filtered(lambda l: l.p_state == 'published'))
+            wiz.p_count_checked = len(lines.filtered(lambda l: l.ml_check_state in ('ok', 'warn')))
+            wiz.p_count_check_error = len(lines.filtered(lambda l: l.ml_check_state == 'error'))
+
+    @api.model
+    def _p_active_templates(self):
+        ctx = self.env.context
+        if ctx.get('active_model') not in (None, 'product.template'):
+            return self.env['product.template']
+        return self.env['product.template'].browse(ctx.get('active_ids') or []).exists()[:self.P_MAX_LINES]
+
+    @api.model
+    def _p_suggest_category(self, tmpl):
+        """Categoría sugerida por ML para una plantilla sin categoría (GET al predictor; sin escribir)."""
+        if tmpl.meli_category or not hasattr(tmpl, '_get_meli_category_from_predictor'):
+            return tmpl.meli_category
+        try:
+            categs, _rjson = tmpl._get_meli_category_from_predictor()
+            return categs[:1] if categs else self.env['mercadolibre.category']
+        except Exception:
+            _logger.info("P2: sin sugerencia de categoría para %s", tmpl.id, exc_info=True)
+            return self.env['mercadolibre.category']
+
+    @api.model
+    def default_get(self, fields_list):
+        res = super().default_get(fields_list)
+        if 'p_line_ids' in fields_list and not res.get('p_line_ids'):
+            Line = self.env['mercadolibre.product.template.post.line']
+            cmds, suggested = [], 0
+            for tmpl in self._p_active_templates():
+                vals = Line._p_vals_from_template(tmpl)
+                if not vals.get('meli_category') and suggested < self.P_MAX_SUGGEST:
+                    suggested += 1
+                    cat = self._p_suggest_category(tmpl)
+                    if cat:
+                        vals['meli_category'] = cat.id
+                        vals['category_suggested'] = True
+                cmds.append((0, 0, vals))
+            res['p_line_ids'] = cmds
+        return res
+
+    @api.onchange('p_operation')
+    def _onchange_p_operation(self):
+        for wiz in self:
+            wiz._p_operation_to_flags()
+
+    def _p_operation_to_flags(self):
+        op = self.p_operation or 'full'
+        self.post_stock = op == 'stock'
+        self.post_price = op == 'price'
+        self.action_pause = op == 'pause'
+        if op == 'pause':
+            self.force_meli_active = False
+        elif op == 'full' and not self.force_meli_active and not self.env.context.get('p_keep_active'):
+            self.force_meli_active = True
+
+    def _p_apply_lines(self):
+        """Lo cargado en la grilla se guarda en cada plantilla (sólo lo que cambió y no quedó vacío)."""
+        for line in self.p_line_ids:
+            line._p_write_template()
+
+    def action_p_validate(self):
+        """P5: «Revisar en ML (sin publicar)». Body REAL por el mismo camino que Publicar, contra
+        POST /items/validate, en un savepoint que se deshace. Nada se publica ni se edita en ML."""
+        self.ensure_one()
+        self._p_apply_lines()
+        account = self.connectors
+        if not account:
+            raise UserError(_("Elegí la cuenta de Mercado Libre."))
+        comp = account.company_id or self.env.user.company_id
+        meli = self.env['meli.util'].get_new_instance(comp, account)
+        if not meli or meli.need_login():
+            raise UserError(_("Iniciá sesión en Mercado Libre con la cuenta %s para revisar.") % account.display_name)
+        done = 0
+        for line in self.p_line_ids:
+            tmpl = line.product_tmpl_id
+            if line.p_state == 'published':
+                line.write({'ml_check_state': 'skip',
+                            'ml_check_msg': _("Ya publicado: se actualiza al publicar (Mercado Libre no revisa ediciones en seco).")})
+                continue
+            if done >= self.P_MAX_VALIDATE:
+                line.write({'ml_check_state': 'skip', 'ml_check_msg': _("Se revisan hasta %s por vez.") % self.P_MAX_VALIDATE})
+                continue
+            done += 1
+            state, msg = self._p_validate_template(tmpl, account, meli)
+            line.write({'ml_check_state': state, 'ml_check_msg': msg})
+        return self._p_reopen()
+
+    def _p_validate_template(self, tmpl, account, meli):
+        dry = MeliDryValidateClient(meli)
+        custom_context = {
+            'connectors': account, 'force_meli_new_pub': self.force_meli_new_pub,
+            'force_meli_variant': self.force_meli_variant, 'force_meli_pub': True,
+            'force_meli_active': self.force_meli_active, 'post_stock': False, 'post_price': False,
+            'force_meli_new_title': self.force_meli_new_title, 'force_meli_new_price': self.force_meli_new_price,
+            'force_meli_new_pricelist': self.force_meli_new_pricelist,
+            'force_meli_listing_type': self.force_meli_listing_type, 'meli_dry_validate': True,
+        }
+        # #caso-K21 (26.371): «Publicar (nuevo)» ⇒ el modo viaja en el contexto (custom_context lo reemplaza entero)
+        if self.env.context.get('meli_post_mode') == 'family':
+            custom_context['meli_post_mode'] = 'family'
+        res, res_msg = None, ''
+        try:
+            with self.env.cr.savepoint():
+                if not tmpl.meli_pub:
+                    tmpl.meli_pub = True
+                if self.force_meli_variant:
+                    tmpl.meli_pub_as_variant = True
+                self._w_prepare_template(tmpl)
+                res = tmpl.with_context(custom_context).product_template_post(context=None, account=account, meli=dry)
+                # el aviso (meli.warning) se crea dentro del savepoint: leerlo ANTES de deshacerlo
+                res_msg = self._p_warning_text(res)
+                raise _MeliDryRollback()
+        except _MeliDryRollback:
+            pass
+        except MeliDryStop:
+            pass
+        except Exception as e:
+            if dry.result is None:
+                return 'error', _("No se pudo armar la publicación: %s") % (str(e)[:300])
+        if dry.result is not None:
+            return dry.summary()
+        if dry.blocked:
+            return 'error', _("No llegó a Mercado Libre: el armado intentó %s (bloqueado en la revisión).") % dry.blocked[0]
+        msg = res_msg or ''
+        return 'error', (_("Falta completar antes de llegar a Mercado Libre: %s") % msg.strip()[:600]) if msg.strip() \
+            else _("No llegó a Mercado Libre (revisar categoría y atributos).")
+
+    def _p_warning_text(self, res):
+        if isinstance(res, dict) and res.get('res_model') == 'meli.warning' and res.get('res_id'):
+            w = self.env['meli.warning'].browse(res['res_id']).exists()
+            if w:
+                return ((w.message or '') + ' ' + html2plaintext_safe(w.message_html or '')).strip()
+        return ''
+
+    def _p_reopen(self):
+        return {
+            'type': 'ir.actions.act_window', 'res_model': self._name, 'res_id': self.id,
+            'view_mode': 'form', 'target': 'new', 'name': _("Publicar en Mercado Libre"),
+            'context': dict(self.env.context, dialog_size='extra-large'),
+        }
+
+
+    def product_template_post_new(self, context=None):
+        """#caso-K21 (26.371) botón «Publicar (nuevo)»: el mismo asistente por el camino NUEVO — modo familia en
+        cuentas user_product (una publicación por variante, agrupadas por family_name) y una publicación por
+        variante con savepoint y resumen en cuentas clásicas. Las publicaciones quedan marcadas
+        (meli_post_mode='family') y sus actualizaciones siguen ese camino. «Publicar» no cambia."""
+        return self.with_context(meli_post_mode='family').product_template_post(context=None)
 
     def product_template_post(self, context=None):
 
         context = context or self.env.context
         company = self.env.user.company_id
+        # 26.345 P2/P4: lo cargado en la grilla va a la plantilla y el radio manda sobre las tildes
+        if self._name == 'mercadolibre.product.template.post':
+            self.with_context(p_keep_active=True)._p_operation_to_flags()
+            self._p_apply_lines()
         #_logger.info("multiple product_template_post: context: " + str(context))
 
         product_ids = []
@@ -1673,6 +2305,9 @@ class ProductTemplatePostExtended(models.TransientModel):
             'force_meli_listing_type': self.force_meli_listing_type
 
         }
+        # #caso-K21 (26.371): «Publicar (nuevo)» ⇒ el modo viaja en el contexto (custom_context lo reemplaza entero)
+        if self.env.context.get('meli_post_mode') == 'family':
+            custom_context['meli_post_mode'] = 'family'
         posted_products = 0
         for product_id in product_ids:
 
@@ -1694,6 +2329,9 @@ class ProductTemplatePostExtended(models.TransientModel):
 
                     if (productT.meli_pub):
 
+                        if not self.post_stock and not self.post_price:
+                            self._w_prepare_template(productT)
+
                         if self.post_stock:
                             res = productT.with_context(custom_context).product_template_post_stock(meli=meli,account=account)
                         if self.post_price:
@@ -1710,6 +2348,148 @@ class ProductTemplatePostExtended(models.TransientModel):
             res = warningobj.info( title='MELI WARNING', message="Se intentaron publicar 0 productos. Debe forzar las publicaciones o marcar el producto con el campo Meli Publication, debajo del titulo.", message_html="" )
 
         return res
+
+class ProductPostExtended(models.TransientModel):
+    """Publicacion/actualizacion MASIVA desde la lista de VARIANTES (product.product).
+
+    26.101 (19-ago-2026, un cliente / un cliente) — POR QUE EXISTE ESTA CLASE:
+
+    `mercadolibre.product.post` vive en meli_oerp y resolvia UNA sola instancia con
+    `get_new_instance(company)` (SIN cuenta) y se la pasaba a todos los productos.
+    En multi-cuenta el fallback de `meli.util.get_new_instance` recorre
+    `user.company_ids` sin `break` y gana la ultima compania conectada — la cuenta
+    elegida NO depende del producto seleccionado. Ese token ajeno bajaba a TODOS los
+    bindings, ML contestaba 403 y la publicacion quedaba `revision_forbidden` SIN que
+    se publicara la cantidad. Publicando de a UNO funcionaba porque ahi no se pasa
+    `meli` y cada binding resuelve el suyo: esa era la asimetria reportada.
+
+    `mercadolibre.product.template.post` (lista de Productos) ya estaba extendido acá
+    y por eso pedia cuenta y funcionaba; el camino de VARIANTES habia quedado afuera.
+    Las dos acciones se llaman igual ("Publicar/Actualizar en ML"), asi que el mismo
+    usuario veia funcionar una y fallar la otra sin saber por que.
+
+    QUE HACE AHORA: despacha POR BINDING, cada uno con la instancia de SU cuenta,
+    resolviendo UNA instancia por cuenta (no por binding). El campo `connectors` es
+    un filtro OPCIONAL — a diferencia del asistente de plantillas, aca NO es
+    obligatorio: en variantes el sentido natural es "actualiza estas variantes en ML"
+    = todas sus publicaciones, cada una con su cuenta. Exigir cuenta obligaria a una
+    pasada por cuenta.
+
+    La red de seguridad de fondo es `mercadolibre.account._meli_instance_or_mine()`
+    en el binding: aunque alguien llame con un `meli` ajeno, el binding lo descarta.
+    """
+
+    _inherit = "mercadolibre.product.post"
+
+    connectors = fields.Many2many(
+        "mercadolibre.account",
+        string="Cuentas de MercadoLibre",
+        help="Opcional. Vacio = se actualizan las publicaciones de TODAS las cuentas "
+             "vinculadas a cada variante, cada una con su propio token. Si elegis "
+             "cuentas, se actualizan solo las publicaciones de esas cuentas.")
+
+    def _meli_account_instance(self, account, cache):
+        """Instancia de la API para `account`, UNA por cuenta (cacheada).
+
+        Devuelve (meli, redirect): si la cuenta necesita login se devuelve la
+        accion de redireccion para que el asistente corte y la muestre."""
+        if not account:
+            return None, None
+        if account.id in cache:
+            return cache[account.id], None
+        meli = self.env['meli.util'].get_new_instance(account.company_id, account)
+        if meli and meli.need_login():
+            return None, meli.redirect_login()
+        cache[account.id] = meli
+        return meli, None
+
+    def product_post(self, context=None):
+
+        context = context or self.env.context
+        product_ids = ('active_ids' in context and context['active_ids']) or []
+        product_obj = self.env['product.product']
+        warningobj = self.env['meli.warning']
+
+        accounts = self.connectors
+        meli_cache = {}
+        res = {}
+        pushed = 0
+        full_post = not (self.post_stock or self.post_price or self.post_title or self.action_pause)
+
+        for product in product_obj.browse(product_ids):
+
+            if self.force_meli_pub and not product.meli_pub:
+                product.meli_pub = True
+
+            if not product.meli_pub:
+                continue
+
+            binds = product.mercadolibre_bindings
+            if accounts:
+                binds = binds.filtered(lambda b: b.connection_account.id in accounts.ids)
+
+            if not binds:
+                # Sin publicaciones vinculadas: publicacion NUEVA (camino historico,
+                # resuelve la cuenta por el producto). Con filtro de cuenta NO se hace
+                # nada: el usuario pidio explicitamente una cuenta y no hay binding suyo.
+                if full_post and not accounts:
+                    res = product.product_post()
+                    pushed += 1
+                continue
+
+            # Mismo orden que el asistente base: stock, precio, titulo, y despues pausa.
+            if self.post_stock or self.post_price or self.post_title or full_post:
+                for bind in binds:
+
+                    account = bind.connection_account
+                    meli, redirect = self._meli_account_instance(account, meli_cache)
+                    if redirect:
+                        return redirect
+                    if not meli:
+                        continue
+
+                    if self.post_stock:
+                        res = bind.product_post_stock(meli=meli)
+                    if self.post_price:
+                        res = bind.product_post_price(meli=meli)
+                    if self.post_title:
+                        res = bind.product_post_title(meli=meli)
+                        if res and isinstance(res, dict) and 'error' in res:
+                            return warningobj.info( title='MELI TITLE',
+                                                    message="No se pudo actualizar el titulo en Mercado Libre.",
+                                                    message_html=self.pretty_json(res) )
+                    if full_post:
+                        res = bind.product_post(meli=meli)
+
+                    pushed += 1
+
+                    if res and isinstance(res, dict) and 'name' in res:
+                        return res
+
+            if self.action_pause:
+                if accounts:
+                    # Con filtro de cuenta se pausan SOLO las publicaciones de esa
+                    # cuenta (no se bloquea el producto entero, que es global).
+                    for bind in binds:
+                        bind.product_meli_block()
+                        bind.product_meli_status_pause()
+                        pushed += 1
+                else:
+                    product.action_meli_pause()
+                    pushed += 1
+
+        if not pushed:
+            # Antes esto era silencio: el asistente cerraba y no se actualizaba nada.
+            return warningobj.info(
+                title='MELI WARNING',
+                message="No se actualizo ninguna publicacion. Revisa que las variantes "
+                        "seleccionadas esten marcadas para publicar y vinculadas a una "
+                        "publicacion de MercadoLibre; si filtraste por cuenta, que las "
+                        "publicaciones sean de esa cuenta.",
+                message_html="")
+
+        return res if isinstance(res, dict) else {}
+
 
 class ProductTemplateBindingPostExtended(models.TransientModel):
 
@@ -1748,6 +2528,9 @@ class ProductTemplateBindingPostExtended(models.TransientModel):
             'force_meli_new_pricelist': self.force_meli_new_pricelist,
 
         }
+        # #caso-K21 (26.371): «Publicar (nuevo)» ⇒ el modo viaja en el contexto (custom_context lo reemplaza entero)
+        if self.env.context.get('meli_post_mode') == 'family':
+            custom_context['meli_post_mode'] = 'family'
         posted_products = 0
         connectors = self.connectors and self.connectors.ids or []
         for product_bindT_id in product_bindT_ids:
@@ -1897,10 +2680,25 @@ class product_template_import(models.TransientModel):
         return odoo_meli_ids
 
     def _get_account(self, context=None):
-        """Helper: resolve account from context active_ids."""
+        """Helper: resolve account from context active_ids.
+
+        active_ids son cuentas sólo si active_model es mercadolibre.account (o no viene: llamadas viejas).
+        Desde la compañía (botón «Importar Masivamente» de meli_oerp, active_model=res.company) los ids son
+        de COMPAÑÍAS: antes se leían como ids de cuenta (cuenta equivocada si coincidía el número, o
+        «Record does not exist» en el default_get). Ahora: la conexión de esa compañía si es una sola;
+        con 0 o varias, ninguna (el wizard pide entrar desde la cuenta).
+        """
         context = context or self.env.context
         account_ids = context.get('active_ids') or []
-        return self.env['mercadolibre.account'].browse(account_ids)
+        active_model = context.get('active_model')
+        Account = self.env['mercadolibre.account']
+        if active_model and active_model != 'mercadolibre.account':
+            if active_model == 'res.company' and account_ids:
+                accounts = self.env['res.company'].browse(account_ids).exists().mercadolibre_connections
+                if len(accounts) == 1:
+                    return accounts
+            return Account
+        return Account.browse(account_ids)
 
     # ------------------------------------------------------------------
     # STEP 1: Consultar ML — fetch publication ids, build product_lines
@@ -1996,7 +2794,7 @@ class product_template_import(models.TransientModel):
             # MULTIGET: Filtrar antes del multiget cuando sync_filter='not_synced'
             if sync_filter == 'not_synced':
                 lines_for_multiget = [pl for pl in product_lines if pl.get('import_status') not in ('synced', 'imported', 'duplicate')]
-                _logger.info("REFATODO multiget inteligente: %d/%d items (solo no sincronizados)",
+                _logger.info("BATCH multiget inteligente: %d/%d items (solo no sincronizados)",
                              len(lines_for_multiget), len(product_lines))
             else:
                 lines_for_multiget = product_lines
@@ -2656,7 +3454,7 @@ class product_template_import(models.TransientModel):
         return self.product_template_import(context=context)
 
     # ------------------------------------------------------------------
-    # REFATODO: Control de Cron desde el wizard
+    # BATCH: Control de Cron desde el wizard
     # ------------------------------------------------------------------
     cron_active = fields.Boolean(string="Cron activo", compute="_compute_cron_status",
                                   inverse="_inverse_cron_active", readonly=False)
@@ -2671,12 +3469,13 @@ class product_template_import(models.TransientModel):
     cron_force_import_images = fields.Boolean(string='Importar imágenes', default=False)
 
     @api.model
-    def default_get(self, fields_list):
+    def default_get(self, fields):
+        # parametro `fields` como el ORM desde 19 (F8b 20.0); el cuerpo sigue usando `fields_list`
+        fields_list = fields
         res = super().default_get(fields_list)
         try:
-            account_ids = self.env.context.get('active_ids') or []
-            if account_ids:
-                account = self.env['mercadolibre.account'].browse(account_ids)
+            account = self._get_account()
+            if account:
                 config = account.configuration if account else None
                 if config and hasattr(config, 'mercadolibre_cron_get_new_products_batch_size') \
                         and self._config_has_profile(config):
@@ -2770,16 +3569,8 @@ class product_template_import(models.TransientModel):
                                self.cron_batch_size or 1500, self.cron_post_state or 'all'),
                            'type': 'success'}}
 
-    def action_run_cron_now(self, context=None):
-        """Ejecuta el cron ahora con el perfil guardado."""
-        account = self._get_account(context or self.env.context)
-        if not account:
-            return self.env['meli.warning'].error(title="No account defined")
-        account.cron_batch_import_products()
-        return {'type': 'ir.actions.client', 'tag': 'display_notification',
-                'params': {'title': 'Cron Ejecutado',
-                           'message': 'Cron de importación ejecutado con el perfil guardado.',
-                           'type': 'success'}}
+    # (F8b 20.0) borrada la primera definicion de `action_run_cron_now`: la segunda (mas abajo, misma clase) la pisaba
+    # al cargar la clase, asi que esta nunca corrio (pylint function-redefined).
 
     # ------------------------------------------------------------------
     # Button: "Consultar ML" — fetch + preview
@@ -3374,8 +4165,8 @@ class mercadolibre_products_import_line_ext(models.TransientModel):
     def _get_account_for_line(self):
         """Get the ML account from wizard or context."""
         context = self.env.context
-        account_ids = context.get('active_ids') or []
-        account = self.env['mercadolibre.account'].browse(account_ids)
+        # mismo criterio que el wizard: active_ids son cuentas sólo con active_model de cuenta
+        account = self.env['mercadolibre.product.template.import']._get_account(context)
         if not account and self.import_id:
             account = self.import_id._get_account(context)
         return account
@@ -3433,14 +4224,14 @@ class mercadolibre_products_import_line_ext(models.TransientModel):
         return {'type': 'ir.actions.act_window_close'}
 
     def action_open_ml(self):
-        """Open the MercadoLibre API with access token in a new browser tab."""
+        """Open the MercadoLibre API item view in a new browser tab.
+        un caso: la sirve Odoo (/meli/item_api) con el token en el header, nunca en la URL."""
         self.ensure_one()
         account = self._get_account_for_line()
 
-        # Build API URL with access token
-        url = "https://api.mercadolibre.com/items/%s?include_attributes=all" % self.meli_id
-        if account and account.access_token:
-            url += "&access_token=%s" % account.access_token
+        url = "/meli/item_api/%s" % self.meli_id
+        if account:
+            url += "?account=%s" % account[:1].id
 
         return {
             'type': 'ir.actions.act_url',

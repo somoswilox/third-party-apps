@@ -53,7 +53,20 @@ class ResCompany(models.Model):
 
     def get_meli_state( self ):
         #_logger.info('meli_oerp_multiple company get_meli_state() ')
-        company = self or self.env.user.company_id
+        # llamado desde el cron "Get Meli State" (`model.get_meli_state()`,
+        # recordset VACIO, usuario OdooBot) antes caia en `self.env.user.company_id`
+        # y sólo recorría la compañía del usuario del cron: las cuentas ML de las
+        # demás compañías nunca pasaban por get_connector_state() y no tenían el
+        # refresh proactivo del token. Con self vacío ahora se recorren TODAS las
+        # compañías con sudo (mismo criterio que el dispatcher cron_meli_orders).
+        # Con self NO vacío (compute de mercadolibre_state, botón del form) el
+        # comportamiento no cambia.
+        if self:
+            company = self
+        else:
+            company = self.env['res.company'].sudo().search([])
+            _logger.info("get_meli_state: cron — %d compañía(s) (usuario_cron=%s).",
+                         len(company), self.env.user.name)
         for comp in company:
             #company = self or self.env.user.company_id
             #_logger.info( 'meli_oerp_multiple company get_meli_state() ' + comp.name )
@@ -61,8 +74,24 @@ class ResCompany(models.Model):
             #if meli:
             comp.mercadolibre_state = True
 
-            for account in comp.mercadolibre_connections:
+            connections = comp.mercadolibre_connections if self else comp.mercadolibre_connections.sudo()
+            for account in connections:
+                if not self and account.company_id:
+                    account = account.with_company(account.company_id)
                 #_logger.info('get_connector_state for: ' +str(comp.name) + str(" >> ") + str(account.name))
+
+                # Instancias de TEST: traer el access_token de produccion ANTES de
+                # calcular el estado, si la cuenta lo tiene configurado.
+                #
+                # Va ACA y no dentro de get_connector_state() a proposito:
+                # get_connector_state es un compute, y escribir desde un compute hace
+                # que una simple lectura del form dispare un write en la base.
+                #
+                # No puede tumbar el ciclo del resto de las cuentas: el metodo atrapa
+                # sus propios errores y los deja en meli_produccion_last_result.
+                if account.meli_produccion_enabled:
+                    account.pull_token_from_produccion()
+
                 account.get_connector_state()
 
     def cron_meli_orders( self, account_id=None ):
@@ -128,7 +157,7 @@ class ResCompany(models.Model):
         # paso 1 de account.cron_meli_orders(), acoplado al cron de órdenes por
         # CONSULTA (60 min, limit 10). En cuentas con volumen alto ese ritmo no
         # alcanza a vaciar el buffer y las notificaciones se acumulan sin drenarse
-        # nunca (caso Shoppy: 7.697 RECEIVED). Este dispatcher corre con alta
+        # nunca (caso un cliente: 7.697 RECEIVED). Este dispatcher corre con alta
         # frecuencia (cron cada 5 min) y ejecuta SÓLO el drenado — NO hace consultas
         # a la API de órdenes (eso lo sigue haciendo cron_meli_orders).
         #
@@ -163,7 +192,7 @@ class ResCompany(models.Model):
                 _logger.error("cron_process_order_notifications: cuenta [%s] FALLÓ en el dispatcher: %s", account.name, e, exc_info=True)
 
     def cron_meli_orders_status( self, account_id=None ):
-        # #475 - Dispatcher DEDICADO al RE-SYNC de ESTADO de pedidos (detectar
+        # un caso - Dispatcher DEDICADO al RE-SYNC de ESTADO de pedidos (detectar
         # cancelaciones ML fuera de la ventana date_desc del cron de importación).
         #
         # El método base (meli_oerp/res.company.cron_meli_orders_status →
@@ -171,7 +200,7 @@ class ResCompany(models.Model):
         # self.env.user.company_id + un ÚNICO token get_new_instance(company). En
         # instancias MULTI-CUENTA sólo cubre la compañía default del usuario del cron
         # (OdooBot) y con SU token, dejando las demás cuentas/compañías sin barrer
-        # (p.ej. Score co1 vs WODPRO co3 comparten Odoo → una quedaba sin re-sync).
+        # (p.ej. un cliente co1 vs un cliente co3 comparten Odoo → una quedaba sin re-sync).
         #
         # Este override itera TODAS las mercadolibre.account (sudo, sin depender de las
         # compañías del usuario del cron) y por cada una corre orders_resync_status con
@@ -213,6 +242,51 @@ class ResCompany(models.Model):
                 target.env['mercadolibre.orders'].orders_resync_status(meli=meli, config=config, account=account)
             except Exception as e:
                 _logger.error("cron_meli_orders_status: cuenta [%s] FALLÓ en el dispatcher: %s", account.name, e, exc_info=True)
+
+    def cron_meli_invoice_requeue( self, account_id=None ):
+        # un caso - Dispatcher MULTI-CUENTA de la red de seguridad de re-facturacion.
+        #
+        # El metodo base (meli_oerp_accounting/res.company.cron_meli_invoice_requeue ->
+        # sale.order._meli_requeue_uninvoiced) es MONO-cuenta: mira
+        # self.env.user.company_id y su token. En instancias multi-cuenta eso deja
+        # afuera a todas las demas companias/cuentas (mismo agujero que el un caso).
+        #
+        # Este override itera TODAS las mercadolibre.account (sudo, sin depender de las
+        # companias del usuario del cron) y por cada una corre el barrido con SU config,
+        # SU compania, SU token y scope por cuenta. Mismo scoping/guarding que
+        # cron_meli_orders_status: sudo + with_company + with_user(Vendedor ML); respeta el
+        # gate cron_status ('orders') y el toggle mercadolibre_invoice_requeue; un fallo por
+        # cuenta NO corta el procesamiento de las demas. No requiere ir.cron nuevo: reutiliza
+        # el registro base ir_cron_meli_invoice_requeue (llama al mismo metodo).
+        Account = self.env['mercadolibre.account'].sudo()
+        accounts = Account.browse(account_id).exists() if account_id else Account.search([])
+        _logger.info("cron_meli_invoice_requeue: DISPATCHER — %d cuenta(s) ML (account_id=%s).",
+                     len(accounts), account_id)
+
+        for account in accounts:
+            cron_status = account.cron_status_ids.filtered(lambda c: c.cron_type == 'orders')
+            if cron_status and not cron_status[0].is_enabled:
+                continue
+
+            config = account.configuration or account.company_id
+            if config and "mercadolibre_invoice_requeue" in config._fields and not config.mercadolibre_invoice_requeue:
+                continue
+
+            seller_user = config.mercadolibre_seller_user if (config and 'mercadolibre_seller_user' in config._fields) else False
+            target = account.sudo()
+            if seller_user and seller_user.active:
+                target = account.with_user(seller_user.id).sudo()
+            if account.company_id:
+                target = target.with_company(account.company_id)
+
+            try:
+                meli = target.env['meli.util'].get_new_instance(account.company_id or target.env.user.company_id, account)
+                if meli and meli.needlogin_state:
+                    _logger.warning("cron_meli_invoice_requeue [%s]: cuenta SIN LOGIN — se omite.", account.name)
+                    continue
+                target.env['sale.order']._meli_requeue_uninvoiced(meli=meli, config=config, account=account)
+            except Exception as e:
+                _logger.error("cron_meli_invoice_requeue: cuenta [%s] FALLÓ en el dispatcher: %s", account.name, e, exc_info=True)
 
     def meli_query_orders(self):
         #_logger.info("meli_oerp_multiple >> meli_query_orders")
@@ -316,6 +390,22 @@ class ResCompany(models.Model):
 
                     execution = account._start_cron_execution('stock')
                     self.env.cr.commit()
+                    # [un caso, 26.223] el cron general corre fix_inconsistent_stock_status antes de
+                    # publicar; este (dedicado) no lo hacia y lo que quedo 'updated' con un
+                    # movimiento posterior no volvia nunca a la cola. Version ACOTADA, por corrida.
+                    # Parametro meli_oerp_multiple.stock_backfill_limit (default 200; 0 = apagado).
+                    try:
+                        _bf_limit = int(self.env['ir.config_parameter'].sudo().get_param(
+                            'meli_oerp_multiple.stock_backfill_limit', '200') or 0)
+                    except (TypeError, ValueError):
+                        _bf_limit = 200
+                    if _bf_limit > 0:
+                        try:
+                            with self.env.cr.savepoint():
+                                account.fix_inconsistent_stock_status_batch(limit=_bf_limit)
+                        except Exception as e_fix:
+                            _logger.warning("fix_inconsistent_stock_status_batch salteado (%s): %s",
+                                            account.name, e_fix)
                     try:
                         account.meli_update_remote_stock(meli=meli)
                         account._end_cron_execution(execution, state='success')
@@ -377,8 +467,15 @@ class ResCompany(models.Model):
                     execution = account._start_cron_execution('price')
                     self.env.cr.commit()
                     try:
-                        account.meli_update_remote_price(meli=meli)
-                        account._end_cron_execution(execution, state='success')
+                        # 26.248 (#caso-K29): el resumen viaja a la fila de
+                        # mercadolibre.cron.execution (backport de 26.111 / #caso-K36).
+                        _res = account.meli_update_remote_price(meli=meli) or {}
+                        account._end_cron_execution(
+                            execution, state='success',
+                            items_processed=_res.get('items_processed', 0),
+                            items_success=_res.get('items_success', 0),
+                            items_error=_res.get('items_error', 0),
+                        )
                     except Exception as e:
                         account._end_cron_execution(execution, state='error', error_message=str(e))
                         raise

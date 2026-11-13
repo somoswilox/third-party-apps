@@ -8,7 +8,7 @@
 
 {
     'name': 'MercadoLibre Multiple Accounts / Mercado Libre Publisher Extension',
-    'version': '18.0.26.88',
+    'version': '18.0.26.394',
     'author': 'Moldeo Interactive',
     'website': 'https://www.moldeointeractive.com',
     "category": "Sales",
@@ -25,6 +25,7 @@
         'views/notification_view.xml',
         'views/product_category_views.xml',
         'views/product_view.xml',
+        'views/meli_wh_stock_view.xml',
         'views/sale_view.xml',
         'data/data.xml',
         'data/cron_jobs.xml',
@@ -57,9 +58,6 @@
             '/meli_oerp_multiple/static/src/css/meli_oerp_multiple.css',
         ]
     },
-    'demo_xml': [],
-    'active': False,
-    'installable': True,
     'application': True,
     'license': 'GPL-3',
     'post_init_hook': 'post_init_hook',

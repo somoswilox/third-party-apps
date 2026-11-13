@@ -49,6 +49,20 @@ class MercadoLibreConnectionConfiguration(models.Model):
     _description = "MercadoLibre Connection Parameters Configuration"
     _inherit = ["ocapi.connection.configuration", "mercadolibre.seller.perms.mixin"]
 
+    # 26.351 (#caso-K68): mensaje postventa editable por cuenta (botones «Mensaje Postventa» de la orden ML)
+    mercadolibre_post_sale_message = fields.Text(
+        string="Mensaje postventa",
+        help="Texto que mandan al comprador los botones «Mensaje Postventa» de la orden de Mercado Libre "
+             "(opción «enviar liga de factura» de ML). Comodines: {BUYER} nombre del comprador (si ML no lo "
+             "comparte se quita, p.ej. «¡Hola, {BUYER}!» queda «¡Hola!»), {LINK} liga de facturación, "
+             "{ORDERID} número de la venta, {ORDERAMOUNT} importe. Vacío: el botón simple sólo consulta "
+             "y el de autofactura usa el mensaje de autofacturación.")
+    mercadolibre_post_sale_link_field = fields.Char(
+        string="Campo de la liga de facturación",
+        help="Nombre técnico del campo de la venta (sale.order) que tiene la liga de facturación propia de "
+             "cada orden, p.ej. autoinvoice_url. Se usa en {LINK}; si en una venta viene vacío, el mensaje "
+             "NO se envía. Vacío: {LINK} = <url del sitio>/AUTOFACTURA/register (módulo de autofacturación).")
+
     @api.onchange('mercadolibre_seller_user', 'mercadolibre_seller_team')
     def _onchange_meli_seller_perms(self):
         return self._meli_seller_perms_warning()
@@ -98,7 +112,7 @@ class MercadoLibreConnectionConfiguration(models.Model):
             if mc.accounts:
                 mc.connection_account = (mc.accounts and mc.accounts[0]) or False
 
-    connection_account = fields.Many2one("mercadolibre.account",compute=_connection_account, store=True)
+    connection_account = fields.Many2one("mercadolibre.account",compute=_connection_account, store=True, index='btree_not_null')
     mercadolibre_user_product_seller = fields.Boolean(string="User Product Seller",related="connection_account.user_product_seller",store=True)
 
     # Campo computado para mostrar el estado de la cuenta en la configuración
@@ -149,6 +163,16 @@ class MercadoLibreConnectionConfiguration(models.Model):
     mercadolibre_category_import = fields.Char( string='Category to import', help='Category Code to Import, check Recursive Import to import the full tree', size=256)
     mercadolibre_recursive_import = fields.Boolean( string='Recursive import', help='Import all the category tree from Category Code')
 
+    # Politica de facturacion de los productos que CREA el conector. Ver el mismo campo
+    # en res.company (meli_oerp): aca manda la configuracion de la cuenta, y si esta
+    # vacia se cae a la de la compania. Vacio en las dos = comportamiento de siempre.
+    mercadolibre_product_invoice_policy = fields.Selection(
+        [('order', 'Cantidad pedida'), ('delivery', 'Cantidad entregada')],
+        string='Politica de facturacion de productos nuevos',
+        help='Politica de facturacion con la que nacen los productos que crea el '
+             'conector de MercadoLibre. Vacio = heredar de la compania, y si la '
+             'compania tampoco lo define, usar el valor por defecto de Odoo.')
+
     mercadolibre_cron_refresh = fields.Boolean(string='Keep alive',help='Cron Automatic Token Refresh for keeping ML connection alive.')
     mercadolibre_cron_mail = fields.Many2one(
         comodel_name="mail.template",
@@ -161,9 +185,142 @@ class MercadoLibreConnectionConfiguration(models.Model):
         help="Cantidad máxima de órdenes a procesar por ejecución del cron (notificaciones + órdenes faltantes). Default: 10",
         default=10
     )
+    # un caso - Gemelos de los campos de meli_oerp_accounting/res.company (red de seguridad
+    # de re-facturacion). ⚠️ Los defaults DEBEN coincidir con los de alla: en multi-cuenta
+    # la config EFECTIVA es esta (`mercadolibre.configuration`), no `res.company`
+    # (bug del un caso: defaults distintos = la opcion queda apagada sin que se note).
+    mercadolibre_invoice_requeue = fields.Boolean(
+        string="Reintentar facturas que fallaron",
+        default=True,
+        help="Barrido periodico que vuelve a intentar emitir la factura de las ventas de "
+             "MercadoLibre pagadas que quedaron sin factura posteada (rechazo de ARCA, "
+             "webservice caido, tipo de documento faltante...). Requiere ademas que el cron "
+             "'MELI: reintentar facturas que quedaron sin emitir' este activo.")
+    mercadolibre_invoice_requeue_days = fields.Integer(
+        string="Dias hacia atras (reintento de factura)",
+        default=30,
+        help="Ventana en dias (por fecha del pedido) de ventas a considerar en el barrido "
+             "de re-facturacion.")
+    mercadolibre_invoice_requeue_limit = fields.Integer(
+        string="Max ventas por ciclo (reintento de factura)",
+        default=20,
+        help="Tope de ventas a re-facturar por ciclo del cron, para acotar el uso del "
+             "webservice fiscal y el tiempo del cron.")
+    mercadolibre_invoice_requeue_max_retries = fields.Integer(
+        string="Max reintentos por venta (factura)",
+        default=8,
+        help="Cuantas veces se reintenta emitir la factura de una misma venta antes de "
+             "marcarla como TRABADA, avisar por actividad y dejar de tocarla.")
+
     mercadolibre_cron_get_orders_shipment = fields.Boolean(string='Importar envíos',help='Cron Get Orders Shipment')
     mercadolibre_including_shipping_cost = fields.Selection(string="Incluir envio en pedido y factura", selection=[('always','Siempre'),('never','Nunca')],default='always')
+    mercadolibre_shipping_cost_as_purchase_price = fields.Boolean(
+        string="Imputar el flete como coste del envio",
+        help="Activado (default, comportamiento historico): la linea de envio lleva como coste "
+             "el flete que MercadoLibre le cobra al vendedor, y el margen del pedido lo descuenta.\n"
+             "Desactivado: la linea de envio se sigue creando y facturando igual, pero sin coste, "
+             "y el margen del pedido no descuenta el flete. Util para comparar el margen contra "
+             "cuentas que tienen 'Incluir envio en pedido y factura' en Nunca (sin linea de envio).\n"
+             "Solo afecta el COSTE (margen); no cambia nada de lo que se factura.",
+        default=True)
     mercadolibre_use_payment_shipping_amount = fields.Boolean(string="Usar Monto de envío de Pagos",help="El monto del envio puede variar, en el objeto de envio tenemos el shippig_cost y en los pagos el shipping amount.",default=True)
+    # ------------------------------------------------------------------ #
+    #  OLA 2 del mapeo de cancelaciones -- el eje MERCADERIA.              #
+    #  GEMELO de meli_oerp/models/company.py. El default DEBE ser el mismo #
+    #  en los DOS modelos: cuando hay cuenta de conexion, el _get_config() #
+    #  de meli_oerp devuelve ESTA `mercadolibre.configuration`, no         #
+    #  res.company, y un campo que solo existe alla cae al                 #
+    #  `in config._fields` -> False y la opcion queda APAGADA EN SILENCIO  #
+    #  (bug del un caso; y otra vez el un caso en un cliente, 24-sep-2026).          #
+    #  Si se toca el default de un lado, se toca el del otro.              #
+    # ------------------------------------------------------------------ #
+    mercadolibre_return_mode = fields.Selection([
+        ("none", "No crear devolucion"),
+        ("draft", "Crear sin validar (queda reservada)"),
+        ("done", "Crear y validar (el stock vuelve)"),
+    ], string="Devolucion de mercaderia al cancelar pedido",
+       default="done",
+       help="Que hacer con la mercaderia ya entregada cuando MercadoLibre cancela un pedido:\n"
+            "- No crear devolucion: no se toca el stock, se gestiona a mano.\n"
+            "- Crear sin validar: genera el albaran de devolucion reservado. OJO: al cancelar "
+            "la orden, Odoo cancela los albaranes que no esten en Hecho, asi que esa devolucion "
+            "queda cancelada y el stock NO vuelve.\n"
+            "- Crear y validar (por defecto): genera el albaran de devolucion y lo valida ANTES "
+            "de cancelar la orden, de modo que el stock vuelve al deposito y la devolucion "
+            "sobrevive a la cancelacion.\n\n"
+            "No aplica a los envios FULL, donde el stock vive en el fulfillment de MercadoLibre: "
+            "esos albaranes se saltean solos por no tener cantidades que devolver.")
+
+    # Cancelaciones decididas con la FOTO FRESCA de ML (29-sep-2026, un frente).
+    # GEMELO de meli_oerp/models/company.py: MISMO default ('legacy') en los dos modelos.
+    # Con cuenta de conexion la config EFECTIVA es esta (bug del un caso): si el campo solo
+    # viviera en res.company, el modo quedaria en 'legacy' EN SILENCIO para toda cuenta.
+    mercadolibre_cancel_mode = fields.Selection([
+        ("legacy", "Según configuración (histórico)"),
+        ("por_estado_ml", "Según el estado actualizado de ML (orden, pagos y envío)"),
+    ], string="Decisión al cancelar pedido",
+       default="legacy",
+       help="Cómo se decide qué hacer cuando MercadoLibre cancela un pedido de esta cuenta. "
+            "'Según el estado actualizado de ML' consulta la orden, los pagos y el envío ANTES "
+            "de accionar: devuelve la mercadería si el envío nunca salió o volvió, ESPERA si está "
+            "en tránsito, no mueve stock si se entregó o es FULL, y emite la nota de crédito por "
+            "lo reintegrado. Ver la ayuda del mismo campo en la compañía.")
+
+    # Venta ML sin existencia al confirmar (un caso, un cliente, 30-sep-2026).
+    # GEMELO de meli_oerp/models/company.py: MISMO default (confirm) en los dos modelos.
+    # Con cuenta de conexion la config EFECTIVA es esta (bug del un caso).
+    mercadolibre_order_confirm_no_stock_mode = fields.Selection([
+        ("confirm", "Confirmar; si el abastecimiento falla, queda en cotización"),
+        ("waiting", "Confirmar siempre: la salida queda en espera de existencia"),
+        ("quotation", "No confirmar sin existencia: queda en cotización hasta que haya"),
+    ], string="Venta sin existencia al confirmar",
+       default="confirm",
+       help="Qué hacer al confirmar una venta de MercadoLibre cuando algún producto no tiene "
+            "existencia libre en el almacén de la venta:\n"
+            "- Confirmar; si el abastecimiento falla, queda en cotización (por defecto): se "
+            "confirma como siempre. Si Odoo no puede abastecerla (p. ej. la ruta intenta COMPRAR "
+            "y el producto no tiene un precio de proveedor válido), la venta queda como "
+            "cotización con un aviso que nombra el producto.\n"
+            "- Confirmar siempre, la salida queda en espera: la venta se confirma y el albarán de "
+            "salida se crea en 'En espera' aunque no haya existencia. Si el producto tiene "
+            "proveedor, se genera la compra como siempre; si no se puede generar la compra (sin "
+            "precio de proveedor), la salida igual se crea en espera y se avisa UNA vez en la "
+            "venta qué productos no se pudieron comprar.\n"
+            "- No confirmar sin existencia: la venta queda en cotización con un aviso de los "
+            "productos y las cantidades que faltan, y se confirma sola en la próxima "
+            "sincronización cuando haya existencia en el almacén de la venta.\n"
+            "Los servicios, los consumibles sin control de inventario y los productos de "
+            "triangulación (dropship o referencia DSTR_) no se consideran.")
+
+    # 26.171 (E2, un cliente): "Cancelaciones automáticas desde".
+    # GEMELO de meli_oerp/models/company.py: MISMO default (vacío) en los dos modelos.
+    # Con cuenta de conexion la config EFECTIVA es esta (bug del un caso).
+    mercadolibre_cancel_auto_from = fields.Datetime(
+       string="Cancelaciones automáticas desde",
+       help="Fecha y hora desde la que las cancelaciones de MercadoLibre se procesan "
+            "automáticamente (devolución, factura y cancelación de la venta, según 'Devolución "
+            "de mercadería al cancelar pedido' y 'Decisión al cancelar pedido').\n"
+            "Un pedido que ML canceló ANTES de esta fecha no se toca: queda retenido, marcado "
+            "'ML Cancelación retenida' y visible en los filtros 'MercadoLibre Cancelaciones "
+            "retenidas' y 'MercadoLibre Canceladas pendientes en Odoo', para tratarlo a mano. "
+            "Se compara con la fecha de cancelación que informa ML; si no se tiene, con la fecha "
+            "de la venta.\n"
+            "Vacío (por defecto): se procesan todas, como hasta ahora.")
+
+    # [caso de un cliente] Campo gemelo del de meli_oerp/models/company.py.
+    # ⚠️ El default DEBE ser el mismo en los dos modelos: en multi-cuenta la config
+    # EFECTIVA es esta (`mercadolibre.configuration`), no `res.company`. Declararlos
+    # con defaults distintos fue el bug del un caso (`mercadolibre_billing_force_on_main`:
+    # True en company / False acá → la opción quedaba apagada sin que se notara).
+    mercadolibre_protect_invoiced_orders = fields.Boolean(
+        string="No modificar pedidos ya facturados",
+        default=True,
+        help="Si el pedido ya tiene una factura POSTEADA, el conector no reescribe sus líneas "
+             "ni sus montos (en particular la línea de envío): deja el pedido como está y avisa "
+             "en el chatter que encontró una diferencia. Evita que el pedido quede por debajo "
+             "de lo que se facturó. Desactivar solo si se necesita el comportamiento anterior.",
+    )
+
 
     mercadolibre_cron_get_orders_shipment_client = fields.Boolean(string='Importar clientes',help='Cron Get Orders Shipment Client')
     mercadolibre_cron_get_orders_client_set_company = fields.Boolean(string='Asociar Empresa',help='Asociar el cliente siempre a la empresa de la cuenta',default=True)
@@ -172,7 +329,43 @@ class MercadoLibreConnectionConfiguration(models.Model):
 
     mercadolibre_cron_post_update_products = fields.Boolean(string='Actualizar productos en ML',help='Cron Update Posted Products, Product Templates or Variants with Meli Publication field checked')
     mercadolibre_cron_post_update_stock = fields.Boolean(string='Publicar Stock',help='Cron Post Updated Stock')
+    mercadolibre_stock_diag_reactivate = fields.Selection(
+        [('all', 'Todas (comportamiento anterior)'),
+         ('out_of_stock', 'Sólo las pausadas por falta de stock'),
+         ('never', 'Nunca')],
+        string='Diagnóstico: reactivar pausadas', default='all',
+        help="Qué hace el diagnóstico de stock con una publicación PAUSADA en MercadoLibre que tiene stock en Odoo. "
+             "'Todas' la reactiva siempre (también una pausa hecha a mano). "
+             "'Sólo falta de stock' la reactiva sólo si ML la pausó por quedarse sin stock. 'Nunca' no la toca.")
     mercadolibre_shipment_print_guide = fields.Boolean(string='Imprimir etiquetas',help='Imprimir etiquetas')
+    # ── Reintento de etiquetas (un caso) ────────────────────────────────────────────
+    # El envio se consulta UNA sola vez, al importar/confirmar la orden. Si Mercado
+    # Libre publica la etiqueta despues (lo normal en ME2/colecta: de 8 a 50 h
+    # despues), nada vuelve a mirar esa orden: el cron de ordenes solo repasa las
+    # `mercadolibre_cron_orders_limit` mas nuevas y ML no notifica el topic
+    # `shipments`. La etiqueta queda sin bajar hasta que alguien actualiza la orden
+    # a mano. Estos parametros gobiernan el cron que vuelve a consultarlas.
+    # Solo actua si `mercadolibre_shipment_print_guide` esta activo: si la cuenta no
+    # pidio que bajemos las etiquetas, el cron no hace nada.
+    mercadolibre_cron_shipment_label_retry = fields.Boolean(
+        string='Reintentar etiquetas pendientes',
+        help="Vuelve a consultar los envios que quedaron sin etiqueta y la baja apenas "
+             "Mercado Libre la publica. Requiere 'Imprimir etiquetas' activo.",
+        default=True)
+    mercadolibre_cron_shipment_label_retry_days = fields.Integer(
+        string='Dias hacia atras (etiquetas)',
+        help="Cuantos dias hacia atras se revisan los envios sin etiqueta. Default: 3",
+        default=3)
+    mercadolibre_cron_shipment_label_retry_limit = fields.Integer(
+        string='Envios por corrida (etiquetas)',
+        help="Maximo de envios a re-consultar por ejecucion del cron. Acota el gasto de "
+             "llamadas a la API por corrida. Default: 50",
+        default=50)
+    mercadolibre_cron_shipment_label_retry_max = fields.Integer(
+        string='Reintentos maximos por envio (etiquetas)',
+        help="Tope de reintentos por envio. Evita re-consultar para siempre un envio que "
+             "nunca va a tener etiqueta (retiro en sucursal, flex, cancelado). Default: 20",
+        default=20)
     mercadolibre_shipment_print_guide_mode = fields.Selection(string="Modo",help="Formato/empaquetado de la etiqueta: PDF, ZPL (zip tal cual lo entrega ML) o ZPL (txt: contenido extraído del zip, archivo .zpl)",selection=[('pdf','PDF'),('zpl','ZPL (zip)'),('zpl_txt','ZPL (txt)')],default='pdf')
     mercadolibre_shipment_printer_name = fields.Char(
         string="Destino de impresión",
@@ -347,6 +540,11 @@ class MercadoLibreConnectionConfiguration(models.Model):
     mercadolibre_process_offset = fields.Char('Offset for pause all')
     mercadolibre_post_default_code = fields.Boolean(string='Post SKU',default=True,help='Post Odoo default_code field for templates or variants to seller_custom_field in ML')
     mercadolibre_post_barcode = fields.Boolean(string='Post Barcode',default=True,help='Post Odoo barcode as GTIN')
+    # 26.352 (caso-K21 C): de dónde sale el «Fabricante» (MANUFACTURER) cuando no está cargado.
+    mercadolibre_manufacturer_source = fields.Selection([('supplier', 'Proveedor principal'), ('brand', 'Marca')],
+        string='Fabricante desde', default='supplier',
+        help='Si el producto no tiene el atributo Fabricante, se completa con el proveedor principal de la '
+             'compra (sin S.A./S.R.L.) o con la Marca. Sin proveedor, se usa la Marca.')
     mercadolibre_import_search_sku = fields.Boolean(string='Search SKU',default=True,help='Search product by default_code')
 
     mercadolibre_seller_user = fields.Many2one("res.users", string="Vendedor ML", help="Usuario con el que se registrarán las órdenes automáticamente")
@@ -401,6 +599,17 @@ class MercadoLibreConnectionConfiguration(models.Model):
         help="Cuando el comprador, el contacto de facturación y el de envío tienen el mismo nombre "
              "(normalizado), los tres se unifican al registro del comprador. "
              "Evita triplicar contactos para la misma persona.",
+    )
+
+    mercadolibre_mx_cfdi_override_default = fields.Boolean(
+        string="México: corregir régimen/uso CFDI por defecto (601/G03) con el dato de ML",
+        default=False,
+        help="Sólo MercadoLibre México con l10n_mx_edi. Odoo crea los contactos con régimen fiscal 601 "
+             "(y uso de CFDI G03) por defecto, así que una persona física (612) o público en general (616) "
+             "ya cargados quedan con un régimen que no es el suyo. Prendida: si el contacto tiene 601 (o G03) "
+             "y MercadoLibre informa otro código válido, se escribe el de ML. Nunca pisa un valor distinto "
+             "(carga manual) ni contactos bloqueados para MercadoLibre. Apagada (por defecto): sólo se completan "
+             "campos vacíos.",
     )
 
     mercadolibre_set_fiscal_position = fields.Boolean(
@@ -491,6 +700,29 @@ class MercadoLibreConnectionConfiguration(models.Model):
                                                          "seller_warehouse: stock por bodega del vendedor.\n"
                                                          "selling_address: stock por dirección de venta.")
 
+    # 26.87 (F1d) — RED DE SEGURIDAD del sincronizado de stock.
+    #
+    # La cola de publicacion es event-driven: un binding entra solo cuando
+    # meli_stock_moves_update > stock_update (ver mercadolibre.product
+    # _meli_stock_status). Ese sello se deriva de stock_move, y ningun esquema
+    # derivado puede GARANTIZAR que no se pierda un evento — de hecho se perdian
+    # todos los que no creaban una fila nueva de movimiento (bug corregido en F1).
+    #
+    # Este parametro cierra el agujero por abajo: cualquier publicacion cuyo
+    # ultimo push sea mas viejo que N dias vuelve a la cola, haya o no habido
+    # movimientos. Es el equivalente a un "full resync" amortizado.
+    # 0 = desactivado (comportamiento anterior a 26.87).
+    mercadolibre_stock_resync_days = fields.Integer(
+        string="Resincronizar stock cada (días)",
+        default=7,
+        help="Red de seguridad del sincronizado de stock.\n"
+             "Toda publicación cuyo último envío de stock a MercadoLibre sea más "
+             "antiguo que esta cantidad de días vuelve a la cola de publicación, "
+             "aunque no haya habido movimientos de stock.\n"
+             "Sirve para que un evento perdido (o un producto cuyo stock cambió "
+             "sin generar movimiento) no quede desincronizado para siempre.\n"
+             "Recomendado: 7. Poner 0 desactiva la red de seguridad.")
+
     #TODO: activate
     mercadolibre_stock_virtual_available = fields.Selection(selection=[
                                                                             ("virtual","Planificado (virtual_available)"),
@@ -525,7 +757,6 @@ class MercadoLibreConnectionConfiguration(models.Model):
 
 
     mercadolibre_order_confirmation_hook = fields.Char(string="Order Hook",help="https://www.hookserver.com/app")
-    mercadolibre_product_confirmation_hook = fields.Char(string="Product Hook",help="https://www.hookserver.com/app")
 
     mercadolibre_filter_order_datetime_start = fields.Datetime("Start Order Closed Date",help="Fecha a partir de la cual no se bloquean las entradas de pedidos desde ML")
     #mercadolibre_filter_order_cron_max = fields.Integer(string="Cantidad de ordenes maximas a chequear por iteracion de cron")
@@ -666,276 +897,10 @@ class MercadoLibreConnectionConfiguration(models.Model):
     # action_diagnose_stock_config fue movido a mercadolibre.account (connection_account.py)
     # para poder usar message_post (requiere mail.thread) y ubicarse junto al botón
     # "Check & Test Multiwarehouse" en el formulario de la cuenta.
+    # (F8b 20.0) borrado el REMANENTE de ese cuerpo, que habia quedado colgado de `copy_from_configuration`
+    # (despues de su `pass;`): sin `def` propio, usaba `config`/`company` sin definir (21 undefined-variable) y
+    # nadie llama a `copy_from_configuration`. La version viva esta en connection_account.py.
 
-        OK  = "✅"
-        WARN = "⚠️"
-        ERR  = "❌"
-
-        issues = []   # (icon, text)
-        infos  = []   # (icon, text)
-
-        # ── 1. Modo de actualización ──────────────────────────────────────────
-        mode       = (hasattr(config, 'mercadolibre_stock_update_mode') and config.mercadolibre_stock_update_mode) or 'standard'
-        qty_method = (hasattr(config, 'mercadolibre_stock_virtual_available') and config.mercadolibre_stock_virtual_available) or 'virtual'
-        _MODE_LABELS = {
-            'standard':         'Estándar (PUT /items/{id})',
-            'auto':             'Automático (detecta por publicación)',
-            'user_product':     'Multi-warehouse (PUT /user-products/{id}/stock)',
-            'user_product_type':'Multi-warehouse por tipo',
-        }
-        _QTY_LABELS = {
-            'virtual':          'Virtual disponible (reservas descontadas)',
-            'virtual_absoluto': 'Virtual absoluto (sin negativos)',
-            'theoretical':      'Teórico (stock real sin movimientos)',
-            'qty_reserved':     'Stock - reservado',
-        }
-        infos.append((OK, "Modo: <b>%s</b>" % html_escape(_MODE_LABELS.get(mode, mode))))
-        infos.append((OK, "Método cantidad: <b>%s</b>" % html_escape(_QTY_LABELS.get(qty_method, qty_method))))
-
-        # ── 2. Almacén estándar ───────────────────────────────────────────────
-        wh          = config.mercadolibre_stock_warehouse
-        loc_to_post = config.mercadolibre_stock_location_to_post
-        if wh:
-            infos.append((OK, "Almacén configurado: <b>%s</b> → ubicación stock: %s"
-                          % (html_escape(wh.name), html_escape(wh.lot_stock_id.complete_name))))
-        else:
-            infos.append((WARN, "No hay almacén configurado (<i>mercadolibre_stock_warehouse</i> vacío)"))
-
-        if loc_to_post:
-            infos.append((OK, "Ubicación directa (override): <b>%s</b>" % html_escape(loc_to_post.complete_name)))
-
-        # ── 3. Ubicaciones con mercadolibre_active=True ───────────────────────
-        active_locs = self.env['stock.location'].search([
-            ('mercadolibre_active', '=', True),
-            ('company_id', '=', company.id),
-        ])
-        non_full_active = active_locs.filtered(
-            lambda l: not l.mercadolibre_logistic_type or 'fulfillment' not in (l.mercadolibre_logistic_type or '')
-        )
-        full_active = active_locs - non_full_active
-
-        if not active_locs:
-            if not wh and not loc_to_post:
-                issues.append((ERR, "Sin ubicaciones activas ni almacén configurado — "
-                               "el stock <b>no se enviará</b> a ML"))
-            else:
-                infos.append((OK, "Sin ubicaciones con <i>mercadolibre_active</i> — "
-                              "se usará el almacén/ubicación directa configurada"))
-        else:
-            infos.append((OK, "Ubicaciones con <i>mercadolibre_active=True</i>: <b>%d</b>" % len(active_locs)))
-
-            # Verificar si las activas (no-FULL) pertenecen al almacén configurado
-            if wh and non_full_active:
-                wh_lot = wh.lot_stock_id
-                wh_descendants = self.env['stock.location'].search([('id', 'child_of', wh_lot.id)])
-                wh_ids = set(wh_descendants.ids) | {wh_lot.id}
-
-                in_wh  = non_full_active.filtered(lambda l: l.id in wh_ids)
-                out_wh = non_full_active.filtered(lambda l: l.id not in wh_ids)
-
-                if in_wh:
-                    infos.append((OK, "Dentro del almacén '<b>%s</b>': %s"
-                                  % (html_escape(wh.name),
-                                     ", ".join(html_escape(l.complete_name) for l in in_wh))))
-                if out_wh:
-                    # Check if out-of-warehouse locs are covered by publish_stock_locations
-                    _psl = config.publish_stock_locations if ("publish_stock_locations" in config._fields and config.publish_stock) else self.env['stock.location']
-                    _psl_ids = set(_psl.ids) if _psl else set()
-                    out_covered = out_wh.filtered(lambda l: l.id in _psl_ids)
-                    out_excluded = out_wh - out_covered
-                    if out_covered:
-                        infos.append((WARN,
-                            "<b>%d ubicación(es) activa(s) FUERA del almacén '%s'</b> pero incluidas en "
-                            "<i>Publish Stock location</i> — se usarán en el cálculo:<br/>%s"
-                            % (len(out_covered), html_escape(wh.name),
-                               "<br/>".join("&nbsp;&nbsp;• " + html_escape(l.complete_name) for l in out_covered))))
-                    if out_excluded:
-                        issues.append((WARN,
-                            "<b>%d ubicación(es) activa(s) FUERA del almacén '%s'</b> y NO en "
-                            "<i>Publish Stock location</i> — se excluirán del cálculo:<br/>%s"
-                            % (len(out_excluded), html_escape(wh.name),
-                               "<br/>".join("&nbsp;&nbsp;• " + html_escape(l.complete_name) for l in out_excluded))))
-
-            elif non_full_active and not wh and not loc_to_post:
-                # Activas pero sin almacén → se suman todas
-                issues.append((WARN,
-                    "Hay <b>%d ubicación(es)</b> activa(s) sin almacén configurado. "
-                    "Si pertenecen a distintos almacenes, el stock se suma (posible sobrestock en ML):<br/>%s"
-                    % (len(non_full_active),
-                       "<br/>".join("&nbsp;&nbsp;• " + html_escape(l.complete_name) for l in non_full_active))))
-            elif non_full_active:
-                for l in non_full_active:
-                    infos.append((OK, "&nbsp;&nbsp;• %s" % html_escape(l.complete_name)))
-
-        # ── 4. Configuración FULL (fulfillment) ───────────────────────────────
-        wh_full  = config.mercadolibre_stock_warehouse_full
-        loc_full = config.mercadolibre_stock_location_to_post_full
-
-        if wh_full:
-            infos.append((OK, "Almacén FULL: <b>%s</b>" % html_escape(wh_full.name)))
-        if loc_full:
-            infos.append((OK, "Ubicación FULL directa: <b>%s</b>" % html_escape(loc_full.complete_name)))
-        if full_active:
-            infos.append((OK, "Ubicaciones FULL activas: %s"
-                          % ", ".join(html_escape(l.complete_name) for l in full_active)))
-        if not wh_full and not loc_full and not full_active:
-            infos.append((OK, "Sin configuración FULL (normal si no se usan publicaciones fulfillment)"))
-
-        # ── 5. Multi-ubicación explícita ──────────────────────────────────────
-        multi_locs = hasattr(config, 'mercadolibre_stock_location_to_post_many') and config.mercadolibre_stock_location_to_post_many
-        if multi_locs:
-            infos.append((OK, "Multi-ubicación configurada (<i>mercadolibre_stock_location_to_post_many</i>): <b>%d</b> ubicación(es)" % len(multi_locs)))
-            for l in multi_locs:
-                infos.append((OK, "&nbsp;&nbsp;• %s (logistic: %s)"
-                              % (html_escape(l.complete_name), html_escape(l.mercadolibre_logistic_type or 'estándar'))))
-
-        # ── 6. Consistencia modo multi-warehouse ──────────────────────────────
-        if mode in ('auto', 'user_product', 'user_product_type'):
-            account = config.accounts and config.accounts[0]
-            is_mw = account and getattr(account, 'multiwarehouse', False)
-            if not is_mw:
-                issues.append((WARN,
-                    "Modo '<b>%s</b>' configurado pero el vendedor no está marcado como "
-                    "multi-almacén en ML. Verificar con botón 'Check Multiwarehouse'." % html_escape(mode)))
-            else:
-                infos.append((OK, "Vendedor confirmado como multi-warehouse en ML"))
-
-        # ── 7. Consistencia: sin nada configurado ─────────────────────────────
-        nada = (not wh and not loc_to_post and not active_locs and not multi_locs)
-        if nada:
-            issues.append((ERR, "Configuración vacía: no hay almacén, ubicación directa ni ubicaciones activas. "
-                           "El stock <b>no se actualizará</b> en ML."))
-
-        # ── 8. Publicaciones con poco movimiento / pausadas ────────────────────
-        accounts = config.accounts
-        if accounts:
-            MeliProd = self.env['mercadolibre.product']
-            threshold_days = 30
-            threshold_date = fields.Datetime.now() - timedelta(days=threshold_days)
-
-            # Contar por estado (consulta eficiente con read_group)
-            status_counts = {}
-            groups = MeliProd.read_group(
-                domain=[('connection_account', 'in', accounts.ids)],
-                fields=['meli_last_status'],
-                groupby=['meli_last_status'],
-            )
-            total_pubs = 0
-            for g in groups:
-                s = g['meli_last_status'] or 'desconocido'
-                c = g['meli_last_status_count']
-                status_counts[s] = c
-                total_pubs += c
-
-            if total_pubs > 0:
-                status_str = ", ".join(
-                    "<b>%s</b>: %d" % (html_escape(s), c)
-                    for s, c in sorted(status_counts.items(), key=lambda x: -x[1])
-                )
-                infos.append((OK, "Publicaciones totales: <b>%d</b> — por estado: %s" % (total_pubs, status_str)))
-
-                # Pausadas con stock Odoo > 0 (potencial pérdida de ventas)
-                paused_with_stock = MeliProd.search([
-                    ('connection_account', 'in', accounts.ids),
-                    ('meli_last_status', '=', 'paused'),
-                    ('meli_available_quantity', '>', 0),
-                ], limit=11)
-                if paused_with_stock:
-                    shown = paused_with_stock[:10]
-                    detail = "<br/>".join(
-                        "&nbsp;&nbsp;• <b>%s</b> — %s — stock Odoo: %d uds" % (
-                            html_escape(p.meli_id or p.conn_id or '?'),
-                            html_escape((p.product_id.display_name if p.product_id else p.name or '')[:60]),
-                            p.meli_available_quantity,
-                        ) for p in shown
-                    )
-                    if len(paused_with_stock) > 10:
-                        detail += "<br/>&nbsp;&nbsp;<i>... y más. Filtrar por estado=Pausado en Publicaciones ML.</i>"
-                    issues.append((ERR,
-                        "<b>%d publicación(es) PAUSADA(S) con stock disponible en Odoo</b> — "
-                        "posible pérdida de ventas activa:<br/>%s" % (len(shown), detail)))
-
-                # Pausadas sin movimiento reciente (olvidadas)
-                stale_paused_count = MeliProd.search_count([
-                    ('connection_account', 'in', accounts.ids),
-                    ('meli_last_status', '=', 'paused'),
-                    '|',
-                    ('meli_stock_moves_update', '=', False),
-                    ('meli_stock_moves_update', '<', threshold_date),
-                ])
-                if stale_paused_count:
-                    issues.append((WARN,
-                        "<b>%d publicación(es) pausada(s)</b> sin movimiento de stock "
-                        "en los últimos %d días — revisar si corresponde reactivar" % (stale_paused_count, threshold_days)))
-
-                # Activas sin movimiento reciente (posible desincronización)
-                stale_active_count = MeliProd.search_count([
-                    ('connection_account', 'in', accounts.ids),
-                    ('meli_last_status', '=', 'active'),
-                    ('meli_stock_moves_update', '!=', False),
-                    ('meli_stock_moves_update', '<', threshold_date),
-                ])
-                if stale_active_count:
-                    infos.append((WARN,
-                        "<b>%d publicación(es) activa(s)</b> sin movimiento de stock "
-                        "en los últimos %d días — stock podría estar desincronizado con ML" % (stale_active_count, threshold_days)))
-
-                # Activas con quantity = 0 en Odoo (pueden pausarse automáticamente)
-                active_zero_count = MeliProd.search_count([
-                    ('connection_account', 'in', accounts.ids),
-                    ('meli_last_status', '=', 'active'),
-                    ('meli_available_quantity', '=', 0),
-                ])
-                if active_zero_count:
-                    issues.append((WARN,
-                        "<b>%d publicación(es) activa(s) con stock = 0</b> según Odoo — "
-                        "ML puede pausarlas si el cron actualiza stock" % active_zero_count))
-            else:
-                infos.append((OK, "Sin publicaciones registradas para esta configuración"))
-
-        # ── Build HTML report ─────────────────────────────────────────────────
-        n_issues = len(issues)
-        if n_issues == 0:
-            status_icon = OK
-            status_text = "Sin problemas detectados"
-            notif_type  = "success"
-        else:
-            status_icon = WARN
-            status_text = "%d problema(s) detectado(s)" % n_issues
-            notif_type  = "warning"
-
-        lines = [
-            "<div style='font-family:monospace;font-size:13px'>",
-            "<h3>%s Diagnóstico de Configuración de Stock — %s</h3>" % (status_icon, html_escape(status_text)),
-            "<b>Empresa:</b> %s &nbsp;|&nbsp; <b>Config:</b> %s<br/><br/>"
-            % (html_escape(company.name), html_escape(config.name or str(config.id))),
-            "<b>Información:</b><ul>",
-        ]
-        for icon, text in infos:
-            lines.append("<li>%s %s</li>" % (icon, text))
-        lines.append("</ul>")
-
-        if issues:
-            lines.append("<b>Problemas / Advertencias:</b><ul>")
-            for icon, text in issues:
-                lines.append("<li>%s %s</li>" % (icon, text))
-            lines.append("</ul>")
-
-        lines.append("</div>")
-        body = "".join(lines)
-
-        self.message_post(body=body, message_type='comment', subtype_xmlid='mail.mt_note')
-
-        return {
-            'type': 'ir.actions.client',
-            'tag': 'display_notification',
-            'params': {
-                'title': 'Diagnóstico de Stock',
-                'message': "%s %s — Ver chatter para el reporte completo." % (status_icon, status_text),
-                'type': notif_type,
-                'sticky': n_issues > 0,
-            },
-        }
 
 class meli_oerp_sku_rule(models.Model):
 

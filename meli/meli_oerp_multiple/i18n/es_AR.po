@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Odoo Server 18.0+e\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2025-11-27 23:23+0000\n"
-"PO-Revision-Date: 2025-11-28 16:34+0000
+"PO-Revision-Date: 2025-11-28 16:34+0000\n"
 "Last-Translator: Moldeo Interactive <info@moldeointeractive.com.ar>\n"
 "Language-Team: Spanish (Argentina) <es_AR@li.org>\n"
 "Language: es_AR\n"
@@ -2437,9 +2437,9 @@ msgstr "Informacion de ML"
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_binder_wiz__meli_id
 msgid ""
-"Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123456789, "
+"Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123912281, "
 "MLA458..., ML...., ... )"
-msgstr "Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123456789, MLA458..., ML...., ... )"
+msgstr "Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123912281, MLA458..., ML...., ... )"
 
 #. module: meli_oerp_multiple
 #: model_terms:ir.ui.view,arch_db:meli_oerp_multiple.mercadolibre_product_form_view
@@ -3239,8 +3239,8 @@ msgstr "Vinculación de Plantilla de Producto MercadoLibre"
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_variant_binder_wiz__meli_id
-msgid "MercadoLibre Product Id (MLXYYYYYYY: MLA123456789 )"
-msgstr "ID de Producto MercadoLibre (MLXYYYYYYY: MLA123456789)"
+msgid "MercadoLibre Product Id (MLXYYYYYYY: MLA123912281 )"
+msgstr "ID de Producto MercadoLibre (MLXYYYYYYY: MLA123912281)"
 
 #. module: meli_oerp_multiple
 #: model:ir.model,name:meli_oerp_multiple.model_mercadolibre_product_image
@@ -3280,8 +3280,8 @@ msgstr "Formulario de Variante de Producto MercadoLibre"
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_variant_binder_wiz__meli_id_variation
-msgid "MercadoLibre Product Variation Id ( ZZZZZZZZZ: 123456789 )"
-msgstr "ID de Variación de Producto MercadoLibre (ZZZZZZZZZ: 123456789)"
+msgid "MercadoLibre Product Variation Id ( ZZZZZZZZZ: 123912281 )"
+msgstr "ID de Variación de Producto MercadoLibre (ZZZZZZZZZ: 123912281)"
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_binder_wiz__meli_id
@@ -4503,11 +4503,6 @@ msgstr "Categoría de Producto"
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_fea
 msgid "Product Fea"
 msgstr "Comisión del Producto"
-
-#. module: meli_oerp_multiple
-#: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_confirmation_hook
-msgid "Product Hook"
-msgstr "Gancho de Producto"
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_bind_shipment_item__product
@@ -6181,7 +6176,6 @@ msgstr "https://compania.odoo.com/meli_login/{Meli Login Id}  Por ejemplo, si el
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_order_confirmation_hook
-#: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_confirmation_hook
 msgid "https://www.hookserver.com/app"
 msgstr "https://www.hookserver.com/app"
 

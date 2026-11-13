@@ -9,6 +9,7 @@ access_ocapi_sale_order_line,ocapi.binding.sale_order_line manager,model_ocapi_b
 access_ocapi_payment,ocapi.binding.payment manager,model_ocapi_binding_payment,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1
 access_ocapi_shipment,ocapi.binding.shipment manager,model_ocapi_binding_shipment,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1
 access_ocapi_client,ocapi.binding.client manager,model_ocapi_binding_client,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1
+access_ocapi_client_user,ocapi.binding.client user read,model_ocapi_binding_client,base.group_user,1,0,0,0
 access_ocapi_connection_notification,ocapi.connection.notification manager,model_ocapi_connection_notification,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1
 access_ocapi_binding_category,ocapi.binding.category manager,model_ocapi_binding_category,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1
 access_ocapi_binding_shipment_item,ocapi.binding.shipment.item manager,model_ocapi_binding_shipment_item,odoo_connector_api.group_ocapi_connectors_manager,1,1,1,1

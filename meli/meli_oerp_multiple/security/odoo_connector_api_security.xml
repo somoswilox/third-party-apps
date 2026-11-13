@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- [26.392] Nivel «Administrador» del selector Mercado Libre (categoría/privilegio de meli_oerp). Implica
+         Encargado (=> Lector). NO implica odoo_connector_api.group_ocapi_connectors_manager (test_26304). -->
     <record id="group_mercadolibre_connectors_manager" model="res.groups">
         <field name="name">MercadoLibre Manager</field>
-        <field name="category_id" ref="base.module_category_sales_sales"/>
+        <field name="category_id" ref="meli_oerp.module_category_mercadolibre"/>
+        <field name="implied_ids" eval="[(4, ref('meli_oerp.group_mercadolibre_manager'))]"/>
+        <field name="comment">Administrador: cuentas de Mercado Libre Multiple, vinculaciones y configuración. Incluye Encargado y Lector.</field>
         <field name="users" eval="[(4, ref('base.user_root')), (4, ref('base.user_admin'))]"/>
     </record>
 

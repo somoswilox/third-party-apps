@@ -64,5 +64,16 @@
         </record>
 
 
+        <!-- Columna opcional "Límite despacho ML" en la lista de entregas (un caso) -->
+        <record id="vpicktree_meli_handling_limit" model="ir.ui.view">
+            <field name="name">stock.picking.list.meli.handling.limit</field>
+            <field name="model">stock.picking</field>
+            <field name="inherit_id" ref="stock.vpicktree"/>
+            <field name="arch" type="xml">
+                <field name="scheduled_date" position="after">
+                    <field name="meli_handling_limit" optional="hide"/>
+                </field>
+            </field>
+        </record>
     </data>
 </odoo>

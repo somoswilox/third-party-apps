@@ -2,7 +2,7 @@
 <odoo>
     <data>
 
-        <!-- FIX #414 (NipSkin/Inity 520, tickets #414/#415): se eliminaron los records de
+        <!-- FIX #caso-K54 (cliente Y caso-K53, tickets #caso-K54/#caso-K55): se eliminaron los records de
              busqueda sale_order_view_search_inherit_ocapi y _quotation_ocapi. Daban X roja en
              Odoo 19 (el comodelo ocapi.binding.sale_order solo es accesible al grupo manager) y
              el filtro era no-funcional: el M2M ocapi_bindings nunca se popula (el import usa el

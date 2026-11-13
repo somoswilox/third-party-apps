@@ -4,19 +4,33 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: Odoo Server 18.0+e\n"
+"Project-Id-Version: Odoo Server 18.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-11-28 08:24+0000\n"
-"PO-Revision-Date: 2026-03-04 00:00+0000\n"
-"Last-Translator: Moldeo Interactive <info@moldeointeractive.com.ar>\n"
-"Language-Team: Portuguese (Brazil) <pt_BR@li.org>\n"
+"POT-Creation-Date: 2026-10-26 13:46+0000\n"
+"PO-Revision-Date: 2026-10-26 13:46+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
 "Language: pt_BR\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
-"Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"%(applied)d tipo(s) ajustado(s), %(skipped)d omitido(s). Ver nota en el "
+"diario para detalles."
+msgstr ""
+"%(applied)d tipo(s) ajustado(s), %(skipped)d omitido(s). Veja a nota no "
+"diário para detalhes."
 
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "%(posted)d confirmada(s), %(errors)d con error. Ver nota en el diario."
+msgstr "%(posted)d confirmada(s), %(errors)d com erro. Veja a nota no diário."
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice_full
@@ -27,7 +41,69 @@ msgstr "(FULL) Ação sobre a nota fiscal ao confirmar um pedido"
 #: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice_full
 msgid ""
 "(FULL) Acción sobre la factura al confirmar una orden o pedido de venta"
-msgstr "(FULL) Ação sobre a nota fiscal ao confirmar uma ordem ou pedido de venda"
+msgstr ""
+"(FULL) Ação sobre a nota fiscal ao confirmar uma ordem ou pedido de venda"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"<b>No hay facturas posteadas en este diario todavía.</b><br/>La secuencia se"
+" inicializa al postear la primera factura; asegurate de poner el número "
+"correcto a mano en ese momento."
+msgstr ""
+"<b>Ainda não há faturas lançadas neste diário.</b><br/>A sequência é "
+"inicializada ao lançar a primeira fatura; certifique-se de colocar o número "
+"correto manualmente nesse momento."
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "<b>Resultado de la sincronización</b>"
+msgstr "<b>Resultado da sincronização</b>"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"<b>l10n_latam no está disponible en este entorno.</b><br/>Esta función "
+"requiere la localización latinoamericana instalada (Argentina, Colombia, "
+"Chile, Uruguay, etc.)."
+msgstr ""
+"<b>l10n_latam não está disponível neste ambiente.</b><br/>Esta função requer"
+" a localização latino-americana instalada (Argentina, Colômbia, Chile, "
+"Uruguai etc.)."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.actions.act_window,help:meli_oerp_accounting.action_mercadolibre_tax
+msgid ""
+"<strong>Retenciones (ISR, IVA retenido):</strong> para que se apliquen al momento\n"
+"                del pago (sin reducir el total de la factura), instalar el módulo\n"
+"                <em>Withholding Taxes on Payment</em> (l10n_account_withholding_tax) desde\n"
+"                Aplicaciones, y marcar cada impuesto de retención como \"Es retención al pago\"\n"
+"                en Contabilidad &gt; Configuración &gt; Impuestos."
+msgstr ""
+"<strong>Retenções (ISR, IVA retido):</strong> para que sejam aplicadas no momento\n"
+" do pagamento (sem reduzir o total da fatura), instale o módulo\n"
+" <em>Withholding Taxes on Payment</em> (l10n_account_withholding_tax) a partir de\n"
+" Aplicativos e marque cada imposto de retenção como \"É retenção no pagamento\"\n"
+" em Contabilidade &gt; Configuração &gt; Impostos."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "AFIP"
+msgstr "AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__afip_last_number
+msgid "AFIP: último Nº"
+msgstr "AFIP: último nº"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__action_summary
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Acción al aplicar"
+msgstr "Ação ao aplicar"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation
@@ -38,6 +114,11 @@ msgstr "Ação ao confirmar uma ordem ou pedido de venda"
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation
 msgid "Acción al recibir un pedido"
 msgstr "Ação ao receber um pedido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_cancel_mode
+msgid "Acción sobre factura al cancelar pedido"
+msgstr "Ação sobre a fatura ao cancelar pedido"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_order_confirmation_invoice
@@ -60,6 +141,39 @@ msgid "Account Journal for MercadoLibre (SHP)"
 msgstr "Diário Contábil para MercadoLibre (SHP)"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__active
+msgid "Activo"
+msgstr "Ativo"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Adelantar Odoo a %(last)d (próxima: %(next)d)"
+msgstr "Adiantar Odoo para %(last)d (próxima: %(next)d)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_account_payment__meli_rounding_adjusted
+msgid "Ajuste de Redondeo ML"
+msgstr "Ajuste de arredondamento ML"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Aplicado:"
+msgstr "Aplicado:"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Aplicar"
+msgstr "Aplicar"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Archivado"
+msgstr "Arquivado"
+
+#. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_company_page_mercadolibre_accounting
 msgid "Automatic Record Payment"
 msgstr "Registro Automático de Pagamento"
@@ -70,20 +184,153 @@ msgid "Autovalidación"
 msgstr "Autovalidação"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue
+msgid ""
+"Barrido periodico que vuelve a intentar emitir la factura de las ventas de "
+"MercadoLibre pagadas que quedaron sin factura posteada (rechazo de ARCA, "
+"webservice caido, tipo de documento faltante...). Requiere ademas que el "
+"cron 'MELI: reintentar facturas que quedaron sin emitir' este activo."
+msgstr ""
+"Varredura periódica que tenta novamente emitir a fatura das vendas do "
+"Mercado Livre pagas que ficaram sem fatura lançada (rejeição da ARCA, "
+"webservice fora do ar, tipo de documento faltando...). Requer também que o "
+"cron 'MELI: reintentar facturas que quedaron sin emitir' esteja ativo."
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__ticket
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__ticket
 msgid "Boleta"
 msgstr "Boleto"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_tax__state__draft
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_payment_receipt_validation__draft
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
 msgid "Borrador"
 msgstr "Rascunho"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__state
+msgid ""
+"Borrador: importado automáticamente, pendiente de asignar impuesto Odoo. "
+"Confirmado: regla lista con impuesto Odoo asignado."
+msgstr ""
+"Rascunho: importado automaticamente, pendente de atribuir imposto do Odoo. "
+"Confirmado: regra pronta com imposto do Odoo atribuído."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_cancel_fiscal_review
+msgid "Cancelación ML: revisar factura fiscal"
+msgstr "Cancelamento ML: revisar fatura fiscal"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__cancelled
+msgid "Cancelada en ML"
+msgstr "Cancelada no ML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_invoice_cancel_mode__cancel
+msgid "Cancelar factura"
+msgstr "Cancelar fatura"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "Cargo MercadoPago"
+msgstr "Encargo Mercado Pago"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "Cargos / Retenciones"
+msgstr "Encargos / Retenções"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__charge_ids
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+msgid "Cargos MercadoPago"
+msgstr "Tarifas do Mercado Pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_payment_charge
+msgid "Cargos de pago MercadoPago (charges_details)"
+msgstr "Encargos de pagamento Mercado Pago (charges_details)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__meli_supplier_fee_exclude_charges
+msgid "Cargos que NO son comisión"
+msgstr "Encargos que NÃO são comissão"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Cerrar"
+msgstr "Fechar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__charge_id
+msgid "Charge ID"
+msgstr "Charge ID"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Cod. AFIP"
+msgstr "Cód. AFIP"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Comisiones"
+msgstr "Comissões"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__meli_supplier_fee_mode__fee_amount
+msgid "Como lo informa MercadoPago (comisión + cupón)"
+msgstr "Como o Mercado Pago informa (comissão + cupom)"
 
 #. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_res_company
 msgid "Companies"
 msgstr "Empresas"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__company_id
+msgid "Company related to this journal"
+msgstr "Empresa relacionada a este diário"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__company_id
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__company_id
+msgid "Compañía"
+msgstr "Empresa"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__complete
+msgid "Completa"
+msgstr "Completa"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__meli_supplier_fee_mode
+msgid ""
+"Con qué importe se crea el pago de comisión a MercadoLibre S.R.L. (el 'PMERCP … FEE').\n"
+"\n"
+"• Como lo informa MercadoPago (por defecto): usa el 'fee_amount' del pago, que viene con la comisión Y el cupón sumados. Es el comportamiento de siempre; no cambia nada de lo que ya funciona.\n"
+"• Sólo la comisión: usa únicamente los cargos de tipo 'fee'. El cupón queda afuera (tiene su propio tipo de cargo).\n"
+"\n"
+"Cuándo conviene la segunda opción: al conciliar el diario de Mercado Pago, la línea de comisión del extracto es 'comisión + envío' y NO incluye el cupón. Si el pago se crea con el cupón adentro, esa línea no cierra nunca y hay que ajustarla a mano. Para que el cruce cierre del todo suele además hacer falta activar 'Process payments shipping list cost to Supplier ML', que genera el pago del envío.\n"
+"\n"
+"Sólo afecta a los pagos que se creen (o se corrijan) de aquí en adelante: los ya conciliados no se tocan."
+msgstr ""
+"Com qual valor é criado o pagamento de comissão ao MercadoLibre S.R.L. (o 'PMERCP … FEE').\n"
+"\n"
+"• Como o Mercado Pago informa (padrão): usa o 'fee_amount' do pagamento, que vem com a comissão E o cupom somados. É o comportamento de sempre; não muda nada do que já funciona.\n"
+"• Somente a comissão: usa apenas os encargos do tipo 'fee'. O cupom fica de fora (tem seu próprio tipo de encargo).\n"
+"\n"
+"Quando convém a segunda opção: ao conciliar o diário do Mercado Pago, a linha de comissão do extrato é 'comissão + frete' e NÃO inclui o cupom. Se o pagamento for criado com o cupom incluído, essa linha nunca fecha e é preciso ajustá-la manualmente. Para que o cruzamento feche totalmente, costuma ser preciso também ativar 'Process payments shipping list cost to Supplier ML', que gera o pagamento do frete.\n"
+"\n"
+"Afeta somente os pagamentos criados (ou corrigidos) daqui em diante: os já conciliados não são alterados."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+msgid "Con regla asignada"
+msgstr "Com regra atribuída"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_payment_receipt_validation__concile
@@ -96,9 +343,95 @@ msgid "Configuración Contabilidad"
 msgstr "Configuração de Contabilidade"
 
 #. module: meli_oerp_accounting
+#: model_terms:ir.actions.act_window,help:meli_oerp_accounting.action_mercadolibre_tax
+msgid ""
+"Configure el mapeo entre los tipos de retenciones e impuestos de MercadoPago\n"
+"                (ISR, IVA, etc.) y los impuestos de Odoo correspondientes."
+msgstr ""
+"Configure o mapeamento entre os tipos de retenções e impostos do Mercado Pago\n"
+" (ISR, IVA etc.) e os impostos correspondentes do Odoo."
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Confirmación completada"
+msgstr "Confirmação concluída"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Confirmación de borradores post-sincronización AFIP"
+msgstr "Confirmação de rascunhos pós-sincronização AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_tax__state__confirmed
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Confirmado"
+msgstr "Confirmado"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Confirmar"
+msgstr "Confirmar"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Confirmar borradores"
+msgstr "Confirmar rascunhos"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid ""
+"Consulta <code>FECompUltimoAutorizado</code> en ARCA/AFIP para cada tipo\n"
+"                            de documento ya emitido por este diario y propone alinear la secuencia\n"
+"                            de Odoo con la de AFIP. Útil para resolver el error <b>Code 10016</b>\n"
+"                            sin tocar facturas ya posteadas."
+msgstr ""
+"Consulta <code>FECompUltimoAutorizado</code> na ARCA/AFIP para cada tipo\n"
+" de documento já emitido por este diário e propõe alinhar a sequência\n"
+" do Odoo com a da AFIP. Útil para resolver o erro <b>Code 10016</b>\n"
+" sem alterar faturas já lançadas."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_account_journal_form_meli_afip_sync
+msgid ""
+"Consulta FECompUltimoAutorizado en ARCA/AFIP y alinea la"
+"                                   secuencia de Odoo con el último número "
+"autorizado por AFIP.                                   Resuelve el error "
+"Code 10016 sin tocar facturas posteadas.                                   "
+"Sólo aplica a diarios de venta argentinos con Punto de Venta AFIP."
+msgstr ""
+"Consulta FECompUltimoAutorizado na ARCA/AFIP e alinha a sequência do Odoo "
+"com o último número autorizado pela AFIP. Resolve o erro Code 10016 sem "
+"alterar faturas lançadas. Aplica-se somente a diários de venda argentinos "
+"com Ponto de Venda AFIP."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__meli_coupon_discount_on_invoice
+msgid ""
+"Controla cómo se trata el 'coupon_amount' que MercadoLibre financia de su propio costo (no es un descuento del vendedor).\n"
+"\n"
+"☐ Desactivado (por defecto): factura por el precio de venta completo.\n"
+"☑ Activado: aplica el cupón ML como % de descuento en líneas.\n"
+"\n"
+"No afecta descuentos del vendedor ni descuentos manuales."
+msgstr ""
+"Controla como é tratado o 'coupon_amount' que o Mercado Livre financia do próprio custo (não é um desconto do vendedor).\n"
+"\n"
+"☐ Desativado (padrão): fatura pelo preço de venda integral.\n"
+"☑ Ativado: aplica o cupom ML como % de desconto nas linhas.\n"
+"\n"
+"Não afeta descontos do vendedor nem descontos manuais."
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__count
 msgid "Count"
 msgstr "Quantidade"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_payment_charge__charge_type__coupon
+msgid "Coupon (Cupón)"
+msgstr "Coupon (cupom)"
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
@@ -113,7 +446,7 @@ msgstr "Criar Pagamento"
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_tree
 msgid "Crear Pago Envio Proveedor"
-msgstr "Criar Pagamento de Envio ao Fornecedor"
+msgstr "Criar pagamento de frete ao fornecedor"
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_tree
@@ -121,19 +454,150 @@ msgid "Crear Pago Proveedor"
 msgstr "Criar Pagamento ao Fornecedor"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_invoice_cancel_mode__credit_note
+msgid "Crear nota de crédito"
+msgstr "Criar nota de crédito"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.actions.act_window,help:meli_oerp_accounting.action_mercadolibre_tax
+msgid "Crear regla de mapeo de impuestos"
+msgstr "Criar regra de mapeamento de impostos"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__create_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__create_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__create_uid
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__create_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__create_uid
 msgid "Created by"
 msgstr "Criado por"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__create_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__create_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__create_date
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__create_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__create_date
 msgid "Created on"
 msgstr "Criado em"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Criterios de matching con MercadoPago"
+msgstr "Critérios de correspondência com o Mercado Pago"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_invoice_retry_count
+msgid ""
+"Cuantas veces el barrido de re-facturacion de MercadoLibre intento emitir la"
+" factura de esta venta sin conseguirlo. Se resetea a 0 cuando la factura se "
+"postea."
+msgstr ""
+"Quantas vezes a varredura de refaturamento do Mercado Livre tentou emitir a "
+"fatura desta venda sem conseguir. É zerado quando a fatura é lançada."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_max_retries
+msgid ""
+"Cuantas veces se reintenta emitir la factura de una misma venta antes de "
+"marcarla como TRABADA, avisar por actividad y dejar de tocarla."
+msgstr ""
+"Quantas vezes se tenta novamente emitir a fatura de uma mesma venda antes de"
+" marcá-la como TRAVADA, avisar por atividade e deixar de mexer nela."
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_analytic_account_id
 msgid "Cuenta Analítica"
 msgstr "Conta Analítica"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__account_to
+msgid "Cuenta destino"
+msgstr "Conta de destino"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__account_from
+msgid "Cuenta origen"
+msgstr "Conta de origem"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "Cuentas y Mapeo"
+msgstr "Contas e mapeamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__doc_code
+msgid "Código AFIP"
+msgstr "Código AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__meli_coupon_invoice_mode
+msgid ""
+"Cómo se refleja el 'coupon_amount' que MercadoLibre financia de su propio costo (no es un descuento del vendedor):\n"
+"\n"
+"• Precio pleno (por defecto): la factura se emite por el precio de venta completo. Correcto cuando ML reembolsa el cupón al vendedor (su ingreso gravado es el precio pleno). Ni el producto ni el envío llevan el descuento.\n"
+"• Descuento en producto: el cupón se aplica como % de descuento sobre las líneas de producto (la factura coincide con lo que pagó el comprador).\n"
+"• Línea de descuento separada (avanzado): el cupón se imputa como línea(s) de descuento aparte, una por grupo de impuesto, sin tocar producto ni envío. Requiere validación fiscal previa (facturación electrónica AFIP/CL).\n"
+"\n"
+"Reemplaza a la antigua casilla 'Facturar con descuento de cupón'."
+msgstr ""
+"Como é refletido o 'coupon_amount' que o Mercado Livre financia do próprio custo (não é um desconto do vendedor):\n"
+"\n"
+"• Preço integral (padrão): a fatura é emitida pelo preço de venda integral. Correto quando o ML reembolsa o cupom ao vendedor (sua receita tributável é o preço integral). Nem o produto nem o frete recebem o desconto.\n"
+"• Desconto no produto: o cupom é aplicado como % de desconto sobre as linhas de produto (a fatura coincide com o que o comprador pagou).\n"
+"• Linha de desconto separada (avançado): o cupom é lançado como linha(s) de desconto à parte, uma por grupo de imposto, sem alterar produto nem frete. Requer validação fiscal prévia (faturamento eletrônico AFIP/CL).\n"
+"\n"
+"Substitui a antiga opção 'Faturar com desconto de cupom'."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__meli_coupon_invoice_mode__product_discount
+msgid "Descuento en producto"
+msgstr "Desconto no produto"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "Detalle Pago"
+msgstr "Detalhe do pagamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payments__charge_ids
+msgid ""
+"Detalle de cargos (charges_details) del pago de MercadoPago: retenciones "
+"ISR/IVA, comisiones, envío, etc."
+msgstr ""
+"Detalhe de encargos (charges_details) do pagamento do Mercado Pago: "
+"retenções ISR/IVA, comissões, frete etc."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_detail
+msgid "Detalle movimiento"
+msgstr "Detalhe da movimentação"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__source_detail
+msgid "Detalle origen"
+msgstr "Detalhe da origem"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__meli_source_detail
+msgid "Detalle origen MeLi"
+msgstr "Detalhe da origem MeLi"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_pipeline_status
+msgid ""
+"Diagnostico read-only del workflow de la venta de MercadoLibre: "
+"sincronizacion -> factura -> conciliacion -> publicacion a ML. Muestra el "
+"primer paso que quedo incompleto."
+msgstr ""
+"Diagnóstico somente leitura do fluxo da venda do Mercado Livre: "
+"sincronização -> fatura -> conciliação -> publicação no ML. Mostra o "
+"primeiro passo que ficou incompleto."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__journal_id
+msgid "Diario"
+msgstr "Diário"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_journal_id
@@ -146,14 +610,77 @@ msgid "Diario Facturacion Full"
 msgstr "Diário de Faturamento Full"
 
 #. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Diario no encontrado."
+msgstr "Diário não encontrado."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_days
+msgid "Dias hacia atras (reintento de factura)"
+msgstr "Dias para trás (nova tentativa de fatura)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_account_payment__meli_rounding_difference
+msgid "Diferencia de Redondeo"
+msgstr "Diferença de arredondamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_account_payment__meli_rounding_difference
+msgid "Diferencia en centavos/decimales que se ajusto"
+msgstr "Diferença em centavos/decimais que foi ajustada"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__display_name
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__display_name
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__display_name
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__display_name
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__display_name
 msgid "Display Name"
-msgstr "Nome para Exibição"
+msgstr "Nome exibido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__doc_type_id
+msgid "Doc Type ID"
+msgstr "Doc Type ID"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice_dont_send
 msgid "Dont really send, just prepare to post invoice."
-msgstr "Não enviar realmente, apenas preparar a nota fiscal para publicação."
+msgstr "Não enviar de fato, apenas preparar o envio da fatura."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__name
+msgid "Ej: 'tax_withholding-isr', 'meli_fee'"
+msgstr "Ex.: 'tax_withholding-isr', 'meli_fee'"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Ej: isr, iva"
+msgstr "Ex.: isr, iva"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Ej: isr_charge, iva_charge"
+msgstr ""
+"Ex.: isr_charge, iva_charge (copie o valor exato que aparece no encargo "
+"importado do Mercado Pago)"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Ej: tax_withholding-isr"
+msgstr "Ex.: tax_withholding-isr"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_financial_entity
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+msgid "Entidad financiera"
+msgstr "Instituição financeira"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__meli_financial_entity
+msgid "Entidad financiera MeLi"
+msgstr "Instituição financeira MeLi"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_delivered_invoice_draft
@@ -168,10 +695,67 @@ msgid "Entregado > Facturar"
 msgstr "Entregue > Faturar"
 
 #. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+msgid "Envío"
+msgstr "Frete"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Error"
+msgstr "Erro"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__afip_error
+msgid "Error AFIP"
+msgstr "Erro AFIP"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/models/order.py:0
+msgid "Error when sending the CFDI to the PAC:"
+msgstr "Erro ao enviar o CFDI ao PAC:"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__status_message
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__state
+msgid "Estado"
+msgstr "Estado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__tax_status
+msgid "Estado impuesto"
+msgstr "Status do imposto"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_pipeline_status
+msgid "Estado pipeline ML"
+msgstr "Status do pipeline ML"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"Este diario no tiene un Punto de Venta AFIP configurado. Esta acción sólo "
+"aplica a diarios argentinos con facturación electrónica."
+msgstr ""
+"Este diário não tem um Ponto de Venda AFIP configurado. Esta ação só se "
+"aplica a diários argentinos com faturamento eletrônico."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__external_charge_id
+msgid "External Charge ID"
+msgstr "External Charge ID"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__invoice
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__invoice
 msgid "Factura"
 msgstr "Nota Fiscal"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_invoice_stranded
+msgid "Factura ML trabada"
+msgstr "Fatura ML travada"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__invoice_posted
@@ -184,20 +768,142 @@ msgid "Facturar"
 msgstr "Faturar"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__meli_coupon_discount_on_invoice
+msgid "Facturar con descuento de cupón financiado por ML"
+msgstr "Faturar com desconto de cupom financiado pelo ML"
+
+#. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_form
 msgid "Facturar meli"
 msgstr "Faturar meli"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__pending_reconcile
+msgid "Falta conciliar"
+msgstr "Falta conciliar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__pending_invoice
+msgid "Falta facturar"
+msgstr "Falta faturar"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__pending_publish
+msgid "Falta publicar a ML"
+msgstr "Falta publicar no ML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__date_created
+msgid "Fecha creación"
+msgstr "Data de criação"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_payment_charge__charge_type__fee
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_tax__meli_charge_type__fee
+msgid "Fee (Comisión)"
+msgstr "Fee (comissão)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__gap
+msgid "Gap (AFIP − Odoo)"
+msgstr "Diferença (AFIP − Odoo)"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "General"
+msgstr "Geral"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__id
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__id
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__id
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__id
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__id
 msgid "ID"
 msgstr "ID"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__charge_id
+msgid "ID del cargo en MercadoPago (ej: '000000000000-001')"
+msgstr "ID do encargo no Mercado Pago (ex.: '000000000000-001')"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_import_taxes
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_payment_charges_tree
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "Importar Impuestos"
+msgstr "Importar impostos"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__meli_supplier_fee_mode
+msgid "Importe del pago de comisión a MercadoLibre"
+msgstr "Valor do pagamento de comissão ao Mercado Livre"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__account_tax_id
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__account_tax_id
+msgid "Impuesto Odoo"
+msgstr "Imposto Odoo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__account_tax_id
+msgid "Impuesto de Odoo aplicado según la regla de mapeo"
+msgstr "Imposto do Odoo aplicado conforme a regra de mapeamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__account_tax_id
+msgid ""
+"Impuesto de Odoo que corresponde a esta retención/cargo de MercadoLibre. "
+"Para retenciones ISR/IVA: instalar el módulo 'Withholding Taxes on Payment' "
+"(l10n_account_withholding_tax) y marcar el impuesto como 'Retención al pago'"
+" en Contabilidad > Configuración > Impuestos. Esto permite que la retención "
+"se aplique al registrar el pago en vez de reducir el total de la factura."
+msgstr ""
+"Imposto do Odoo que corresponde a esta retenção/encargo do Mercado Livre. "
+"Para retenções ISR/IVA: instale o módulo 'Withholding Taxes on Payment' "
+"(l10n_account_withholding_tax) e marque o imposto como 'Retenção no "
+"pagamento' em Contabilidade > Configuração > Impostos. Isso permite que a "
+"retenção seja aplicada ao registrar o pagamento em vez de reduzir o total da"
+" fatura."
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_orders__invoice_type__unknown
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_sale_order__invoice_type__unknown
 msgid "Indefinido"
 msgstr "Indefinido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_account_payment__meli_rounding_adjusted
+msgid ""
+"Indica que este pago tuvo un ajuste de redondeo para coincidir con el monto "
+"de la orden de venta"
+msgstr ""
+"Indica que este pagamento teve um ajuste de arredondamento para coincidir "
+"com o valor do pedido de venda"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__is_withholding_on_payment
+msgid ""
+"Indica si el impuesto Odoo está configurado como retención al momento del "
+"pago. Requiere el módulo 'Withholding Taxes on Payment' "
+"(l10n_account_withholding_tax) instalado. Activar desde Contabilidad > "
+"Configuración > Impuestos, marcando 'Es retención al pago' en el impuesto "
+"correspondiente. Cuando está activo, la retención se aplica al registrar el "
+"pago (reduciendo el monto en banco) y la factura queda por el total que pagó"
+" el cliente."
+msgstr ""
+"Indica se o imposto do Odoo está configurado como retenção no momento do "
+"pagamento. Requer o módulo 'Withholding Taxes on Payment' "
+"(l10n_account_withholding_tax) instalado. Ative em Contabilidade > "
+"Configuração > Impostos, marcando 'É retenção no pagamento' no imposto "
+"correspondente. Quando ativo, a retenção é aplicada ao registrar o pagamento"
+" (reduzindo o valor no banco) e a fatura fica pelo total que o cliente "
+"pagou."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "Información del cargo"
+msgstr "Informações do encargo"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_created
@@ -207,12 +913,12 @@ msgstr "Nota Fiscal Criada"
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_fiscal_documents
 msgid "Invoice Fiscal Documents"
-msgstr "Documentos Fiscais da Nota Fiscal"
+msgstr "Documentos Fiscais de Nota Fiscal"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_pdf
 msgid "Invoice PDF"
-msgstr "PDF da Nota Fiscal"
+msgstr "PDF de Nota Fiscal"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_posted
@@ -222,7 +928,7 @@ msgstr "Nota Fiscal Publicada"
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_xml
 msgid "Invoice XML"
-msgstr "XML da Nota Fiscal"
+msgstr "XML de Nota Fiscal"
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
@@ -230,41 +936,242 @@ msgid "Invoices"
 msgstr "Notas Fiscais"
 
 #. module: meli_oerp_accounting
-#: model:ir.model,name:meli_oerp_accounting.model_account_move
-msgid "Journal Entry"
-msgstr "Lançamento Contábil"
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "JSON MercadoPago"
+msgstr "JSON Mercado Pago"
 
 #. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "JSON Original"
+msgstr "JSON original"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__raw_json
+msgid "JSON completo del cargo para referencia"
+msgstr "JSON completo do encargo para referência"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__raw_json
+msgid "JSON original"
+msgstr "JSON original"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_account_move
+msgid "Journal Entry"
+msgstr "Lançamento de diário"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_cancel_fiscal_review
+msgid ""
+"La orden fue cancelada en MercadoLibre pero su factura ya está "
+"timbrada/informada al fisco y no puede volver a borrador. Hay que solicitar "
+"la cancelación fiscal (SAT) o emitir una nota de crédito, y luego cancelar "
+"la venta."
+msgstr ""
+"O pedido foi cancelado no Mercado Livre, mas sua fatura já está "
+"autorizada/informada ao fisco e não pode voltar para rascunho. É preciso "
+"solicitar o cancelamento fiscal (SAT) ou emitir uma nota de crédito e, "
+"depois, cancelar a venda."
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/models/order.py:0
+msgid ""
+"La venta %s está CANCELADA en MercadoLibre: no se factura desde el conector."
+" Si igual corresponde una factura, creala a mano desde la venta."
+msgstr ""
+"A venda %s está CANCELADA no Mercado Livre: não é faturada pelo conector. Se"
+" mesmo assim couber uma fatura, crie-a manualmente a partir da venda."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_invoice_stranded
+msgid ""
+"La venta agoto los reintentos automaticos de facturacion y necesita "
+"intervencion manual. El barrido deja de tocarla hasta que alguien la "
+"destrabe."
+msgstr ""
+"A venda esgotou as tentativas automáticas de faturamento e precisa de "
+"intervenção manual. A varredura deixa de mexer nela até que alguém a "
+"destrave."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.actions.act_window,help:meli_oerp_accounting.action_mercadolibre_tax
+msgid ""
+"Las reglas se importan automaticamente en estado Borrador al procesar pagos.\n"
+"                Asigne el impuesto Odoo correspondiente y confirme la regla para que se aplique."
+msgstr ""
+"As regras são importadas automaticamente no estado Rascunho ao processar pagamentos.\n"
+" Atribua o imposto do Odoo correspondente e confirme a regra para que seja aplicada."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__write_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__write_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__write_uid
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__write_uid
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__write_uid
 msgid "Last Updated by"
 msgstr "Última atualização por"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__write_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__write_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__write_date
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_public_wizard__write_date
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__write_date
 msgid "Last Updated on"
 msgstr "Última atualização em"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__meli_coupon_invoice_mode__separate_line
+msgid "Línea de descuento separada (avanzado)"
+msgstr "Linha de desconto separada (avançado)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_meli_afip_sequence_sync_line
+msgid "Línea de sincronización de secuencia AFIP (por tipo de documento)"
+msgstr "Linha de sincronização de sequência AFIP (por tipo de documento)"
+
+#. module: meli_oerp_accounting
+#: model:ir.actions.server,name:meli_oerp_accounting.ir_cron_meli_pipeline_diagnostic_ir_actions_server
+msgid "MELI: diagnostico pipeline de ventas (read-only)"
+msgstr "MELI: diagnóstico do pipeline de vendas (somente leitura)"
+
+#. module: meli_oerp_accounting
+#: model:ir.actions.server,name:meli_oerp_accounting.ir_cron_meli_invoice_requeue_ir_actions_server
+msgid "MELI: reintentar facturas que quedaron sin emitir"
+msgstr "MELI: tentar novamente faturas que ficaram sem emitir"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_search_meli_invoice_stranded
+msgid "ML: factura trabada"
+msgstr "ML: fatura travada"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_search_meli_invoice_stranded
+msgid "ML: reintentando factura"
+msgstr "ML: tentando novamente a fatura"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_invoice_cancel_mode__manual
+msgid "Manual (no hacer nada)"
+msgstr "Manual (não fazer nada)"
+
+#. module: meli_oerp_accounting
+#: model:ir.ui.menu,name:meli_oerp_accounting.menu_mercadolibre_tax
+msgid "Mapeo Impuestos MeLi"
+msgstr "Mapeamento de impostos MeLi"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Mapeo a Odoo"
+msgstr "Mapeamento para o Odoo"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Mapeo de Impuesto MercadoLibre"
+msgstr "Mapeamento de imposto do Mercado Livre"
+
+#. module: meli_oerp_accounting
+#: model:ir.actions.act_window,name:meli_oerp_accounting.action_mercadolibre_tax
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Mapeo de Impuestos MeLi"
+msgstr "Mapeamento de impostos MeLi"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_tax
+msgid "Mapeo de impuestos MercadoLibre a Odoo"
+msgstr "Mapeamento de impostos do Mercado Livre para o Odoo"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_set_fully_invoice
 msgid ""
 "Marcar como completamente facturado la orden correspondiente (incluido linea"
 " de envio)"
-msgstr "Marcar como totalmente faturada a ordem correspondente (incluindo linha de envio)"
+msgstr ""
+"Marcar o pedido correspondente como totalmente faturado (incluindo a linha "
+"de frete)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_max_retries
+msgid "Max reintentos por venta (factura)"
+msgstr "Máx. tentativas por venda (fatura)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_limit
+msgid "Max ventas por ciclo (reintento de factura)"
+msgstr "Máx. vendas por ciclo (nova tentativa de fatura)"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_res_partner
 msgid "MercadoLibre Partner"
-msgstr "Parceiro do MercadoLibre"
+msgstr "Contato de MercadoLibre"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_res_partner_shp
 msgid "MercadoLibre Partner (SHP)"
-msgstr "Parceiro do MercadoLibre (SHP)"
+msgstr "Contato de MercadoLibre (SHP)"
 
 #. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_public_wizard
 msgid "Mercadolibre publicar ordenes - Wizard"
 msgstr "MercadoLibre publicar ordens - Assistente"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "Metadata"
+msgstr "Metadados"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_invoice_last_retry
+msgid ""
+"Momento del ultimo intento del barrido de re-facturacion. Se usa para el "
+"backoff: no se vuelve a intentar antes de que pase la espera "
+"correspondiente."
+msgstr ""
+"Momento da última tentativa da varredura de refaturamento. Usado para o "
+"backoff: não se tenta novamente antes de passar a espera correspondente."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__base_amount
+msgid "Monto base"
+msgstr "Valor base"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__base_amount
+msgid "Monto base sobre el cual se calcula el cargo"
+msgstr "Valor base sobre o qual o encargo é calculado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__net_received_amount
+msgid "Monto neto recibido"
+msgstr "Valor líquido recebido"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__amount_original
+msgid "Monto original"
+msgstr "Valor original"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__amount_refunded
+msgid "Monto reembolsado"
+msgstr "Valor reembolsado"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_form
+msgid "Montos"
+msgstr "Valores"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Nada — ya está alineado"
+msgstr "Nada — já está alinhado"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__sale_order__meli_pipeline_status__not_meli
+msgid "No es venta ML"
+msgstr "Não é venda ML"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__manual
@@ -273,52 +1180,181 @@ msgid "No facturar"
 msgstr "Não faturar"
 
 #. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"No había nada para ajustar — todas las secuencias ya estaban alineadas con "
+"AFIP."
+msgstr ""
+"Não havia nada para ajustar — todas as sequências já estavam alinhadas com a"
+" AFIP."
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"No hay facturas borrador con nombre asignado para confirmar en este diario."
+msgstr ""
+"Não há faturas em rascunho com nome atribuído para confirmar neste diário."
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "No se pudo abrir conexión con AFIP"
+msgstr "Não foi possível abrir conexão com a AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__name
+msgid "Nombre"
+msgstr "Nome"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__meli_charge_name
+msgid "Nombre de cargo MeLi"
+msgstr "Nome do encargo MeLi"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__name
+msgid "Nombre del cargo"
+msgstr "Nome do encargo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__name
+msgid "Nombre descriptivo para esta regla de mapeo de impuesto"
+msgstr "Nome descritivo para esta regra de mapeamento de imposto"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__meli_charge_name
+msgid ""
+"Nombre exacto del cargo en charges_details, ej: 'tax_withholding-isr', "
+"'tax_withholding-iva'. Dejar vacío para matchear cualquier cargo del tipo "
+"seleccionado."
+msgstr ""
+"Nome exato do encargo em charges_details, ex.: 'tax_withholding-isr', "
+"'tax_withholding-iva'. Deixe vazio para corresponder a qualquer encargo do "
+"tipo selecionado."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__meli_supplier_fee_exclude_charges
+msgid ""
+"Nombres de cargo que NO se suman al pago de comisión a MercadoLibre S.R.L. cuando el importe se calcula con 'Sólo la comisión'. Separados por comas.\n"
+"\n"
+"Por defecto queda afuera 'financing_fee' (el costo de la financiación en cuotas): MercadoPago no lo incluye en la línea de comisión del extracto, así que sumarlo al pago volvería a dejar el cruce sin cerrar.\n"
+"\n"
+"La comisión real son los cargos 'meli_percentage_fee' y 'flat_fee'. Si en su operación aparece algún otro cargo de tipo 'fee' que tampoco viaja en la línea de comisión del extracto, agréguelo acá.\n"
+"\n"
+"Vacío = se suman todos los cargos de tipo 'fee'."
+msgstr ""
+"Nomes de encargo que NÃO são somados ao pagamento de comissão ao MercadoLibre S.R.L. quando o valor é calculado com 'Somente a comissão'. Separados por vírgulas.\n"
+"\n"
+"Por padrão fica de fora 'financing_fee' (o custo do financiamento em parcelas): o Mercado Pago não o inclui na linha de comissão do extrato, então somá-lo ao pagamento deixaria novamente o cruzamento sem fechar.\n"
+"\n"
+"A comissão real são os encargos 'meli_percentage_fee' e 'flat_fee'. Se na sua operação aparecer algum outro encargo do tipo 'fee' que também não venha na linha de comissão do extrato, adicione-o aqui.\n"
+"\n"
+"Vazio = somam-se todos os encargos do tipo 'fee'."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Odoo"
+msgstr "Odoo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__odoo_last_number
+msgid "Odoo: último Nº"
+msgstr "Odoo: último nº"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Omitido:"
+msgstr "Omitido:"
+
+#. module: meli_oerp_accounting
 #: model:account.payment.method,name:meli_oerp_accounting.account_payment_method_manual_in
 #: model:account.payment.method,name:meli_oerp_accounting.account_payment_method_manual_out
 msgid "Online"
 msgstr "Online"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__order_id
+msgid "Orden MeLi"
+msgstr "Pedido MeLi"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__source
+msgid "Origen"
+msgstr "Origem"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_payment_charge__charge_type__other
+msgid "Otro"
+msgstr "Outro"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/models/order.py:0
+msgid "Outstanding credits"
+msgstr "Créditos pendentes"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/models/order.py:0
+msgid "Outstanding debits"
+msgstr "Débitos pendentes"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_pdf_filename
 msgid "PDF Filename"
-msgstr "Nome do Arquivo PDF"
+msgstr "Nome de Arquivo PDF"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_invoice_draft
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_invoice_draft
 msgid "Pagado > Factura borrador"
-msgstr "Pago > Rascunho de Nota Fiscal"
+msgstr "Pago > Fatura em rascunho"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice__paid_confirm_invoice
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation_invoice_full__paid_confirm_invoice
 msgid "Pagado > Facturar"
-msgstr "Pago > Faturar"
+msgstr "Pagamento > Faturar"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation__paid_confirm_with_invoice
 msgid "Pagado>Facturado"
-msgstr "Pago>Faturado"
+msgstr "Pagamento>Faturado"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_order_confirmation__paid_delivered_with_invoice
 msgid "Pagado>Facturado y Entregado"
-msgstr "Pago>Faturado e Entregue"
+msgstr "Pago > Faturado e entregue"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_payment_id
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
 msgid "Pago"
 msgstr "Pagamento"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_supplier_payment_shipment_id
 msgid "Pago Envio a Proveedor"
-msgstr "Pagamento de Envio ao Fornecedor"
+msgstr "Pagamento de frete ao fornecedor"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__payment_id
+msgid "Pago MeLi"
+msgstr "Pagamento MeLi"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "Pago MercadoPago"
+msgstr "Pagamento Mercado Pago"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__account_supplier_payment_id
 msgid "Pago a Proveedor"
-msgstr "Pagamento ao Fornecedor"
+msgstr "Pagamento a Fornecedor"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_account_payment__meli_payment_id
@@ -328,12 +1364,30 @@ msgstr "Pagamento do MP"
 #. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_payments
 msgid "Pagos en MercadoLibre"
-msgstr "Pagamentos no MercadoLibre"
+msgstr "Pagamentos no Mercado Livre"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_payments_charges_form
+msgid "Pagos en Odoo"
+msgstr "Pagamentos no Odoo"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid ""
+"Para retenciones (ISR, IVA retenido): instalar el módulo\n"
+"                                <strong>Withholding Taxes on Payment</strong>\n"
+"                                (l10n_account_withholding_tax) y marcar el impuesto como\n"
+"                                \"Es retención al pago\" en Contabilidad &gt; Configuración &gt; Impuestos."
+msgstr ""
+"Para retenções (ISR, IVA retido): instale o módulo\n"
+" <strong>Withholding Taxes on Payment</strong>\n"
+" (l10n_account_withholding_tax) e marque o imposto como\n"
+" \"É retenção no pagamento\" em Contabilidade &gt; Configuração &gt; Impostos."
 
 #. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_account_payment_method
 msgid "Payment Methods"
-msgstr "Métodos de Pagamento"
+msgstr "Formas de pagamento"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_payment_receipt_validation
@@ -353,27 +1407,50 @@ msgstr "Configuração de pagamentos"
 #. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_mercadolibre_orders
 msgid "Pedidos en MercadoLibre"
-msgstr "Pedidos no MercadoLibre"
+msgstr "Pedidos no Mercado Livre"
 
 #. module: meli_oerp_accounting
-#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice
-msgid "Send Invoice"
-msgstr "Enviar Nota Fiscal"
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__rate
+msgid "Porcentaje aplicado sobre el monto base"
+msgstr "Percentual aplicado sobre o valor base"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid ""
+"Postea (confirma) todas las facturas en estado Borrador que ya tienen un "
+"número                                   de secuencia asignado (no son '/')."
+" Útil para re-enviar a AFIP las facturas                                   "
+"que fallaron con Code 10016 una vez que la secuencia fue alineada."
+msgstr ""
+"Lança (confirma) todas as faturas em estado Rascunho que já têm um número de"
+" sequência atribuído (não são '/'). Útil para reenviar à AFIP as faturas que"
+" falharam com Code 10016 depois que a sequência foi alinhada."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__meli_coupon_invoice_mode__full
+msgid "Precio pleno (sin descuento de cupón)"
+msgstr "Preço integral (sem desconto de cupom)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_charges
+msgid "Procesar retenciones/cargos"
+msgstr "Processar retenções/encargos"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_supplier_fea
 msgid "Process payments fea to Supplier ML"
-msgstr "Processar pagamentos de comissões ao Fornecedor ML"
+msgstr "Processar pagamentos de comissões a Fornecedor ML"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_customer
 msgid "Process payments from Customer"
-msgstr "Processar pagamentos do Cliente"
+msgstr "Processar pagamentos de Cliente"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_process_payments_supplier_shipment
 msgid "Process payments shipping list cost to Supplier ML"
-msgstr "Processar pagamentos de custo de frete ao Fornecedor ML"
+msgstr ""
+"Processar o custo de lista do frete dos pagamentos para o fornecedor ML"
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
@@ -381,14 +1458,103 @@ msgid "Publicar Facturas"
 msgstr "Publicar Notas Fiscais"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__pos_number
+msgid "Punto de Venta"
+msgstr "Ponto de venda"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_invoice_cancel_mode
+msgid ""
+"Qué hacer con las facturas cuando MercadoLibre cancela un pedido:\n"
+"- Manual: no toca las facturas, gestionar a mano\n"
+"- Revertir a borrador: pasa la factura a borrador (solo si no tiene pagos conciliados)\n"
+"- Cancelar: cancela la factura directamente\n"
+"- Nota de crédito: crea una nota de crédito de reverso (opción más segura contablemente)"
+msgstr ""
+"O que fazer com as faturas quando o Mercado Livre cancela um pedido:\n"
+"- Manual: não altera as faturas, gerenciar manualmente\n"
+"- Reverter para rascunho: passa a fatura para rascunho (somente se não tiver pagamentos conciliados)\n"
+"- Cancelar: cancela a fatura diretamente\n"
+"- Nota de crédito: cria uma nota de crédito de estorno (opção mais segura contabilmente)"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Re-consultar AFIP"
+msgstr "Reconsultar AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__meli_tax_id
+msgid "Regla de mapeo"
+msgstr "Regra de mapeamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__meli_tax_id
+msgid "Regla de mercadolibre.tax que mapeó este cargo a un impuesto Odoo"
+msgstr ""
+"Regra de mercadolibre.tax que mapeou este encargo para um imposto do Odoo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue
+msgid "Reintentar facturas que fallaron"
+msgstr "Tentar novamente faturas que falharam"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_company_page_mercadolibre_accounting
+msgid "Reintento de facturas fallidas"
+msgstr "Nova tentativa de faturas com falha"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_invoice_retry_count
+msgid "Reintentos de facturacion ML"
+msgstr "Tentativas de faturamento ML"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_invoice_journal_report_id
 msgid "Reporte de factura"
 msgstr "Relatório de nota fiscal"
 
 #. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Retenciones"
+msgstr "Retenções"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__is_withholding_on_payment
+msgid "Retención al pago"
+msgstr "Retenção no pagamento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__mercadolibre_invoice_cancel_mode__draft
+msgid "Revertir factura a borrador"
+msgstr "Reverter fatura para rascunho"
+
+#. module: meli_oerp_accounting
 #: model:ir.model,name:meli_oerp_accounting.model_sale_order
 msgid "Sales Order"
-msgstr "Pedido de Venda"
+msgstr "Pedido de venda"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Saltear (no se pudo consultar AFIP)"
+msgstr "Pular (não foi possível consultar a AFIP)"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Saltear (sin factura posteada previa)"
+msgstr "Pular (sem fatura lançada anterior)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__sequence
+msgid "Secuencia"
+msgstr "Sequência"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice
+msgid "Send Invoice"
+msgstr "Enviar Nota Fiscal"
 
 #. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__mercadolibre_set_fully_invoice
@@ -396,14 +1562,232 @@ msgid "Set Fully Invoice"
 msgstr "Marcar como Totalmente Faturado"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_payment_charge__charge_type__shipping
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_tax__meli_charge_type__shipping
+msgid "Shipping (Envío)"
+msgstr "Shipping (frete)"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Sin borradores"
+msgstr "Sem rascunhos"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+msgid "Sin regla asignada"
+msgstr "Sem regra atribuída"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Sincronización completada"
+msgstr "Sincronização concluída"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid "Sincronización de secuencia con AFIP"
+msgstr "Sincronização de sequência com a AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_process_charges
+msgid ""
+"Sincronizar charges_details de MercadoPago (retenciones ISR/IVA, comisiones "
+"detalladas, etc.)"
+msgstr ""
+"Sincronizar charges_details do Mercado Pago (retenções ISR/IVA, comissões "
+"detalhadas etc.)"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+#: model:ir.actions.server,name:meli_oerp_accounting.action_meli_afip_sequence_sync_wizard
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_account_journal_form_meli_afip_sync
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid "Sincronizar secuencia con AFIP"
+msgstr "Sincronizar sequência com a AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model,name:meli_oerp_accounting.model_meli_afip_sequence_sync_wizard
+msgid "Sincronizar secuencia de diario con AFIP"
+msgstr "Sincronizar sequência do diário com a AFIP"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payments__fee_charges_amount
+msgid "Suma de cargos tipo fee desde charges_details"
+msgstr "Soma dos encargos do tipo fee a partir de charges_details"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payments__shipping_charges_amount
+msgid "Suma de cargos tipo shipping desde charges_details"
+msgstr "Soma dos encargos do tipo shipping a partir de charges_details"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payments__tax_withholding_amount
+msgid "Suma de cargos tipo tax (retenciones ISR, IVA, etc.)"
+msgstr "Soma dos encargos do tipo tax (retenções ISR, IVA etc.)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__res_company__meli_supplier_fee_mode__charges_only
+msgid "Sólo la comisión (cargos de tipo 'fee')"
+msgstr "Somente a comissão (encargos do tipo 'fee')"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__rate
+msgid "Tasa (%)"
+msgstr "Taxa (%)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_tax__meli_charge_type__tax
+msgid "Tax (Retención / Withholding)"
+msgstr "Tax (retenção / withholding)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields.selection,name:meli_oerp_accounting.selection__mercadolibre_payment_charge__charge_type__tax
+msgid "Tax (Retención)"
+msgstr "Tax (retenção)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_sale_order__meli_invoice_last_error
+msgid ""
+"Texto del ultimo error al intentar emitir la factura de esta venta de "
+"MercadoLibre (rechazo de ARCA, tipo de documento faltante, webservice "
+"caido...)."
+msgstr ""
+"Texto do último erro ao tentar emitir a fatura desta venda do Mercado Livre "
+"(rejeição da ARCA, tipo de documento faltando, webservice fora do ar...)."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__charge_type
+msgid "Tipo"
+msgstr "Tipo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__doc_type_name
+msgid "Tipo de Documento"
+msgstr "Tipo de Documento"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_payment_charge_search
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_search
+msgid "Tipo de cargo"
+msgstr "Tipo de encargo"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_tax__meli_charge_type
+msgid "Tipo de cargo MeLi"
+msgstr "Tipo de encargo MeLi"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__meli_charge_type
+msgid "Tipo de cargo en charges_details del JSON de MercadoPago"
+msgstr "Tipo de encargo em charges_details do JSON do Mercado Pago"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_type
 msgid "Tipo de factura"
 msgstr "Tipo de nota fiscal"
 
 #. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_type
+msgid "Tipo movimiento"
+msgstr "Tipo de movimentação"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_wizard__line_ids
+msgid "Tipos de documento"
+msgstr "Tipos de documento"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_limit
+msgid ""
+"Tope de ventas a re-facturar por ciclo del cron, para acotar el uso del "
+"webservice fiscal y el tiempo del cron."
+msgstr ""
+"Limite de vendas a refaturar por ciclo do cron, para limitar o uso do "
+"webservice fiscal e o tempo do cron."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__fee_charges_amount
+msgid "Total comisiones (charges)"
+msgstr "Total de comissões (charges)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__shipping_charges_amount
+msgid "Total envío (charges)"
+msgstr "Total de frete (charges)"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_payments__tax_withholding_amount
+msgid "Total retenciones"
+msgstr "Total de retenções"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_res_company__meli_coupon_invoice_mode
+msgid "Tratamiento del cupón ML en la factura"
+msgstr "Tratamento do cupom ML na fatura"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_post_invoice
 msgid "Try to post invoice, when order is revisited or refreshed."
-msgstr "Tentar publicar a nota fiscal quando o pedido for revisado ou atualizado."
+msgstr ""
+"Tentar publicar nota fiscal quando o pedido for revisado ou atualizado."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_invoice_last_error
+msgid "Ultimo error de facturacion ML"
+msgstr "Último erro de faturamento ML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_sale_order__meli_invoice_last_retry
+msgid "Ultimo reintento de facturacion ML"
+msgstr "Última tentativa de faturamento ML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__meli_financial_entity
+msgid ""
+"Valor de metadata.mov_financial_entity, ej: 'isr', 'iva'. Dejar vacío para "
+"matchear cualquier entidad del tipo seleccionado."
+msgstr ""
+"Valor de metadata.mov_financial_entity, ex.: 'isr', 'iva'. Deixe vazio para "
+"corresponder a qualquer entidade do tipo selecionado."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_tax__meli_source_detail
+msgid ""
+"Valor de metadata.source_detail, ej: 'isr_charge', 'iva_charge'. Dejar vacío"
+" para no filtrar por este campo."
+msgstr ""
+"Valor de metadata.source_detail, ex.: 'isr_charge', 'iva_charge'. Deixe "
+"vazio para não filtrar por este campo."
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_res_company__mercadolibre_invoice_requeue_days
+msgid ""
+"Ventana en dias (por fecha del pedido) de ventas a considerar en el barrido "
+"de re-facturacion."
+msgstr ""
+"Janela em dias (pela data do pedido) de vendas a considerar na varredura de "
+"refaturamento."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_search_meli_invoice_stranded
+msgid ""
+"Ventas de MercadoLibre cuya factura fallo al menos una vez y el barrido "
+"sigue reintentando."
+msgstr ""
+"Vendas do Mercado Livre cuja fatura falhou pelo menos uma vez e a varredura "
+"continua tentando novamente."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_search_meli_invoice_stranded
+msgid ""
+"Ventas de MercadoLibre que agotaron los reintentos automaticos de "
+"facturacion y necesitan revision manual."
+msgstr ""
+"Vendas do Mercado Livre que esgotaram as tentativas automáticas de "
+"faturamento e precisam de revisão manual."
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_invoices_form
@@ -411,11 +1795,105 @@ msgid "Verificar Facturas"
 msgstr "Verificar Notas Fiscais"
 
 #. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_mercadolibre_tax_form
+msgid "Volver a borrador"
+msgstr "Voltar para rascunho"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__wizard_id
+msgid "Wizard"
+msgstr "Assistente"
+
+#. module: meli_oerp_accounting
 #: model:ir.model.fields,field_description:meli_oerp_accounting.field_mercadolibre_orders__invoice_xml_filename
 msgid "XML Filename"
-msgstr "Nome do Arquivo XML"
+msgstr "Nome de Arquivo XML"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__account_from
+msgid "accounts.from"
+msgstr "accounts.from"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__account_to
+msgid "accounts.to"
+msgstr "accounts.to"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_detail
+msgid "metadata.mov_detail"
+msgstr "metadata.mov_detail"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_financial_entity
+msgid "metadata.mov_financial_entity (ej: 'isr', 'iva')"
+msgstr "metadata.mov_financial_entity (ex.: 'isr', 'iva')"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__mov_type
+msgid "metadata.mov_type (ej: 'expense')"
+msgstr "metadata.mov_type (ex.: 'expense')"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__source
+msgid "metadata.source"
+msgstr "metadata.source"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__source_detail
+msgid "metadata.source_detail (ej: 'isr_charge', 'iva_charge')"
+msgstr "metadata.source_detail (ex.: 'isr_charge', 'iva_charge')"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payment_charge__tax_status
+msgid "metadata.tax_status (ej: 'applied')"
+msgstr "metadata.tax_status (ex.: 'applied')"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,help:meli_oerp_accounting.field_mercadolibre_payments__net_received_amount
+msgid "transaction_details.net_received_amount del JSON de MercadoPago"
+msgstr "transaction_details.net_received_amount do JSON do Mercado Pago"
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid ""
+"¿Confirmás aplicar los ajustes de secuencia? Esto modifica el"
+"                                      sequence_number de la última factura "
+"posteada de cada tipo                                      afectado, pero no"
+" altera ningún dato fiscal ni emite facturas"
+"                                      nuevas."
+msgstr ""
+"Confirma aplicar os ajustes de sequência? Isto modifica o sequence_number da"
+" última fatura lançada de cada tipo afetado, mas não altera nenhum dado "
+"fiscal nem emite faturas novas."
+
+#. module: meli_oerp_accounting
+#: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.view_meli_afip_sequence_sync_wizard_form
+msgid ""
+"¿Confirmás postear todas las facturas borrador con número asignado de este "
+"diario?                                      Esto las enviará a AFIP. "
+"Asegurate de haber aplicado el ajuste de secuencia primero."
+msgstr ""
+"Confirma lançar todas as faturas em rascunho com número atribuído deste "
+"diário? Isto as enviará à AFIP. Certifique-se de ter aplicado o ajuste de "
+"sequência primeiro."
 
 #. module: meli_oerp_accounting
 #: model_terms:ir.ui.view,arch_db:meli_oerp_accounting.meli_oerp_acct_orders_form
 msgid "¿Está seguro que quiere crear una factura desde meli_oerp?"
 msgstr "Tem certeza que deseja criar uma nota fiscal a partir do meli_oerp?"
+
+#. module: meli_oerp_accounting
+#: model:ir.model.fields,field_description:meli_oerp_accounting.field_meli_afip_sequence_sync_line__last_move_id
+msgid "Última factura posteada en Odoo"
+msgstr "Última fatura lançada no Odoo"
+
+#. module: meli_oerp_accounting
+#. odoo-python
+#: code:addons/meli_oerp_accounting/wizard/afip_sequence_sync.py:0
+msgid ""
+"⚠ Odoo va adelante de AFIP por %d. Retroceder es riesgoso; revisar "
+"manualmente antes de aplicar."
+msgstr ""
+"⚠ O Odoo está à frente da AFIP por %d. Retroceder é arriscado; revise "
+"manualmente antes de aplicar."

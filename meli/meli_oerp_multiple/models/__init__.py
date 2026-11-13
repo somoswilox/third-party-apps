@@ -18,13 +18,16 @@ from . import sale
 from . import cron_execution
 from . import connection_account
 from . import connection_binding
+from . import binding_rels
 from . import connection_configuration
+from . import post_sale_auto
 from . import connection_notification
 from . import wizards
 from . import product_image
 from . import stock_move
 from . import questions
 from . import connection_account_kpis
+from . import meli_wh_stock
 #from . import connection_account_graph_fields
 
 # Optional: MRP BOM extensions (only if mrp module is installed)
@@ -32,3 +35,4 @@ try:
     from . import mrp_bom
 except ImportError:
     pass
+from . import meli_secrets_guard

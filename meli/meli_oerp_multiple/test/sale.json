@@ -6,19 +6,19 @@
     }],
     "channel": "2",
     "contact": {
-        "name": "OLIVERWALTER",
-        "contactPerson": "walter olivero",
-        "mail": "woliver.78d0f8+2-ogiytmnbuhe4tgnzw@mail.mercadolibre.com",
-        "phoneNumber": " -02944293039",
-        "taxId": "24827151",
+        "name": "COMPRADOREJEMPLO",
+        "contactPerson": "comprador ejemplo",
+        "mail": "comprador@example.com",
+        "phoneNumber": "0000000000",
+        "taxId": "00000000",
         "location": {
-            "streetName": "Independencia ote",
-            "streetNumber": "65",
-            "addressNotes": "Referencia: Fachada Rosita , es una paleteria la michoacana Entre: Libertad y Juan pablo",
+            "streetName": "Calle Ejemplo",
+            "streetNumber": "1",
+            "addressNotes": "Referencia: ejemplo",
             "state": "Jalisco",
-            "city": "Quitupan",
+            "city": "Ciudad Ejemplo",
             "neighborhood": "Centro",
-            "zipCode": "49570"
+            "zipCode": "00000"
         },
         "type": "Customer",
         "profile": {
@@ -27,18 +27,18 @@
         },
         "billingInfo": {
             "docType": "RFC",
-            "docNumber": "24827151",
-            "streetName": "Independencia ote",
-            "streetNumber": "65",
-            "zipCode": "49570",
-            "city": "Quitupan",
+            "docNumber": "00000000",
+            "streetName": "Calle Ejemplo",
+            "streetNumber": "1",
+            "zipCode": "00000",
+            "city": "Ciudad Ejemplo",
             "state": "Jalisco",
             "neighborhood": "Centro",
             "businessName": "",
             "stateRegistration": "",
             "taxPayerType": "",
-            "firstName": "walter",
-            "lastName": "olivero"
+            "firstName": "comprador",
+            "lastName": "ejemplo"
         },
         "id": 13519376
     },
@@ -149,7 +149,7 @@
         "status": "Approved",
         "method": "MercadoPago",
         "integration": {
-            "integrationId": 5871956570,
+            "integrationId": 5296019495,
             "app": 2
         },
         "transactionFee": 85.67,
@@ -168,7 +168,7 @@
         "status": "Approved",
         "method": "MercadoPago",
         "integration": {
-            "integrationId": 5872816710,
+            "integrationId": 5949924832,
             "app": 2
         },
         "transactionFee": 85.67,

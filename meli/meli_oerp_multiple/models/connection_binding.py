@@ -23,6 +23,60 @@ from odoo import fields, models, api
 from odoo.tools.translate import _
 import logging
 _logger = logging.getLogger(__name__)
+
+
+# 26.278 (#caso-K31): publicar SOLO el plazo de entrega (sale_term MANUFACTURING_TIME).
+# Pedido de un cliente (16-sep): "Actualizar" reenvia la ficha completa y la validacion
+# local del titulo (60 caracteres) aborta la operacion entera, aunque el item ya esta
+# publicado. Medido entonces contra la API: PUT /items/{id} con solo sale_terms
+# MANUFACTURING_TIME es ACEPTADO y deja el titulo intacto. Por las dudas de que ML
+# reemplace la lista entera de sale_terms, se LEEN los vigentes y se reenvian junto al
+# plazo (la garantia no se pierde). Funcion pura: se prueba sin red.
+def meli_sale_terms_with_manufacturing_time(sale_terms, value):
+    out = []
+    for t in (sale_terms or []):
+        if not isinstance(t, dict) or not t.get("id") or t.get("id") == "MANUFACTURING_TIME":
+            continue
+        if t.get("value_id"):
+            out.append({"id": t["id"], "value_id": t["value_id"]})
+        elif t.get("value_name"):
+            out.append({"id": t["id"], "value_name": t["value_name"]})
+    out.append({"id": "MANUFACTURING_TIME", "value_name": value})
+    return out
+
+
+def _meli_post_manufacturing_time(meli, meli_id, value):
+    """GET del item -> PUT solo de sale_terms. :return: {} en OK, dict con 'error' si no."""
+    try:
+        response = meli.get("/items/" + str(meli_id), {"access_token": meli.access_token})
+        rjson = response.json() if response is not None else {}
+        if not isinstance(rjson, dict) or rjson.get("error"):
+            return rjson if isinstance(rjson, dict) else {"error": "get_item", "message": str(rjson)}
+        body = {"sale_terms": meli_sale_terms_with_manufacturing_time(rjson.get("sale_terms"), value)}
+        response = meli.put_mini("/items/" + str(meli_id), body, {"access_token": meli.access_token})
+        pjson = response.json() if response is not None else {}
+        if isinstance(pjson, dict) and pjson.get("error"):
+            _logger.error("post manufacturing_time /items/%s: %s", meli_id, pjson)
+            return pjson
+        _logger.info("Posted manufacturing_time ok /items/%s: %s", meli_id, value)
+        return {}
+    except Exception as e:
+        _logger.error("post manufacturing_time exception /items/%s: %s", meli_id, e)
+        return {"error": "exception", "message": str(e)}
+
+
+def _meli_manufacturing_time_action_result(res, count):
+    if isinstance(res, dict) and res.get("type"):
+        return res   # redirect de login
+    if isinstance(res, dict) and res.get("error"):
+        raise UserError("MercadoLibre no aceptó el plazo de entrega: %s" % (
+            res.get("message") or res.get("error")))
+    return {
+        "type": "ir.actions.client", "tag": "display_notification",
+        "params": {"title": "Plazo de entrega",
+                   "message": "Plazo publicado en %s publicación(es)." % count,
+                   "type": "success", "sticky": False},
+    }
 import pdb
 #from .warning import warning
 import requests
@@ -31,9 +85,11 @@ import json
 import ast
 from . import versions
 from .versions import *
+from odoo.addons.meli_oerp.models.versions import meli_message_post, meli_payment_method_line_for, meli_money_block_post
 from odoo.addons.meli_oerp.models.versions import *
 
 from odoo.exceptions import UserError, ValidationError
+from odoo.addons.meli_oerp_accounting.models.versions import payment_group_post as _meli_payment_post
 from odoo.addons.meli_oerp.models.versions import *
 
 
@@ -100,6 +156,32 @@ def _meli_permalink_from_id(meli_id, site_urls):
     return site_urls.get("articulo", "https://www.mercadolibre.com") + "/" + meli_id[:k] + "-" + meli_id[k:]
 
 
+#: Estados de item de ML que el Selection `meli_last_status` sabe guardar.
+#: ML tambien devuelve `payment_required` y `not_yet_active`, que NO estan en el
+#: Selection: escribirlos reventaria con ValueError, asi que se descartan (con log).
+MELI_ITEM_STATUSES = ('active', 'paused', 'closed', 'deleted', 'not_found', 'under_review', 'inactive')
+
+
+def meli_status_from_rjson(rjson):
+    """Estado de item ML listo para escribir en `meli_last_status`, o None.
+
+    26.123 (caso-K32 cliente N): el binding nacia SIN `meli_last_status` porque el
+    publish no lo estampaba, y `meli_status` (no stored) cae a "unknown" => la
+    ficha no muestra el icono/los botones de ML. El dato ya viene en la respuesta
+    del POST/PUT y en el re-fetch que el publish YA hace: no cuesta un GET extra.
+    """
+    if not rjson or not isinstance(rjson, dict):
+        return None
+    status = rjson.get('status')
+    if not status:
+        return None
+    status = str(status).strip().lower()
+    if status not in MELI_ITEM_STATUSES:
+        _logger.info("meli_status_from_rjson: status '%s' fuera del Selection meli_last_status, no se guarda", status)
+        return None
+    return status
+
+
 class MercadoLibreConnectionBinding(models.Model):
 
     _name = "mercadolibre.binding"
@@ -148,6 +230,12 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
     meli_title = fields.Char(string='Nombre del producto en Mercado Libre',size=256,index=True)
     meli_family_name = fields.Char(string='Nombre de la familia del user product en Mercado Libre',size=256)
     meli_family_id = fields.Char(string='ID de familia ML (user_product_seller)',size=128,index=True)
+    # #caso-K21 (26.371): con qué camino se publicó. 'classic' = «Publicar» de siempre; 'family' = «Publicar
+    # (nuevo)»: modo familia en cuentas user_product, una publicación por variante en cuentas clásicas.
+    # Los updates (crons, asistentes) siguen el camino que diga ESTE campo, no el botón que se use después.
+    meli_post_mode = fields.Selection([('classic', 'Clásico (Publicar)'), ('family', 'Nuevo (Publicar nuevo)')],
+                                      string='Camino de publicación', default='classic', copy=False,
+                                      help='Con qué asistente se creó la publicación. Las actualizaciones siguen ese camino.')
     meli_description = fields.Text(string='Descripción')
     meli_category = fields.Many2one("mercadolibre.category",string="Categoría de MercadoLibre")
     meli_buying_mode = fields.Selection( [("buy_it_now","Compre ahora"),("classified","Clasificado")], string='Método de compra')
@@ -543,15 +631,8 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
                     tax_excluded = ml_tax_excluded(self,config=config)
                     if ( price_list_apply_tax and tax_excluded and product and product.taxes_id ):
                         #_logger.info("Adjust taxes for publish")
-                        txfixed = 0
-                        txpercent = 0
-                        #_logger.info("Adjust taxes")
-                        for txid in product.taxes_id:
-                            if (txid.type_tax_use=="sale" and not txid.price_include):
-                                if (txid.amount_type=="percent"):
-                                    txpercent = txpercent + txid.amount
-                                if (txid.amount_type=="fixed"):
-                                    txfixed = txfixed + txid.amount
+                        # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+                        txpercent, txfixed = ml_sale_tax_rates(product.taxes_id, (account and account.company_id))
                         if (txfixed>0 or txpercent>0):
                             #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                             new_price = txfixed + new_price * (1.0 + txpercent*0.01)
@@ -627,6 +708,29 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
 
             if not meli:
                 meli = self.env['meli.util'].get_new_instance( account.company_id, account )
+
+            # #caso-K21 (26.371): camino de publicación de ESTE binding. 'family' si el binding ya se publicó
+            # por el camino nuevo, o si lo pidió el botón «Publicar (nuevo)» (contexto). custom_context
+            # REEMPLAZA el contexto en with_context(dict): el modo viaja adentro.
+            _new_mode = (context.get("meli_post_mode") == "family"
+                         or ("meli_post_mode" in bindT._fields and bindT.meli_post_mode == "family"))
+            if _new_mode:
+                custom_context["meli_post_mode"] = "family"
+            else:
+                custom_context.pop("meli_post_mode", None)
+            _pp_mode = self.env["product.product"].with_context(meli_post_mode=(_new_mode and "family") or False)
+            if _new_mode and _pp_mode._meli_is_family_mode(config):
+                # cuenta user_product_seller ⇒ modo FAMILIA (cada variante su publicación, agrupadas por
+                # family_name), con o sin "publicar como variantes": product.template._meli_post_family.
+                _fam = productT.with_context(meli_post_mode="family")._meli_post_family(
+                    bindT=bindT, account=account, meli=meli, config=config,
+                    force_context=custom_context, only_variants=(product_variant or None))
+                if _fam is not None and _fam is not False:
+                    n_fam, ret_fam, _res_fam = _fam
+                    posted_products += n_fam
+                    if ret_fam and 'name' in ret_fam:
+                        return ret_fam
+                    continue
 
             if (productT.meli_pub_as_variant):
                 #_logger.info("[BIND TEMPLATE] >> Posting as variants")
@@ -772,6 +876,19 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
             else:
                 _logger.info("[BIND TEMPLATE] >> product_template_post > Posting Variant: " +str( product_variant))
 
+                if _new_mode:
+                    # #caso-K21 (a) (camino nuevo, cuenta clásica): cada variante a SU publicación, con savepoint
+                    # por variante y resumen. El loop de abajo (camino clásico) queda como estaba.
+                    n_sep, ret_sep = bindT._meli_post_separate_variants(
+                        productT=productT, meli_id=meli_id, meli=meli, config=config, account=account,
+                        custom_context=custom_context, product_variant=product_variant,
+                        force_meli_pub=force_meli_pub, force_meli_new_pub=force_meli_new_pub,
+                        force_meli_new_price=force_meli_new_price, force_meli_new_pricelist=force_meli_new_pricelist)
+                    posted_products += n_sep
+                    if ret_sep and 'name' in ret_sep:
+                        return ret_sep
+                    continue
+
                 for variant in productT.product_variant_ids:
                     #_logger.info("product_template_post > Posting Variant: ", variant, variant.meli_pub)
                     if product_variant and product_variant.id!=variant.id:
@@ -878,10 +995,169 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
                         #_logger.info(error)
 
         if (posted_products==0):
-            raise ValidationError("Se intentaron publicar 0 productos. Debe forzar las publicaciones o marcar el producto con el campo Meli Publication, debajo del titulo. Puede tambien intentar revincular el producto. (Vinculando plantilla)")
-            ret = warningobj.info( title='MELI WARNING', message="Se intentaron publicar 0 productos. Debe forzar las publicaciones o marcar el producto con el campo Meli Publication, debajo del titulo. Puede tambien intentar revincular el producto.", message_html="" )
+            raise ValidationError(_("Se intentaron publicar 0 productos. Debe forzar las publicaciones o marcar el producto con el campo Meli Publication, debajo del titulo. Puede tambien intentar revincular el producto. (Vinculando plantilla)"))
 
         return ret
+
+    def _meli_post_separate_variants(self, productT=None, meli_id=None, meli=None, config=None, account=None,
+                                     custom_context=None, product_variant=None, force_meli_pub=False,
+                                     force_meli_new_pub=False, force_meli_new_price=False,
+                                     force_meli_new_pricelist=False):
+        """Plantilla SIN "publicar como variantes" (cuenta clásica), CAMINO NUEVO («Publicar (nuevo)» o
+        binding meli_post_mode='family', 26.371): cada variante va a SU publicación. El «Publicar» clásico
+        sigue con el loop de siempre de product_template_post.
+
+        #caso-K21 (a) — antes el loop usaba UNA variable `meli_id` para todas las variantes: tras el alta
+        de la 1ª quedaba con el id de la 1ª, la 2ª caía al else y hacía `raise ValidationError` ⇒
+        rollback de TODO en Odoo con la 1ª ya viva en ML (huérfana). Y pisaba el conn_id de TODOS
+        los bindings de variante con el id de la 1ª. Ahora:
+          - la publicación de cada variante es la de SU binding / su meli_id; si la plantilla no tenía
+            ninguna al empezar, cada variante sin publicación da de alta la suya;
+          - sólo se toca el binding de ESA variante; el de plantilla toma el 1er id si no tenía;
+          - cada variante en su savepoint, `meli_keep_published`: un error no deshace lo publicado;
+            se devuelve un resumen con lo publicado y lo que falló.
+        Devuelve (publicadas, acción|{})."""
+        self.ensure_one()
+        bindT = self
+        warningobj = self.env['meli.warning']
+        pp = self.env['product.product']
+        from .meli_family_post import _MeliFamilyVariantError
+        from . import meli_family as _mf
+        created_log = []
+        ctx = dict(custom_context or {})
+        ctx.update({"meli_keep_published": True, "meli_created_listings": created_log, "meli_post_mode": "family"})
+        tpl_listing_at_start = (not force_meli_new_pub) and meli_id or False
+        results = []
+        posted = 0
+        for variant in productT.product_variant_ids:
+            if product_variant and product_variant.id != variant.id:
+                continue
+            if force_meli_pub:
+                variant.meli_pub = True
+            label = variant.default_code or variant.display_name
+            vbind = bindT.variant_bindings.filtered(lambda b: b.product_id.id == variant.id)[:1]
+            if not (vbind and vbind.conn_id) and account and not product_variant:
+                # la variante está vinculada en OTRO binding de plantilla de la cuenta (un binding por
+                # variante): se publica en la vuelta de ese binding. Antes se posteaba acá con
+                # bind=variant_bindings[0] ⇒ PUT de sus datos sobre la publicación de OTRA variante.
+                other_vb = self.env['mercadolibre.product'].search([
+                    ('product_id', '=', variant.id), ('connection_account', '=', account.id),
+                    ('conn_id', '!=', False), ('binding_product_tmpl_id', '!=', bindT.id)], limit=1)
+                if other_vb:
+                    continue
+            own = _mf.listing_id_for_variant(vbind and vbind.conn_id, variant.meli_id, force_new=force_meli_new_pub)
+            if not variant.meli_pub and not own:
+                _logger.info("[BIND TEMPLATE] variante sin 'ML Pub' ni publicación, se omite: %s", label)
+                continue
+            if not own and tpl_listing_at_start and not product_variant:
+                # la plantilla ya apunta a una publicación y esta variante no está en ella: antes era
+                # un raise (con rollback); ahora se informa sin tocar lo demás.
+                results.append({"variant": label, "meli_id": None,
+                                "error": "no tiene publicación propia en %s ni binding; publicala sola "
+                                         "(Publicar desde la variante) o revinculá" % tpl_listing_at_start})
+                continue
+            if force_meli_new_pub or (own and variant.meli_id and own != variant.meli_id):
+                # "Crear una nueva publicación", o actualizar una publicación ADICIONAL de la variante
+                # (N publicaciones por producto): como siempre, va por el BINDING y product.meli_id
+                # sigue apuntando a la original.
+                vb_new = vbind or (bindT.variant_bindings and bindT.variant_bindings[0])
+                n_created = len(created_log)
+                try:
+                    with self.env.cr.savepoint():
+                        ret = variant.with_context(ctx).product_post(bind_tpl=bindT, bind=vb_new, meli=meli, config=config)
+                        err = pp._meli_ret_error_text(ret)
+                        if err:
+                            raise _MeliFamilyVariantError(err)
+                except Exception as e:
+                    msg = str(e) if isinstance(e, _MeliFamilyVariantError) else ("%s: %s" % (type(e).__name__, e))
+                    new_ids = [mid for (pid, mid) in created_log[n_created:] if pid == variant.id]
+                    if new_ids and vb_new:
+                        vb_new.write({"conn_id": new_ids[-1], "meli_id": new_ids[-1], "meli_post_mode": "family"})
+                        if not bindT.conn_id:
+                            bindT.conn_id = new_ids[-1]
+                        posted += 1
+                    results.append({"variant": label, "meli_id": (new_ids and new_ids[-1]) or None,
+                                    "created": bool(new_ids),
+                                    "error": (new_ids and "publicada y vinculada, pero después falló: " + msg) or msg})
+                    continue
+                posted += 1
+                if vb_new:
+                    vb_new.meli_post_mode = "family"
+                results.append({"variant": label, "meli_id": vb_new and vb_new.conn_id,
+                                "created": bool(force_meli_new_pub)})
+                continue
+            if own and not variant.meli_id:
+                variant.write({"meli_id": own})  # completa el puntero vacío con su publicación (d)
+            n_created = len(created_log)
+            try:
+                with self.env.cr.savepoint():
+                    ret = variant.with_context(ctx).product_post(meli=meli, config=config)
+                    err = pp._meli_ret_error_text(ret)
+                    if err:
+                        raise _MeliFamilyVariantError(err)
+                    if not variant.meli_id:
+                        raise _MeliFamilyVariantError("Mercado Libre no devolvió el id de la publicación")
+                    bindT._meli_link_variant_listing(variant, account, meli=meli,
+                                                     force_meli_new_price=force_meli_new_price,
+                                                     force_meli_new_pricelist=force_meli_new_pricelist)
+            except Exception as e:
+                msg = str(e) if isinstance(e, _MeliFamilyVariantError) else ("%s: %s" % (type(e).__name__, e))
+                if not isinstance(e, _MeliFamilyVariantError):
+                    _logger.exception("[BIND TEMPLATE] error inesperado publicando %s", label)
+                # (e) ML ya la creó antes del error ⇒ se recupera el vínculo fuera del savepoint
+                new_ids = [mid for (pid, mid) in created_log[n_created:] if pid == variant.id]
+                if new_ids:
+                    variant.write({"meli_id": new_ids[-1]})
+                    bindT._meli_link_variant_listing(variant, account, meli=meli)
+                    results.append({"variant": label, "meli_id": new_ids[-1], "created": True,
+                                    "error": "publicada y vinculada, pero después falló: " + msg})
+                    posted += 1
+                else:
+                    results.append({"variant": label, "meli_id": None, "error": msg})
+                continue
+            posted += 1
+            results.append({"variant": label, "meli_id": variant.meli_id, "created": not own})
+        has_error, text = _mf.family_post_summary(results)
+        if has_error:
+            if not posted and len(results) == 1 and not results[0].get("created"):
+                # una sola variante y nada publicado: el mensaje original de ML, sin resumen
+                return 0, warningobj.info(title='MELI WARNING', message=results[0]["error"], message_html="")
+            return posted, warningobj.info(title='MELI WARNING', message=text, message_html="")
+        return posted, {}
+
+    def _meli_link_variant_listing(self, variant, account, meli=None, force_meli_new_price=False,
+                                   force_meli_new_pricelist=False):
+        """Vincula `variant` a variant.meli_id dentro de ESTE binding de plantilla, sin tocar los
+        bindings de las otras variantes (#caso-K21 a)."""
+        self.ensure_one()
+        bindT = self
+        mid = variant.meli_id
+        if not mid:
+            return
+        if not bindT.conn_id:
+            bindT.conn_id = mid
+        if bindT.meli_post_mode != "family":
+            bindT.meli_post_mode = "family"
+        vb = bindT.variant_bindings.filtered(lambda b: b.product_id.id == variant.id)[:1]
+        if not vb:
+            vb = bindT.variant_bindings.filtered(lambda b: not b.product_id and b.conn_id in (False, mid))[:1]
+        vals = {"conn_id": mid, "meli_id": mid, "meli_post_mode": "family"}
+        if variant.meli_id_variation:
+            vals["conn_variation_id"] = variant.meli_id_variation
+        if vb:
+            vb.write(vals)
+        elif account:
+            vb = variant.mercadolibre_bind_to(account, binding_product_tmpl_id=bindT, meli_id=mid, meli=meli)
+            if vb:
+                vb.meli_post_mode = "family"
+        if vb:
+            try:
+                vb.update_price(meli_price=force_meli_new_price, meli_pricelist=force_meli_new_pricelist)
+            except Exception:
+                _logger.exception("[BIND TEMPLATE] update_price %s", vb)
+        if bindT.conn_id == mid:
+            bindT.update_price(meli_price=force_meli_new_price, meli_pricelist=force_meli_new_pricelist)
+            bindT.stock = sum(float(b.stock or 0) for b in bindT.variant_bindings) or variant.meli_available_quantity
 
     def product_template_post_stock( self, context=None, meli_id=None, meli=None, account=None ):
         #_logger.info("product_template_post_stock >> MercadoLibre Product Template Post Stock")
@@ -943,6 +1219,39 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
                 return qty
         else:
             return qty
+
+    def product_template_post_manufacturing_time( self, context=None, meli=None ):
+        """26.278 (#caso-K31): publica SOLO el plazo de entrega de la publicacion (item padre)."""
+        result, done = {}, 0
+        for bindT in self:
+            meli_id = bindT.conn_id
+            if not meli_id:
+                continue
+            value = (bindT.meli_manufacturing_time or "").strip()
+            if not value:
+                for bindV in bindT.variant_bindings:
+                    value = bindV._meli_manufacturing_time_value()
+                    if value:
+                        break
+            if not value:
+                return {"error": "sin_plazo", "message": _("la publicación %s no tiene cargado el plazo "
+                                                           "de entrega (Manufacturing time)") % meli_id}
+            account = bindT.connection_account
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            if not meli:
+                return {"error": "sin_conexion", "message": _("sin conexión a MercadoLibre")}
+            if meli.need_login():
+                return meli.redirect_login()
+            result = _meli_post_manufacturing_time(meli, meli_id, value)
+            if result:
+                return result
+            done += 1
+        return {}
+
+    def action_meli_post_manufacturing_time( self ):
+        return _meli_manufacturing_time_action_result(
+            self.product_template_post_manufacturing_time(), len(self.filtered("conn_id")))
 
     def product_template_post_price( self, context=None, meli_id=None, meli=None, account=None ):
         #_logger.info("product_template_post_price >> MercadoLibre Product Template Post Prices")
@@ -1402,15 +1711,18 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
 
         bindt_query_select_res = []
 
+        # conn_id viene de la API de ML: va como parametro, no armado con comillas (F8b 20.0). Mismo SQL:
+        # None => NULL (igual que el "NULL" literal de antes) e int() replica el %i (False => 0).
         bindt_query_select = """select id, name, conn_id
             from mercadolibre_product_template
-            where connection_account=%i
+            where connection_account=%s
             and conn_id = %s
             and product_tmpl_id = %s
-        """ % ( connection_account_id, conn_id_str, product_tmpl_id_str )
-        _logger.info("bindT > search_all bindt_query_select:"+str(bindt_query_select))
+        """
+        bindt_query_params = ( int(connection_account_id), (str(conn_id) if conn_id else None), (product_tmpl_id_id or None) )
+        _logger.info("bindT > search_all bindt_query_select:"+str(bindt_query_select)+" params:"+str(bindt_query_params))
         cr = MeliCr( self )
-        resquery = cr.execute(bindt_query_select)
+        resquery = cr.execute(bindt_query_select, bindt_query_params)
         bindt_query_select_res = cr.fetchall()
         _logger.info("bindT > search_all:"+str(bindt_query_select_res))
         return bindt_query_select_res
@@ -1429,11 +1741,11 @@ class MercadoLibreConnectionBindingProductTemplate(models.Model):
         if all_ids_str:
             bindt_query_delete = """delete
                 from mercadolibre_product_template
-                where id in (%s)
-            """ % ( all_ids_str  )
-            _logger.info("bindT > unlink_all:"+str(bindt_query_delete))
+                where id in %s
+            """
+            _logger.info("bindT > unlink_all:"+str(bindt_query_delete)+" ids:"+str(all_ids_str))
             cr = MeliCr( self )
-            resquery = cr.execute( bindt_query_delete )
+            resquery = cr.execute( bindt_query_delete, (tuple(bnd[0] for bnd in bindt_all),) )
             _logger.info("bindT > unlink_all resquery:"+str(resquery))
         MeliCommit( self )
         return resquery
@@ -1512,12 +1824,25 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
     meli_free_shipping = fields.Boolean(string='Envío gratis')
     meli_local_pick_up = fields.Boolean(string='Recoger en tienda')
 
+    def init(self):
+        super().init()
+        # 26.87 (F1e): indice compuesto para el barrido de la cola de stock.
+        # Las consultas calientes filtran por cuenta + estado y ordenan/filtran
+        # por stock_update (cola del cron y red de seguridad de resync). Con los
+        # indices sueltos que ya existian, Postgres tenia que combinar bitmaps
+        # sobre decenas de miles de filas en cada corrida.
+        # CONCURRENTLY no se puede usar dentro de la transaccion del -u.
+        self.env.cr.execute("""
+            CREATE INDEX IF NOT EXISTS mercadolibre_product_stock_queue_idx
+            ON mercadolibre_product (connection_account, meli_stock_status, stock_update)
+        """)
+
     def product_get_meli_update( self ):
         # MULTIGET: Cero llamadas API al abrir el formulario de producto.
         # Antes hacía ~19 GETs a ML cada vez que se abría un producto.
         # Ahora usa meli_last_status (guardado en BD por webhooks/crons) y
         # construye links localmente. La sync real se hace via botones y crons.
-        # Ver .roots/refatodo/debug/fixes-log.md
+        # Ver documentación interna
         #
         # URLs por site: resolvemos con _resolve_ml_site_urls() que usa
         # account.meli_user_site_id (definitivo) con fallback a country_code.
@@ -1541,13 +1866,15 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                     account=bindv.connection_account,
                     company=bindv.company_id,
                 )
-                # meli_id ya incluye el prefijo de site (ej: "MLM3556157517").
+                # meli_id ya incluye el prefijo de site (ej: "MLM<id>").
                 # ML acepta articulo/<meli_id> sin guion ni slug de título y redirige
-                # al permalink final. Ver https://articulo.mercadolibre.com.mx/MLM3556157517.
+                # al permalink final. Ver https://articulo.mercadolibre.com.mx/MLM<id>.
                 ML_permalink = _meli_permalink_from_id(str(bindv.meli_id), _urls)
                 ML_permalink_edit = _urls["link"] + "/publicaciones/" + str(bindv.meli_id) + "/modificar"
-                _atok = bindv.connection_account.access_token or ''
-                ML_permalink_api = "https://api.mercadolibre.com/items/" + str(bindv.meli_id) + "?include_attributes=all&access_token=" + str(_atok)
+                # un caso: sin token en el link (se ve en pantalla); lo resuelve Odoo por cuenta.
+                ML_permalink_api = "/meli/item_api/%s" % bindv.meli_id
+                if bindv.connection_account:
+                    ML_permalink_api += "?account=%s" % bindv.connection_account.id
 
             bindv.meli_status = ML_status
             bindv.meli_sub_status = ML_sub_status
@@ -1567,6 +1894,12 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
     meli_title = fields.Char(string='Nombre del producto en Mercado Libre',size=256,index=True)
     meli_family_name = fields.Char(string='Nombre de la familia del user product en Mercado Libre',size=256)
     meli_family_id = fields.Char(string='ID de familia ML (user_product_seller)',size=128,index=True)
+    # #caso-K21 (26.371): con qué camino se publicó. 'classic' = «Publicar» de siempre; 'family' = «Publicar
+    # (nuevo)»: modo familia en cuentas user_product, una publicación por variante en cuentas clásicas.
+    # Los updates (crons, asistentes) siguen el camino que diga ESTE campo, no el botón que se use después.
+    meli_post_mode = fields.Selection([('classic', 'Clásico (Publicar)'), ('family', 'Nuevo (Publicar nuevo)')],
+                                      string='Camino de publicación', default='classic', copy=False,
+                                      help='Con qué asistente se creó la publicación. Las actualizaciones siguen ese camino.')
     meli_description = fields.Text(string='Descripción')
     meli_category = fields.Many2one("mercadolibre.category","Categoría de MercadoLibre")
     meli_price = fields.Char( string='Precio',help='Precio de venta en ML', size=128,index=True)
@@ -1660,11 +1993,38 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
     meli_video = fields.Char( string='Video (id de youtube)', size=256)
     #@api.depends('product_id','product_meli_stock_moves_update')
     @api.depends()  # Empty depends - prevents automatic recompute on stock moves (avoids serialization errors)
+    def _meli_stored_moves_stamps( self ):
+        """Lee por SQL los sellos YA GUARDADOS de estos bindings.
+
+        Por SQL a proposito: esto se usa dentro del compute de esos mismos dos
+        campos; leerlos por ORM dispararia el recomputo del campo que se esta
+        calculando. Ademas el valor de la base es justo el que necesitamos (el
+        anterior) para no retroceder."""
+        stored = {}
+        ids = tuple(i for i in self.ids if i)
+        if not ids:
+            return stored
+        self.env.cr.execute(
+            "SELECT id, meli_stock_moves_update, product_meli_stock_moves_update "
+            "FROM mercadolibre_product WHERE id IN %s", (ids,))
+        for bid, a, b in self.env.cr.fetchall():
+            stored[bid] = (a, b)
+        return stored
+
     def _meli_stock_moves_update( self ):
+        _stored = self._meli_stored_moves_stamps()
         for bind in self:
             if bind.product_id:
-                bind.meli_stock_moves_update = bind.product_id.meli_stock_moves_update
-                bind.product_meli_stock_moves_update = bind.product_id.meli_stock_moves_update
+                # 26.87 (F1b): el sello es MONOTONO tambien en el binding.
+                # Si no lo fuera, un recomputo podria pisar hacia atras el NOW()
+                # que escriben por SQL los hooks de cancel/unreserve y sacar de
+                # la cola una publicacion que todavia no se republico.
+                _stamp = bind.product_id.meli_stock_moves_update
+                _current, _current_p = _stored.get(bind.id, (None, None))
+                if not (_stamp and _current and _current > _stamp):
+                    bind.meli_stock_moves_update = _stamp
+                if not (_stamp and _current_p and _current_p > _stamp):
+                    bind.product_meli_stock_moves_update = _stamp
             else:
                 bind.meli_stock_moves_update = False
                 bind.product_meli_stock_moves_update = False
@@ -1680,12 +2040,29 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
         if not self:
             return
 
+        # 26.253 (#caso-K30): FLUSH antes del SQL. El sello del producto
+        # (product.product.meli_stock_moves_update) se acaba de escribir por ORM en
+        # _meli_stock_moves_update / _process_stock_update_orm(_batch) y sigue en la
+        # cache: el UPDATE de abajo lee product_product por SQL y veia el sello VIEJO.
+        # Resultado: al validar una recepcion el binding no avanzaba y
+        # _batch_update_stock_status lo dejaba 'updated' si habia tenido un push
+        # posterior a su sello anterior => el cron nunca lo publicaba.
+        # Se flushean tambien los campos del binding que lee el SQL.
+        self.env['product.product'].flush_model(['meli_stock_moves_update'])
+        self.flush_recordset()
+
         # Use SQL UPDATE to efficiently sync dates from product to binding
         # This ensures stored computed field values are actually persisted
+        # 26.87 (F1b): GREATEST(...) — el sello del binding es monotono. Sin esto,
+        # esta sincronizacion desde el producto puede pisar hacia atras el NOW()
+        # que escriben los hooks de cancel/unreserve y sacar de la cola una
+        # publicacion que todavia no se republico.
         self.env.cr.execute("""
             UPDATE mercadolibre_product mp
-            SET meli_stock_moves_update = pp.meli_stock_moves_update,
-                product_meli_stock_moves_update = pp.meli_stock_moves_update
+            SET meli_stock_moves_update = GREATEST(
+                    mp.meli_stock_moves_update, pp.meli_stock_moves_update),
+                product_meli_stock_moves_update = GREATEST(
+                    mp.product_meli_stock_moves_update, pp.meli_stock_moves_update)
             FROM product_product pp
             WHERE mp.product_id = pp.id
               AND mp.id IN %s
@@ -1863,6 +2240,17 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             AND stock_error LIKE '%%multiwarehouse%%'
         """, (bind_ids,))
 
+        # Case 8g — 26.87 (F7): revision_not_applied (ML respondio 200 y NO aplico
+        # la cantidad). Es un fallo silencioso: sin este estado el binding se
+        # marcaba 'updated' y salia de la cola con la publicacion desactualizada.
+        self.env.cr.execute("""
+            UPDATE mercadolibre_product
+            SET meli_stock_status = 'revision_not_applied'
+            WHERE id IN %s
+            AND stock_error IS NOT NULL
+            AND stock_error LIKE '%%stock_not_applied%%'
+        """, (bind_ids,))
+
         # Case 9: revision_error (generic error, lower priority than specific errors)
         self.env.cr.execute("""
             UPDATE mercadolibre_product
@@ -1937,7 +2325,33 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             AND stock > 0
         """, (bind_ids,))
 
-        # N1 fix (ticket #425): reset the auto re-queue retry counter once a binding
+        # Case 14 — 26.87 (F1d): RED DE SEGURIDAD por antigüedad.
+        # Gemelo SQL de _meli_stock_resync_due(). Toda publicación sana cuyo último
+        # push sea más viejo que mercadolibre_stock_resync_days vuelve a la cola,
+        # haya habido movimientos o no. Sin esto, un evento de stock perdido deja
+        # la publicación desincronizada para siempre (el binding se queda en
+        # 'updated' y ningún cron lo vuelve a mirar).
+        # resync_days = 0 desactiva; NULL (base sin -u todavía) usa el default.
+        self.env.cr.execute("""
+            UPDATE mercadolibre_product mp
+            SET meli_stock_status = 'update'
+            FROM mercadolibre_account ma
+            LEFT JOIN mercadolibre_configuration mc ON mc.id = ma.configuration
+            WHERE mp.id IN %s
+              AND mp.connection_account = ma.id
+              AND mp.meli_stock_status IN ('updated', 'updated_with_warning', 'revision_unmoved')
+              AND (mp.meli_last_status IS NULL OR mp.meli_last_status IN ('active', 'paused'))
+              AND (mp.stock_error IS NULL OR mp.stock_error = '' OR mp.stock_error LIKE '%%Ok%%')
+              AND (mp.stock_error IS NULL OR mp.stock_error NOT LIKE '%%multiwarehouse%%')
+              AND COALESCE(mc.mercadolibre_stock_resync_days, %s) > 0
+              AND (
+                    mp.stock_update IS NULL
+                 OR mp.stock_update < (NOW() AT TIME ZONE 'UTC')
+                        - (COALESCE(mc.mercadolibre_stock_resync_days, %s) * INTERVAL '1 day')
+              )
+        """, (bind_ids, self.MELI_STOCK_RESYNC_DAYS_DEFAULT, self.MELI_STOCK_RESYNC_DAYS_DEFAULT))
+
+        # N1 fix (ticket un caso): reset the auto re-queue retry counter once a binding
         # is healthy again (a push finally succeeded -> stock_error Ok/empty). Prevents
         # a transient-error item that later succeeds from carrying a stale retry count
         # that would prematurely cap future re-queues.
@@ -1986,6 +2400,42 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
 
         return update_rt_needed
 
+
+    # 26.87 (F1d) — red de seguridad por antigüedad
+    MELI_STOCK_RESYNC_DAYS_DEFAULT = 7
+
+    def _meli_stock_resync_days( self ):
+        """Días tras los cuales una publicación vuelve a la cola aunque no haya
+        habido movimientos. 0/False = desactivado."""
+        self.ensure_one()
+        config = self.connection_account and self.connection_account.configuration
+        if config and "mercadolibre_stock_resync_days" in config._fields:
+            value = config.mercadolibre_stock_resync_days
+            # OJO con el chequeo de identidad: un 0 explicito significa
+            # DESACTIVADO y hay que respetarlo (0 == False, pero `0 is not False`
+            # es True, asi que 0 pasa y se devuelve tal cual). Solo caemos al
+            # default si el campo viene None/False, es decir sin valor.
+            if value is not None and value is not False:
+                return value
+        return self.MELI_STOCK_RESYNC_DAYS_DEFAULT
+
+    def _meli_stock_resync_due( self ):
+        """True si el ultimo push de stock es mas viejo que la ventana de resync.
+
+        Sin esto, cualquier evento de stock que no quede reflejado en
+        meli_stock_moves_update deja la publicacion desincronizada PARA SIEMPRE:
+        el binding se queda en 'updated' y ningun cron lo vuelve a mirar."""
+        self.ensure_one()
+        days = self._meli_stock_resync_days()
+        if not days or days <= 0:
+            return False
+        if not self.stock_update:
+            return True
+        try:
+            limit = fields.Datetime.now() - timedelta(days=days)
+        except Exception:
+            return False
+        return self.stock_update < limit
 
     def _meli_stock_status( self, notify=False ):
         for bind in self:
@@ -2071,14 +2521,25 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
 
                     bind.meli_stock_status = 'revision_forbidden'
 
+                # 26.87 (F7): ML devolvio 200 pero la cantidad no quedo aplicada.
+                # Va al final para que gane sobre 'revision_error' generico.
+                if ( bind.stock_error and "stock_not_applied" in bind.stock_error ):
+
+                    bind.meli_stock_status = 'revision_not_applied'
+
             else:
                 if not bind.stock_error:
                     bind.stock_error = ''
 
+                # 26.87 (F1d): red de seguridad — si el ultimo push es mas viejo
+                # que la ventana de resync, vuelve a la cola aunque el sello de
+                # movimientos diga que esta al dia.
+                _resync_due = bind._meli_stock_resync_due()
+
                 if (bind.meli_stock_moves_update):
                     if (bind.stock_update):
-                        if ( bind.meli_stock_moves_update > bind.stock_update ):
-                            bind.meli_stock_status = 'update'                            
+                        if ( bind.meli_stock_moves_update > bind.stock_update or _resync_due ):
+                            bind.meli_stock_status = 'update'
                         else:
                             bind.meli_stock_status = 'updated'
                             if (bind.stock_error and bind.stock_error != 'Ok' ):
@@ -2096,6 +2557,10 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                         bind.meli_stock_status = 'updated'
                         if (bind.stock_error and bind.stock_error != 'Ok' ):
                             bind.meli_stock_status = 'updated_with_warning'
+                    # 26.87 (F1d): un binding sin sello de movimientos que ademas
+                    # lleva mas de N dias sin publicarse tambien se resincroniza.
+                    if (_resync_due and bind.meli_stock_status in ('updated', 'updated_with_warning', 'revision_unmoved')):
+                        bind.meli_stock_status = 'update'
 
 
             if notify:
@@ -2129,10 +2594,12 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
         ('revision_sku_mismatch','SKU no coincide con ML (revisar)'),
         ('revision_variation_not_found','Variante no encontrada en ML'),
         ('revision_forbidden','Acceso denegado (403) - verificar cuenta'),
+        # 26.87 (F7): ML contesto 200 pero NO aplico la cantidad publicada.
+        ('revision_not_applied','ML aceptó el envío pero NO aplicó el stock'),
         ('multiwarehouse','Multiwarehouse - actualizar manualmente en ML')
     ], string="Status de stock", compute=_meli_stock_status, store=True, index=True)
 
-    # N1 fix (ticket #425): bounded auto re-queue of stranded RECOVERABLE bindings.
+    # N1 fix (ticket un caso): bounded auto re-queue of stranded RECOVERABLE bindings.
     # Counts how many times _meli_requeue_stranded_stock() has put this binding back
     # into the 'update' queue after it parked in a recoverable-error status. Capped
     # (MELI_STOCK_MAX_REQUEUE_RETRIES) so a genuinely-broken item does not cycle
@@ -2409,17 +2876,140 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             bind.meli_stock_resume = ""
             stocks_str, stocks_on_hand, stocks_available, stocks_meli, stocks_meli_multi = bind.get_stock_str(meli=meli,config=config)
             bind.meli_stock_resume = stocks_str
-            bind.meli_stock_resume_on_hand = stocks_on_hand
-            bind.meli_stock_resume_available = stocks_available
+            # [caso-K01 #caso-K33] "En mano"/"Disponible" ya NO se escriben aca: antes eran una foto que
+            # solo se tomaba al abrir el formulario, y la lista y el filtro "Disponible > 0"
+            # trabajaban sobre esa foto (vacia en las que nunca se abrieron). Ahora se calculan
+            # en vivo en _compute_meli_stock_local. Lo que viene de ML sigue siendo una foto
+            # guardada, y queda fechada.
             bind.meli_stock_resume_mercadolibre = stocks_meli
             bind.meli_stock_resume_mercadolibre_multi = stocks_meli_multi
+            bind.meli_stock_resume_date = fields.Datetime.now()
+
+    def action_meli_stock_resume_refresh(self):
+        """[caso-K01 #caso-K33] Refresca en lote la foto de ML (Stock en MercadoLibre / Resumen).
+        Hace 2-3 GET a ML por vinculacion: usar sobre una seleccion, no sobre todo."""
+        self._meli_stock_resume()
+        return True
+
+    def _meli_stock_logistic_type_hint(self):
+        """[caso-K01 #caso-K33] Tipo logistico GUARDADO de la vinculacion (el que dejo el ultimo push)."""
+        self.ensure_one()
+        lt = self.meli_shipping_logistic_type
+        if not lt and self.product_id and self.conn_id and self.product_id.meli_id == self.conn_id:
+            lt = self.product_id.meli_shipping_logistic_type
+        return lt or ""
+
+    def _meli_stock_local_kit_qty(self, variant, bom, hint, config):
+        """Mismo calculo de kit (BoM phantom) que get_stock_str, sin llamadas a ML."""
+        stock_material_max = 100000
+        qty = 0
+        for bom_line in bom.bom_line_ids:
+            if bom_line.product_id and bom_line.product_qty:
+                comp = bom_line.product_id.with_context(meli_logistic_type_hint=hint)
+                virtual_comp_av = comp._meli_virtual_available(meli_id=self.conn_id, meli=None, config=config)
+                stock_material = int(virtual_comp_av / bom_line.product_qty)
+                if stock_material >= 0 and stock_material <= stock_material_max:
+                    stock_material_max = stock_material
+                    qty = stock_material_max
+        return qty
+
+    def _meli_stock_local_values(self):
+        """[caso-K01 #caso-K33] {binding_id: (en_mano, disponible)} con la existencia ACTUAL, SIN llamadas a ML.
+
+        Mismas ubicaciones de las que publica la vinculacion (_meli_get_location_id, con el
+        tipo logistico guardado: Full publica desde la ubicacion Full, el resto desde las
+        suyas) y mismo calculo que get_stock_str (quants internos: cantidad / cantidad -
+        reservado; kit phantom sin quants = minimo de componentes).
+        Agrupa por (cuenta, tipo logistico): una busqueda de quants por grupo."""
+        res = {}
+        groups = {}
+        for bind in self:
+            res[bind.id] = (0.0, 0.0)
+            variant = bind.product_id
+            account = bind.connection_account
+            if not variant or not account or not hasattr(variant, '_meli_get_location_id'):
+                continue
+            groups.setdefault((account.id, bind._meli_stock_logistic_type_hint()), []).append(bind)
+        Quant = self.env['stock.quant']
+        for (account_id, hint), binds in groups.items():
+            first = binds[0]
+            config = first.connection_account.configuration or None
+            locs = first.product_id.with_context(meli_logistic_type_hint=hint)._meli_get_location_id(
+                meli_id=first.conn_id, meli=None, config=config) or []
+            loc_ids = [l.id for l in locs if l]
+            if not loc_ids:
+                continue
+            pids = list({b.product_id.id for b in binds})
+            on_hand, available = {}, {}
+            for q in Quant.search([('product_id', 'in', pids), ('location_id', 'child_of', loc_ids),
+                                   ('location_id.usage', '=', 'internal')]):
+                on_hand[q.product_id.id] = on_hand.get(q.product_id.id, 0.0) + q.quantity
+                available[q.product_id.id] = available.get(q.product_id.id, 0.0) + (q.quantity - q.reserved_quantity)
+            boms_by_product, boms_by_tmpl = {}, {}
+            no_quants = [b for b in binds if b.product_id.id not in on_hand]
+            if no_quants and 'mrp.bom' in self.env:
+                tmpl_ids = list({b.product_id.product_tmpl_id.id for b in no_quants})
+                for bom in self.env['mrp.bom'].search(['|', ('product_id', 'in', [b.product_id.id for b in no_quants]),
+                                                       ('product_tmpl_id', 'in', tmpl_ids)]):
+                    if bom.product_id:
+                        boms_by_product.setdefault(bom.product_id.id, bom)
+                    boms_by_tmpl.setdefault(bom.product_tmpl_id.id, bom)
+            for bind in binds:
+                pid = bind.product_id.id
+                if pid in on_hand:
+                    res[bind.id] = (on_hand[pid], available[pid])
+                    continue
+                bom = boms_by_product.get(pid) or boms_by_tmpl.get(bind.product_id.product_tmpl_id.id)
+                if bom and bom.type == 'phantom':
+                    kit = bind._meli_stock_local_kit_qty(bind.product_id, bom, hint, config)
+                    res[bind.id] = (kit, kit)
+        return res
+
+    def _compute_meli_stock_local(self):
+        values = self._meli_stock_local_values()
+        for bind in self:
+            on_hand, available = values.get(bind.id, (0.0, 0.0))
+            bind.meli_stock_resume_on_hand = on_hand
+            bind.meli_stock_resume_available = available
+
+    _MELI_STOCK_LOCAL_OPS = {
+        '=': lambda a, b: a == b, '!=': lambda a, b: a != b,
+        '<': lambda a, b: a < b, '>': lambda a, b: a > b,
+        '<=': lambda a, b: a <= b, '>=': lambda a, b: a >= b,
+    }
+
+    def _search_meli_stock_local(self, operator, value, index):
+        """[caso-K01 #caso-K33] Filtro en vivo ("Disponible > 0", "En mano = 0"...)."""
+        if operator in ('in', 'not in'):
+            values = [float(v or 0.0) for v in (value or [])]
+            match = (lambda a: a in values) if operator == 'in' else (lambda a: a not in values)
+        elif operator in self._MELI_STOCK_LOCAL_OPS:
+            fn, ref = self._MELI_STOCK_LOCAL_OPS[operator], float(value or 0.0)
+            match = lambda a: fn(a, ref)
+        else:
+            raise UserError(_("Operador no soportado para el stock de la vinculacion: %s") % operator)
+        binds = self.search([('product_id', '!=', False), ('connection_account', '!=', False)])
+        values_by_id = binds._meli_stock_local_values()
+        return [('id', 'in', [bid for bid, vals in values_by_id.items() if match(vals[index])])]
+
+    def _search_meli_stock_on_hand(self, operator, value):
+        return self._search_meli_stock_local(operator, value, 0)
+
+    def _search_meli_stock_available(self, operator, value):
+        return self._search_meli_stock_local(operator, value, 1)
 
     meli_stock_resume = fields.Char(string="Stock Resumen", compute="_meli_stock_resume", store=False )
-    meli_stock_resume_on_hand = fields.Float(string="En mano")
-    meli_stock_resume_available = fields.Float(string="Disponible")
+    meli_stock_resume_on_hand = fields.Float(string="En mano", compute="_compute_meli_stock_local",
+        search="_search_meli_stock_on_hand", store=False,
+        help="Existencia actual en las ubicaciones desde las que publica esta vinculacion (no consulta Mercado Libre).")
+    meli_stock_resume_available = fields.Float(string="Disponible", compute="_compute_meli_stock_local",
+        search="_search_meli_stock_available", store=False,
+        help="En mano menos lo reservado, en las ubicaciones desde las que publica esta vinculacion (no consulta Mercado Libre).")
     meli_stock_resume_mercadolibre = fields.Float(string="Stock en MercadoLibre")
 
     meli_stock_resume_mercadolibre_multi = fields.Char(string="Stock en Mercadolibre Resumen" )
+    meli_stock_resume_date = fields.Datetime(string="Resumen ML actualizado", readonly=True, copy=False,
+        help="Cuando se consulto por ultima vez a Mercado Libre el Stock en MercadoLibre / Resumen.")
     #meli_stock_resume_on_hand = fields.Float(string="Qty On hand", compute="_meli_stock_resume"
                         #, search="_search_stock_resume_on_hand"
     #                    )
@@ -2704,6 +3294,34 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             bind.meli_listing_type = product.meli_listing_type
             bind.meli_dimensions = product.meli_dimensions
 
+    def meli_stamp_last_status( self, rjson ):
+        """Estampa `meli_last_status` desde el json del item que YA tenemos.
+
+        26.123 (caso-K32 cliente N): el publish creaba/actualizaba el binding sin
+        tocar `meli_last_status`. Como `meli_status` (no stored) se computa
+        leyendo ese campo y cae a "unknown" cuando esta vacio, la ficha del
+        producto se quedaba SIN el icono ni los botones de MercadoLibre, y solo
+        se arreglaba si mas tarde pasaba un webhook o un cron por encima.
+
+        No agrega ni una llamada a la API: el estado viene en la respuesta del
+        POST/PUT del item (y en el re-fetch que el publish ya hace). La
+        optimizacion que saco los ~19 GETs por apertura de formulario se respeta.
+
+        Devuelve el estado estampado, o None si el json no traia uno usable.
+        """
+        status = meli_status_from_rjson(rjson)
+        if not status:
+            return None
+        for bindv in self:
+            try:
+                if bindv.meli_last_status != status:
+                    bindv.sudo().write({'meli_last_status': status})
+            except Exception as e:
+                # Estampar el estado NUNCA puede voltear una publicacion exitosa.
+                _logger.warning("meli_stamp_last_status: no se pudo estampar '%s' en %s: %s",
+                                status, bindv, e)
+        return status
+
     def copy_from_rjson( self, rjson, meli=None ):
         #copia correctamente el sku correspondiente al conn_variation_id
         #conn_variation_id debe setearse al traer el producto ?
@@ -2767,6 +3385,14 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                 #'meli_video': str(vid),
                 #'meli_dimensions': meli_dim_str,
             }
+            # 26.123 (caso-K32 cliente N): el estado del item viaja en el MISMO json que
+            # ya estamos copiando. Guardarlo aca cubre de una todos los caminos que
+            # pasan por copy_from_rjson (publish, import, rebind, fetch) sin sumar
+            # un solo GET a ML. Si no se guarda, `meli_status` cae a "unknown" y la
+            # ficha del producto se queda sin el icono/los botones de MercadoLibre.
+            _ml_status = meli_status_from_rjson(rjson)
+            if _ml_status:
+                fields['meli_last_status'] = _ml_status
             if desplain:
 
                 #publication specific banner
@@ -2931,15 +3557,8 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                     tax_excluded = ml_tax_excluded(self,config=config)
                     if ( price_list_apply_tax and tax_excluded and product_tmpl and product_tmpl.taxes_id ):
                         #_logger.info("Adjust taxes for publish")
-                        txfixed = 0
-                        txpercent = 0
-                        #_logger.info("Adjust taxes")
-                        for txid in product_tmpl.taxes_id:
-                            if (txid.type_tax_use=="sale" and not txid.price_include):
-                                if (txid.amount_type=="percent"):
-                                    txpercent = txpercent + txid.amount
-                                if (txid.amount_type=="fixed"):
-                                    txfixed = txfixed + txid.amount
+                        # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+                        txpercent, txfixed = ml_sale_tax_rates(product_tmpl.taxes_id, (account and account.company_id))
                         if (txfixed>0 or txpercent>0):
                             #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                             new_price = txfixed + new_price * (1.0 + txpercent*0.01)
@@ -2980,7 +3599,12 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             meli_id_variation = bind.conn_variation_id
             bind_tpl = bind.binding_product_tmpl_id
 
-            if not meli:
+            # 26.101 (un cliente): idem stock/precio/titulo. Ademas el `for`
+            # reusaba el `meli` resuelto para el PRIMER binding en todos los
+            # siguientes, aunque fueran de otra cuenta.
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            elif not meli:
                 meli = self.env['meli.util'].get_new_instance( account.company_id, account )
 
             if not meli_id or not meli:
@@ -3063,7 +3687,55 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
     
 
     #VARIANT binding product_post_stock
+    def _meli_stock_rebind_variation( self, variation_id ):
+        """131 (26.337, port de 13.0.26.336): re-vincula este binding a otra variacion de ML ANTES de publicar stock.
+
+        Se valida primero (otra fila de la misma cuenta+publicacion ya tiene esa variacion => error, sin escribir)
+        y se escribe en un savepoint con flush: si la base la rechaza, el error vuelve aca y NO sale el PUT a ML.
+        Devuelve None si quedo re-vinculado, o {"error": ...}.
+        """
+        self.ensure_one()
+        variation_id = str(variation_id)
+        other = self.search([
+            ('connection_account', '=', self.connection_account.id),
+            ('conn_id', '=', self.conn_id),
+            ('conn_variation_id', '=', variation_id),
+            ('id', '!=', self.id),
+        ], limit=1)
+        if other:
+            return { "error": "Variacion ya vinculada: %s/%s esta vinculada a %s (binding %s). No se re-vincula %s (binding %s, variacion %s) ni se publica stock: revisar los SKU o la vinculacion." % (
+                self.conn_id, variation_id, other.product_id.display_name, other.id,
+                self.product_id.display_name, self.id, self.conn_variation_id ) }
+        _logger.warning("131 post stock: re-vinculando binding %s %s variacion %s -> %s",
+                        self.id, self.conn_id, self.conn_variation_id, variation_id)
+        try:
+            with self.env.cr.savepoint():
+                self.write({ 'conn_variation_id': variation_id, 'meli_id_variation': variation_id })
+        except Exception as e:
+            return { "error": "No se pudo re-vincular %s binding %s a la variacion %s: %s" % (
+                self.conn_id, self.id, variation_id, str(e).split("\n")[0] ) }
+        return None
+
     def product_post_stock( self, context=None, meli=None, optimize=False ):
+        """26.87 (H2) — despachador por registro.
+
+        El cuerpo historico era `for bindv in self: ... return ...`, con el
+        `return` DENTRO del for: al pasarle un recordset de N bindings procesaba
+        SOLO EL PRIMERO y devolvia, en silencio. Hoy los llamadores iteran de a
+        uno, asi que el bug estaba latente — pero es una trampa: cualquier
+        `bindings.product_post_stock()` publicaba una sola publicacion.
+
+        Ahora se recorren todos y se devuelve el primer error encontrado (o {}).
+        El comportamiento POR REGISTRO no cambia: el cuerpo esta intacto en
+        _product_post_stock_one()."""
+        result = {}
+        for bindv in self:
+            res = bindv._product_post_stock_one(context=context, meli=meli, optimize=optimize)
+            if res and 'error' in res and 'error' not in result:
+                result = res
+        return result
+
+    def _product_post_stock_one( self, context=None, meli=None, optimize=False ):
         #_logger.info("MercadoLibre Product product_post_stock: context: "+str(context)+" meli: "+str(meli)+" optimize:"+str(optimize))
         #_logger.info("ml.product > product_post_stock: self: "+str(self))
         for bindv in self:
@@ -3164,7 +3836,13 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                     bindT.stock_error = bindv.stock_error
                     return res
 
-            if not meli:
+            # 26.101 (un cliente): la instancia recibida puede ser de OTRA
+            # cuenta — el asistente masivo de variantes resolvia una sola y la
+            # empujaba a todos los bindings. Si no es de esta cuenta se descarta
+            # y se resuelve la propia; si lo es, se reusa (no se pierde el ahorro).
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            elif not meli:
                 meli = self.env['meli.util'].get_new_instance( account.company_id, account )
 
             # Timing debug flag - set to True to see detailed timing per operation
@@ -3195,10 +3873,33 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                     # 403 Forbidden - mark as revision_forbidden and skip
                     # This happens when trying to access an item that belongs to a different seller
                     if fetch_status_code == 403 or fetch_error == 'forbidden':
-                        _logger.warning("fetch_meli_product 403 forbidden for %s (wrong seller?) - marking as revision_forbidden", meli_id)
+                        # 26.101 (un cliente): el texto anterior era
+                        # "Item belongs to different seller", y era FALSO: las 21
+                        # publicaciones asi marcadas resultaron ser del propio
+                        # vendedor (verificado contra la API de ML con su token).
+                        # El 403 sale de PREGUNTAR con el token de otra cuenta.
+                        # El cartel mandaba al cliente a revisar sus credenciales.
+                        # OJO: el literal 'forbidden:403' es parte del contrato —
+                        # lo buscan _meli_stock_status() y el reclasificador SQL
+                        # (LIKE '%forbidden:403%'); no sacarlo del mensaje. Y no
+                        # meter palabras que ese clasificador matchea por
+                        # substring (closed / inactive / blocked / not_found /
+                        # fulfillment / multiwarehouse / not_modifiable / Ok).
+                        _logger.warning(
+                            "fetch_meli_product forbidden:403 para %s consultado con la cuenta '%s' (seller_id %s) "
+                            "- token de otra cuenta o permisos revocados - se marca revision_forbidden",
+                            meli_id, account and account.name, account and account.seller_id)
                         bindv.sudo().write({
                             'meli_stock_status': 'revision_forbidden',
-                            'stock_error': 'Item belongs to different seller: ' + str(item_json),
+                            'stock_error': (
+                                "forbidden:403 - ML denego el acceso a la publicacion " + str(meli_id) +
+                                " al consultarla con la cuenta '" + str(account and account.name) +
+                                "' (seller_id " + str(account and account.seller_id) + "). "
+                                "Casi siempre significa que se pregunto con el token de OTRA cuenta, "
+                                "no que la publicacion sea de otro vendedor. "
+                                "Verificar a que cuenta de ML pertenece esta publicacion. "
+                                "Respuesta de ML: " + str(item_json)
+                            ),
                             'stock_update': ml_datetime(str(datetime.now()))
                         })
                         bindT.stock_update = bindv.stock_update
@@ -3234,6 +3935,17 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                 bindv.stock = bindv.meli_available_quantity
                 _t3 = datetime.now()
                 _dt_avail_qty = (_t3 - _t2).total_seconds()
+
+                # 26.371 (#caso-K21): KIT de ML (tag 'bundle', user-product con bundle.type=kit). Su stock lo
+                # calcula ML con el de los componentes y rechaza cualquier PUT ("stock cannot be modified ...
+                # kit user product"). No se intenta: se deja el motivo en el binding, sin error en el log.
+                if isinstance(item_json, dict) and 'bundle' in (item_json.get('tags') or []):
+                    res = {"error": "bundle", "message": "Kit de Mercado Libre: el stock lo calcula Mercado Libre con el de sus componentes; no se publica desde Odoo."}
+                    bindv.stock_error = str(res)
+                    bindv.stock_update = ml_datetime( str( datetime.now() ) )
+                    bindT.stock_update = bindv.stock_update
+                    bindT.stock_error = bindv.stock_error
+                    return res
 
                 #if bindv.meli_inventory_id and bindv.product_id and bindv.product_id.active:
                 if bindv.product_id and bindv.product_id.active:
@@ -3351,6 +4063,9 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                         bindv.sudo().write({'meli_stock_status': 'revision_under_review'})
                     elif res.get('closed'):
                         bindv.sudo().write({'meli_stock_status': 'revision_not_modifiable'})
+                    elif res.get('not_applied'):
+                        # 26.87 (F7): ML respondio 200 pero no aplico la cantidad.
+                        bindv.sudo().write({'meli_stock_status': 'revision_not_applied'})
                     elif res.get('not_modifiable'):
                         bindv.sudo().write({'meli_stock_status': 'revision_not_modifiable'})
                     elif 'seller_sku' in str(res).lower() or 'different seller_sku' in str(res).lower():
@@ -3395,6 +4110,16 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             return {}
 
     def product_post_price( self, context=None, meli=None ):
+        """26.87 (H2) — despachador por registro (mismo caso que product_post_stock:
+        el `return` estaba dentro del for y procesaba solo el primer binding)."""
+        result = {}
+        for bindv in self:
+            res = bindv._product_post_price_one(context=context, meli=meli)
+            if res and 'error' in res and 'error' not in result:
+                result = res
+        return result
+
+    def _product_post_price_one( self, context=None, meli=None ):
         #_logger.info("MercadoLibre Product product_post_price: context: "+str(context)+" self:"+str(self))
         for bindv in self:
 
@@ -3408,9 +4133,17 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
 
             if not product or not product_template:
                 _logger.error("product_template:"+str(product_template)+" product:"+str(product))
-                continue;
+                # 26.251 (#caso-K29): antes `continue` => devolvia None y, con el contador
+                # corregido ({} = exito), un binding sin producto contaba como publicado.
+                return { 'error': 'sin_producto', 'meli_id': str(meli_id) }
 
-            if not meli:
+            # 26.101 (un cliente): la instancia recibida puede ser de OTRA
+            # cuenta — el asistente masivo de variantes resolvia una sola y la
+            # empujaba a todos los bindings. Si no es de esta cuenta se descarta
+            # y se resuelve la propia; si lo es, se reusa (no se pierde el ahorro).
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            elif not meli:
                 meli = self.env['meli.util'].get_new_instance( account.company_id, account )
 
             #
@@ -3436,11 +4169,51 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
                 #more than one
 
             except Exception as e:
-                #_logger.info("mercadolibre.product product_post_stock > exception error")
-                #_logger.info(e, exc_info=True)
-                pass;
+                # 26.251 (#caso-K29): era un `pass` mudo que devolvia {} = "publicado". Con el
+                # contador corregido eso contaria una excepcion como exito.
+                _logger.error("product_post_price: excepcion publicando el precio de %s (%s): %s",
+                              str(meli_id), str(bindv.sku or '-'), e, exc_info=True)
+                return { 'error': 'excepcion', 'meli_id': str(meli_id), 'detalle': str(e) }
 
             return {}
+
+    def _meli_manufacturing_time_value( self ):
+        """Plazo a publicar: el del binding, el del binding de la plantilla o el del producto."""
+        self.ensure_one()
+        bindT = self.binding_product_tmpl_id
+        product = self.product_id
+        value = self.meli_manufacturing_time or (bindT and bindT.meli_manufacturing_time) or (
+            product and "meli_manufacturing_time" in product._fields and product.meli_manufacturing_time) or ""
+        return str(value).strip()
+
+    def product_post_manufacturing_time( self, context=None, meli=None ):
+        """26.278 (#caso-K31): publica SOLO el plazo de entrega (MANUFACTURING_TIME) contra el item
+        padre, sin reenviar la ficha. {} en OK, dict con 'error' si ML lo rechaza."""
+        seen = set()
+        for bindv in self:
+            meli_id = bindv.conn_id
+            if not meli_id or meli_id in seen:
+                continue
+            seen.add(meli_id)
+            value = bindv._meli_manufacturing_time_value()
+            if not value:
+                return {"error": "sin_plazo", "message": _("la publicación %s no tiene cargado el plazo "
+                                                           "de entrega (Manufacturing time)") % meli_id}
+            account = bindv.connection_account
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            if not meli:
+                return {"error": "sin_conexion", "message": _("sin conexión a MercadoLibre")}
+            if meli.need_login():
+                return meli.redirect_login()
+            res = _meli_post_manufacturing_time(meli, meli_id, value)
+            if res:
+                return res
+        return {}
+
+    def action_meli_post_manufacturing_time( self ):
+        return _meli_manufacturing_time_action_result(
+            self.product_post_manufacturing_time(), len(set(self.mapped("conn_id")) - {False}))
 
     def product_post_title( self, context=None, meli=None ):
         # Empuja SOLO el título de la publicación a ML (no el producto completo).
@@ -3463,10 +4236,14 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
             if not meli_id:
                 continue;
 
-            if not meli:
+            # 26.101 (un cliente): ver _meli_instance_or_mine — un token ajeno
+            # al binding hace que ML rechace el PUT del titulo con 403.
+            if account:
+                meli = account._meli_instance_or_mine( meli )
+            elif not meli:
                 meli = self.env['meli.util'].get_new_instance( account.company_id, account )
-                if meli.need_login():
-                    return meli.redirect_login()
+            if meli and meli.need_login():
+                return meli.redirect_login()
 
             # Fuente del título: meli_title del binding -> del producto -> nombre -> del binding de plantilla
             title = bindv.meli_title or (product and (product.meli_title or product.name)) or (bindT and bindT.meli_title)
@@ -3645,8 +4422,15 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
         _logger.info("MercadoLibre Product product_meli_login")
         pass;
 
-    def _update_sale_terms( self, meli, productjson ):
-
+    def _update_sale_terms( self, meli, productjson=None, config=None ):
+        # [caso de un cliente] La firma tiene que ser la MISMA que la del metodo base
+        # (meli_oerp/models/product.py: _update_sale_terms(self, meli, productjson=None, config=None)).
+        # Este override la declaraba sin `config` mientras product.py lo llama con config=config, asi
+        # que TODA publicacion que pasa por el binding (el camino multi-cuenta, o sea el del wizard)
+        # moria con:
+        #   TypeError: _update_sale_terms() got an unexpected keyword argument 'config'
+        # `config` ademas se PROPAGA: es la configuracion por cuenta, que es justo lo que distingue
+        # al multi-cuenta; tragarsela aca daria terminos de venta de la cuenta equivocada.
         bind = self
 
         product = bind.product_id
@@ -3654,7 +4438,7 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
         terms = []
 
         if product:
-            terms = product._update_sale_terms( meli=meli, productjson=productjson )
+            terms = product._update_sale_terms( meli=meli, productjson=productjson, config=config )
 
         return terms
 
@@ -3690,16 +4474,20 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
 
         bindv_query_select_res = []
 
+        # conn_id / conn_variation_id vienen de la API de ML: van como parametro (F8b 20.0). Mismo SQL:
+        # None => NULL (igual que el "NULL" literal de antes) e int() replica el %i (False => 0).
         bindv_query_select = """select id, name, conn_id
             from mercadolibre_product
-            where connection_account=%i
+            where connection_account=%s
             and conn_id = %s
             and (conn_variation_id = %s OR conn_variation_id = '')
             and product_id = %s
-        """ % ( connection_account_id, conn_id_str, conn_variation_id_str, product_id_str )
-        _logger.info("bindV > search_all bindv_query_select:"+str(bindv_query_select))
+        """
+        bindv_query_params = ( int(connection_account_id), (str(conn_id) if conn_id else None),
+                               (str(conn_variation_id) if conn_variation_id else None), (product_id_id or None) )
+        _logger.info("bindV > search_all bindv_query_select:"+str(bindv_query_select)+" params:"+str(bindv_query_params))
         cr = MeliCr( self )
-        resquery = cr.execute(bindv_query_select)
+        resquery = cr.execute(bindv_query_select, bindv_query_params)
         bindv_query_select_res = cr.fetchall()
         _logger.info("bindV > search_all:"+str(bindv_query_select_res))
         return bindv_query_select_res
@@ -3718,11 +4506,11 @@ class MercadoLibreConnectionBindingProductVariant(models.Model):
         if all_ids_str:
             bindv_query_delete = """delete
                 from mercadolibre_product
-                where id in (%s)
-            """ % ( all_ids_str  )
-            _logger.info("bindV > unlink_all:"+str(bindv_query_delete))
+                where id in %s
+            """
+            _logger.info("bindV > unlink_all:"+str(bindv_query_delete)+" ids:"+str(all_ids_str))
             cr = MeliCr( self )
-            resquery = cr.execute( bindv_query_delete )
+            resquery = cr.execute( bindv_query_delete, (tuple(bnd[0] for bnd in bindv_all),) )
             _logger.info("bindV > unlink_all resquery:"+str(resquery))
         MeliCommit( self )
         return resquery
@@ -3797,17 +4585,18 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
     def create_payment(self):
         self.ensure_one()
         if self.account_payment_id:
-            raise ValidationError('Ya esta creado el pago')
+            raise ValidationError(_('Ya esta creado el pago'))
         if self.status != 'approved':
             return None
         journal_id = self._get_ml_journal()
         payment_method_id = self.env['account.payment.method'].search([('code','=','electronic'),('payment_type','=','inbound')])
-        if not journal_id or not payment_method_id:
-            raise ValidationError('Debe configurar el diario/metodo de pago')
+        # [26.270] el metodo lo define la linea elegida (meli_payment_method_line_for): basta el diario.
+        if not journal_id:
+            raise ValidationError(_('Debe configurar el diario/metodo de pago'))
         partner_id = self._get_ml_customer_partner()
         currency_id = self.env['res.currency'].search([('name','=',self.currency_id)])
         if not currency_id:
-            raise ValidationError('No se puede encontrar la moneda del pago')
+            raise ValidationError(_('No se puede encontrar la moneda del pago'))
 
         communication = self.payment_id
         if self._get_ml_customer_order():
@@ -3818,20 +4607,38 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
         payment_company = (journal_id and journal_id.company_id) \
                           or (self._get_ml_customer_order() and self._get_ml_customer_order().company_id) \
                           or self.env.company
+        # [26.269] Linea de metodo EXPLICITA con cuenta de pagos pendientes (sin ella el
+        # cobro queda sin asiento en 18/19). Si ninguna sirve: no se crea, aviso en la venta.
+        payment_method_line, pml_reason = meli_payment_method_line_for(journal_id, 'inbound', partner=partner_id)
+        if not payment_method_line:
+            msg = "No se registro el cobro de MercadoLibre %s: %s" % (self.payment_id, pml_reason)
+            _logger.warning('create_payment: %s', msg)
+            so_noline = self._get_ml_customer_order()
+            if so_noline:
+                meli_money_block_post(so_noline, msg, once_key="meli-pay-noline-%s" % self.payment_id)
+            return None
         vals_payment = {
                 'company_id': payment_company.id,
                 'partner_id': partner_id.id,
                 'payment_type': 'inbound',
-                'payment_method_id': payment_method_id.id,
+                'payment_method_id': payment_method_line.payment_method_id.id,
+                'payment_method_line_id': payment_method_line.id,
                 'journal_id': journal_id.id,
-                'meli_payment_id': self.id,
-                'communication': communication,
+                # [26.270] meli_payment_id apunta a mercadolibre.payments (meli_oerp), no a este binding
+                'meli_payment_id': (self.meli_oerp_payment and self.meli_oerp_payment.id) or False,
                 'currency_id': currency_id.id,
                 'partner_type': 'customer',
                 'amount': self.total_paid_amount,
                 }
+        # [26.270] 'communication' no existe en account.payment desde Odoo 14: la referencia va al
+        # campo que exista (memo 18+, ref 16/17). Antes el alta tiraba "Invalid field".
+        _ref_f = next((f for f in ('memo', 'ref') if f in self.env['account.payment']._fields), False)
+        if _ref_f:
+            vals_payment[_ref_f] = communication
         acct_payment_id = self.env['account.payment'].with_company(payment_company).create(vals_payment)
-        acct_payment_id.post()
+        # [un caso, 26.217] account.payment no tiene post() desde Odoo 14 (action_post);
+        # misma resolucion que payment_group_post de meli_oerp_accounting.
+        _meli_payment_post(acct_payment_id)
         self.account_payment_id = acct_payment_id.id
 
     def create_supplier_payment(self):
@@ -3839,17 +4646,18 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
         if self.status != 'approved':
             return None
         if self.account_supplier_payment_id:
-            raise ValidationError('Ya esta creado el pago')
+            raise ValidationError(_('Ya esta creado el pago'))
         journal_id = self._get_ml_journal()
         payment_method_id = self.env['account.payment.method'].search([('code','=','outbound_online'),('payment_type','=','outbound')])
-        if not journal_id or not payment_method_id:
-            raise ValidationError('Debe configurar el diario/metodo de pago')
+        # [26.270] el metodo lo define la linea elegida (meli_payment_method_line_for): basta el diario.
+        if not journal_id:
+            raise ValidationError(_('Debe configurar el diario/metodo de pago'))
         partner_id = self._get_ml_partner()
         if not partner_id:
-            raise ValidationError('No esta dado de alta el proveedor MercadoLibre')
+            raise ValidationError(_('No esta dado de alta el proveedor MercadoLibre'))
         currency_id = self.env['res.currency'].search([('name','=',self.currency_id)])
         if not currency_id:
-            raise ValidationError('No se puede encontrar la moneda del pago')
+            raise ValidationError(_('No se puede encontrar la moneda del pago'))
 
         communication = self.payment_id
         if self._get_ml_customer_order():
@@ -3865,14 +4673,31 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
                 'payment_type': 'outbound',
                 'payment_method_id': payment_method_id.id,
                 'journal_id': journal_id.id,
-                'meli_payment_id': self.id,
-                'communication': communication,
+                # [26.270] meli_payment_id apunta a mercadolibre.payments (meli_oerp), no a este binding
+                'meli_payment_id': (self.meli_oerp_payment and self.meli_oerp_payment.id) or False,
                 'currency_id': currency_id.id,
                 'partner_type': 'supplier',
                 'amount': self.fee_amount,
                 }
+        # [26.270] 'communication' no existe en account.payment desde Odoo 14: la referencia va al
+        # campo que exista (memo 18+, ref 16/17). Antes el alta tiraba "Invalid field".
+        _ref_f = next((f for f in ('memo', 'ref') if f in self.env['account.payment']._fields), False)
+        if _ref_f:
+            vals_payment[_ref_f] = communication
+        # [26.270] Linea de metodo SALIENTE explicita con cuenta de pagos pendientes (criterio 26.269).
+        payment_method_line, pml_reason = meli_payment_method_line_for(journal_id, 'outbound', partner=partner_id)
+        if not payment_method_line:
+            msg = "No se registro el pago de comision a %s de MercadoLibre %s: %s" % (
+                partner_id.display_name, self.payment_id, pml_reason)
+            meli_money_block_post(self._get_ml_customer_order() or self.order_id, msg,
+                                  once_key="meli-pay-noline-fee-%s" % self.payment_id)
+            return None
+        vals_payment['payment_method_id'] = payment_method_line.payment_method_id.id
+        vals_payment['payment_method_line_id'] = payment_method_line.id
         acct_payment_id = self.env['account.payment'].with_company(payment_company).create(vals_payment)
-        acct_payment_id.post()
+        # [un caso, 26.217] account.payment no tiene post() desde Odoo 14 (action_post);
+        # misma resolucion que payment_group_post de meli_oerp_accounting.
+        _meli_payment_post(acct_payment_id)
         self.account_supplier_payment_id = acct_payment_id.id
 
     def create_supplier_payment_shipment(self):
@@ -3880,19 +4705,20 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
         if self.status != 'approved':
             return None
         if self.account_supplier_payment_shipment_id:
-            raise ValidationError('Ya esta creado el pago')
+            raise ValidationError(_('Ya esta creado el pago'))
         journal_id = self._get_ml_journal()
         payment_method_id = self.env['account.payment.method'].search([('code','=','outbound_online'),('payment_type','=','outbound')])
-        if not journal_id or not payment_method_id:
-            raise ValidationError('Debe configurar el diario/metodo de pago')
+        # [26.270] el metodo lo define la linea elegida (meli_payment_method_line_for): basta el diario.
+        if not journal_id:
+            raise ValidationError(_('Debe configurar el diario/metodo de pago'))
         partner_id = self._get_ml_partner()
         if not partner_id:
-            raise ValidationError('No esta dado de alta el proveedor MercadoLibre')
+            raise ValidationError(_('No esta dado de alta el proveedor MercadoLibre'))
         currency_id = self.env['res.currency'].search([('name','=',self.currency_id)])
         if not currency_id:
-            raise ValidationError('No se puede encontrar la moneda del pago')
+            raise ValidationError(_('No se puede encontrar la moneda del pago'))
         if (not self.order_id or (not self.order_id.shipping_seller_cost>0.0 and not self.order_id.payments_shipment_amount>0.0)):
-            raise ValidationError('No hay datos de costo de envio')
+            raise ValidationError(_('No hay datos de costo de envio'))
 
         communication = self.payment_id
         if self._get_ml_customer_order():
@@ -3909,14 +4735,31 @@ class MercadoLibreConnectionBindingSaleOrderPayment(models.Model):
                 'payment_type': 'outbound',
                 'payment_method_id': payment_method_id.id,
                 'journal_id': journal_id.id,
-                'meli_payment_id': self.id,
-                'communication': communication,
+                # [26.270] meli_payment_id apunta a mercadolibre.payments (meli_oerp), no a este binding
+                'meli_payment_id': (self.meli_oerp_payment and self.meli_oerp_payment.id) or False,
                 'currency_id': currency_id.id,
                 'partner_type': 'supplier',
                 'amount': (self.order_id.payments_shipment_amount or self.order_id.shipping_seller_cost),
                 }
+        # [26.270] 'communication' no existe en account.payment desde Odoo 14: la referencia va al
+        # campo que exista (memo 18+, ref 16/17). Antes el alta tiraba "Invalid field".
+        _ref_f = next((f for f in ('memo', 'ref') if f in self.env['account.payment']._fields), False)
+        if _ref_f:
+            vals_payment[_ref_f] = communication
+        # [26.270] Linea de metodo SALIENTE explicita con cuenta de pagos pendientes (criterio 26.269).
+        payment_method_line, pml_reason = meli_payment_method_line_for(journal_id, 'outbound', partner=partner_id)
+        if not payment_method_line:
+            msg = "No se registro el pago de envio a %s de MercadoLibre %s: %s" % (
+                partner_id.display_name, self.payment_id, pml_reason)
+            meli_money_block_post(self._get_ml_customer_order() or self.order_id, msg,
+                                  once_key="meli-pay-noline-shp-%s" % self.payment_id)
+            return None
+        vals_payment['payment_method_id'] = payment_method_line.payment_method_id.id
+        vals_payment['payment_method_line_id'] = payment_method_line.id
         acct_payment_id = self.env['account.payment'].with_company(payment_company).create(vals_payment)
-        acct_payment_id.post()
+        # [un caso, 26.217] account.payment no tiene post() desde Odoo 14 (action_post);
+        # misma resolucion que payment_group_post de meli_oerp_accounting.
+        _meli_payment_post(acct_payment_id)
         self.account_supplier_payment_shipment_id = acct_payment_id.id
 
 class MercadoLibreConnectionBindingSaleOrderShipmentItem(models.Model):
@@ -3939,7 +4782,7 @@ class MercadoLibreConnectionBindingSaleOrderShipment(models.Model):
 
     connection_account = fields.Many2one( "mercadolibre.account", string="MercadoLibre Account" )
 
-    order_id = fields.Many2one("mercadolibre.sale_order",string="Order Id")
+    order_id = fields.Many2one("mercadolibre.sale_order",string="Order Id", index='btree_not_null')
     products = fields.One2many("mercadolibre.bind_shipment.item", "shipping_id", string="Product Items")
 
 class MercadoLibreConnectionBindingSaleOrderClient(models.Model):
@@ -3950,7 +4793,10 @@ class MercadoLibreConnectionBindingSaleOrderClient(models.Model):
 
     def get_display_name(self):
         for client in self:
-            client.display_name = str(client.contactPerson)+" ["+str(client.name)+"]"
+            # [26.269] 'contactPerson' no existe en el modelo: leer display_name tiraba
+            # AttributeError (formulario del contacto / many2one client), a cualquier usuario.
+            persona = client.nickname or " ".join(filter(None, [client.first_name, client.last_name]))
+            client.display_name = ("%s [%s]" % (persona, client.name or "")) if persona else (client.name or "")
 
     display_name = fields.Char(string="Display Name",store=False,compute=get_display_name)
     connection_account = fields.Many2one( "mercadolibre.account", string="MercadoLibre Account" )

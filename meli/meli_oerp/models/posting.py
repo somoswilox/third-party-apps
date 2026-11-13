@@ -23,7 +23,6 @@ from odoo import fields, models, api
 from odoo.tools.translate import _
 import logging
 
-#from ..melisdk.meli import Meli
 
 import logging
 _logger = logging.getLogger(__name__)
@@ -141,7 +140,7 @@ class mercadolibre_posting(models.Model):
     name = fields.Char('Name')
     meli_id = fields.Char('Meli Id', size=256, index=True)
     meli_variation_id = fields.Char('Meli Variante Id', index=True)
-    product_id = fields.Many2one('product.product','product_id')
+    product_id = fields.Many2one('product.product','product_id', index='btree_not_null')
     product_id_active = fields.Boolean(related='product_id.active',string="Active product")
     meli_status = fields.Char( string="Estado del producto en MLA", size=256 )
     meli_permalink = fields.Char( string="Permalink en MercadoLibre", size=512 )

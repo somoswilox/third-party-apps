@@ -25,7 +25,7 @@ import logging
 _logger = logging.getLogger(__name__)
 
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from odoo import fields, models, api
 from odoo.tools.translate import _
@@ -37,15 +37,15 @@ from .versions import *
 import hashlib
 import random
 
-#https://api.mercadolibre.com/questions/search?item_id=MLA508223205
-#https://api.mercadolibre.com/myfeeds?app_id=3219083410743656&offset=1&limit=5&access_token=APP_USR-3219083410743656-110520-aac05cf817595680f2f2bfed74062e3f-387126569
+#https://api.mercadolibre.com/questions/search?item_id=MLA<id>
+#https://api.mercadolibre.com/myfeeds?app_id=<app_id>&offset=1&limit=5&access_token=<TOKEN>
 #
 #{
 #      "_id": "5dc1f402b5365146406663c0",
-#      "resource": "/items/MLC482192418",
+#      "resource": "/items/MLC<id>",
 #      "user_id": 387126569,
 #      "topic": "items",
-#      "application_id": 3219083410743656,
+#      "application_id": <app_id>,
 #      "attempts": 1,
 #      "sent": "2019-11-05T22:13:22.377Z",
 #      "received": "2019-11-05T22:13:22.354Z",
@@ -83,6 +83,115 @@ class MercadolibreNotification(models.Model):
     seller_id = fields.Many2one("res.users",string="Seller")
 
     _unique_notification_id = versions.UniqueIndex('notification_id', message='Notification Id must be unique!')
+
+    # 26.338 (#caso-K58 sigue): el GC corre dentro del autovacuum diario y NO puede bloquear ni esperar a nadie.
+    # Staging 393 (19.0, 29-oct): SerializationFailure en el DELETE por lotes de 1000 mientras el cron 177
+    # (meli_oerp_multiple cron_order_notifications) marcaba duplicados; en prod el que pierde puede ser
+    # el cron de ventas. Ahora: candidatos por SQL plano con tope, lotes FOR UPDATE SKIP LOCKED que
+    # re-chequean las condiciones, savepoint por lote (y fila a fila si el lote choca), lock_timeout
+    # corto, y se excluye el working set del cron de ordenes. Sin commits: lo hace el autovacuum.
+    _GC_BATCH_SIZE = 500
+    _GC_MAX_BATCHES = 20
+    _GC_LOCK_TIMEOUT = '2s'
+    _GC_RECENT_HOURS = 24
+    _GC_ORDER_MAX_ATTEMPTS = 24  # = MELI_ORDER_NOTI_MAX_ATTEMPTS de meli_oerp_multiple (cron 177)
+
+    # Condiciones de borrado (alias n). Se evalúan al elegir candidatos y OTRA VEZ al bloquear.
+    _GC_WHERE = """
+        n.state IN ('SUCCESS', 'FAILED')
+        AND COALESCE(n.received, n.create_date) < %(limit_dt)s
+        AND COALESCE(n.write_date, n.create_date) < %(recent_dt)s
+        AND NOT (n.state = 'FAILED' AND n.topic = 'orders_v2'
+                 AND COALESCE(n.attempts, 0) < %(max_attempts)s)
+        AND NOT EXISTS (
+            SELECT 1 FROM mercadolibre_notification s
+             WHERE s.resource = n.resource AND s.id <> n.id
+               AND (s.state IN ('RECEIVED', 'PROCESSING')
+                    OR (s.state = 'FAILED' AND s.topic = 'orders_v2'
+                        AND COALESCE(s.attempts, 0) < %(max_attempts)s)))
+    """
+
+    def _gc_meli_delete_chunk(self, ids, params):
+        """Borra las filas de `ids` que se puedan bloquear YA y sigan cumpliendo las condiciones.
+        Corre en un savepoint propio; si choca (lock / serialización / deadlock) lo deshace y
+        devuelve None para que el llamador decida (saltear o ir fila a fila)."""
+        import psycopg2.errors as pg_errors
+        cr = self.env.cr
+        skip = (pg_errors.LockNotAvailable, pg_errors.SerializationFailure, pg_errors.DeadlockDetected)
+        try:
+            with cr.savepoint(flush=False):
+                # _GC_WHERE es una constante de clase con parámetros %(..)s: sin datos externos
+                cr.execute(  # pylint: disable=sql-injection
+                    "SELECT n.id FROM mercadolibre_notification n WHERE n.id = ANY(%(ids)s) AND "
+                    + self._GC_WHERE + " FOR UPDATE OF n SKIP LOCKED",
+                    dict(params, ids=list(ids)), log_exceptions=False)
+                locked = [r[0] for r in cr.fetchall()]
+                if not locked:
+                    return 0
+                cr.execute("DELETE FROM mercadolibre_notification WHERE id = ANY(%(ids)s)",
+                           {'ids': locked}, log_exceptions=False)
+                return cr.rowcount
+        except skip as e:
+            _logger.info("_gc_meli_notifications: lote de %s salteado (%s)", len(ids), type(e).__name__)
+            return None
+
+    @api.autovacuum
+    def _gc_meli_notifications(self, batch_size=None, max_batches=None):
+        """Retención (#caso-K58): borra notificaciones TERMINADAS (SUCCESS/FAILED) más viejas que
+        ICP meli_oerp.notification_days (default 90; 0 = no borrar). Nunca toca RECEIVED/PROCESSING
+        (meli_oerp_multiple guarda en processing_logs datos de trabajo: internal_job / sales).
+        26.338: nunca bloquea ni espera. Tampoco toca el working set del cron de órdenes: FAILED
+        orders_v2 reintentables, notificaciones de un resource con hermanas vivas, ni nada escrito
+        en las últimas 24 h. Lo que choca se saltea y lo toma la próxima vuelta."""
+        try:
+            days = int(self.env['ir.config_parameter'].sudo().get_param('meli_oerp.notification_days', 90))
+        except (TypeError, ValueError):
+            days = 90
+        if days <= 0:
+            return 0
+        batch_size = int(batch_size or self._GC_BATCH_SIZE)
+        max_batches = int(max_batches or self._GC_MAX_BATCHES)
+        now = fields.Datetime.now()
+        params = {
+            'limit_dt': now - timedelta(days=days),
+            'recent_dt': now - timedelta(hours=self._GC_RECENT_HOURS),
+            'max_attempts': self._GC_ORDER_MAX_ATTEMPTS,
+        }
+        cr = self.env.cr
+        self.env['mercadolibre.notification'].flush_model()
+        cr.execute("SELECT n.id FROM mercadolibre_notification n WHERE " + self._GC_WHERE  # pylint: disable=sql-injection
+                   + " ORDER BY n.id LIMIT %(cap)s", dict(params, cap=batch_size * max_batches))
+        ids = [r[0] for r in cr.fetchall()]
+        if not ids:
+            return 0
+        cr.execute("SHOW lock_timeout")
+        prev_lock_timeout = cr.fetchone()[0]
+        cr.execute("SELECT set_config('lock_timeout', %s, true)", (self._GC_LOCK_TIMEOUT,))
+        total = skipped = 0
+        try:
+            for i in range(0, len(ids), batch_size):
+                chunk = ids[i:i + batch_size]
+                done = self._gc_meli_delete_chunk(chunk, params)
+                if done is None and len(chunk) > 1:
+                    # el lote chocó: fila a fila, para no perder todo el lote por una sola
+                    done = 0
+                    for one in chunk:
+                        d = self._gc_meli_delete_chunk([one], params)
+                        if d is None:
+                            skipped += 1
+                        else:
+                            done += d
+                elif done is None:
+                    skipped += 1
+                    done = 0
+                total += done
+        finally:
+            cr.execute("SELECT set_config('lock_timeout', %s, true)", (prev_lock_timeout,))
+            self.env['mercadolibre.notification'].invalidate_model()
+        if total or skipped:
+            _logger.info("_gc_meli_notifications: %s notificaciones terminadas anteriores a %s borradas "
+                         "(%s días; %s salteadas por estar en uso)", total, params['limit_dt'], days, skipped)
+        return total
 
     def _prepare_values(self, values):
         company = self.env.user.company_id
@@ -146,7 +255,6 @@ class MercadolibreNotification(models.Model):
             _logger.error("Error connecting to Meli, myfeeds")
             _logger.info(e, exc_info=True)
             return {"error": "Error connecting to Meli.", "status": "520" }
-            pass;
 
         #process all notifications
         for n in messages:
@@ -190,7 +298,6 @@ class MercadolibreNotification(models.Model):
                 _logger.error("Error creating notification.")
                 _logger.info(e, exc_info=True)
                 return {"error": "Error creating notification.", "status": "520" }
-                pass;
 
         self.process_notifications(limit=1)
 
@@ -255,7 +362,7 @@ class MercadolibreNotification(models.Model):
             try:
                 res = meli.get(""+str(noti.resource), {'access_token':meli.access_token} )
                 ojson =  res.json()
-                _logger.info(ojson)
+                _logger.debug(ojson)
 
                 # Guardar último JSON de respuesta
                 noti.last_json_response = json.dumps(ojson, indent=2, ensure_ascii=False, default=str) if ojson else None
@@ -275,9 +382,14 @@ class MercadolibreNotification(models.Model):
 
                     # Skip invoice validation on notifications to avoid AFIP concurrent numbering issues
                     rsjson = morder.with_context(meli_skip_invoice_validation=True).orders_update_order_json( pdata )
-                    _logger.info("rsjson:"+str(rsjson))
+                    _logger.debug("rsjson:"+str(rsjson))
 
-                    if (rsjson and 'error' in rsjson):
+                    if (rsjson and 'error' in rsjson and meli_is_update_forbidden_error(rsjson)):
+                        # 26.309 (caso-K02): venta bloqueada (meli_update_forbidden) => no es un fallo y
+                        # reintentar no cambia nada: se cierra sin reintento.
+                        noti.state = 'SUCCESS'
+                        noti.processing_errors = "Skipped: venta bloqueada para actualizar desde ML (meli_update_forbidden)"
+                    elif (rsjson and 'error' in rsjson):
                         noti.state = 'FAILED'
                         noti.processing_errors = str(rsjson['error'])
                     else:
@@ -305,7 +417,7 @@ class MercadolibreNotification(models.Model):
             noti.processing_started = ml_datetime(str(datetime.now()))
 
             try:
-                # Resource format: /items/MLA123456789
+                # Resource format: /items/MLA<id>
                 resource = str(noti.resource)
                 if not resource.startswith('/items/'):
                     noti.state = 'FAILED'

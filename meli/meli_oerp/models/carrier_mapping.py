@@ -24,6 +24,7 @@ class MeliCarrierMapping(models.Model):
     carrier_id = fields.Many2one(
         "delivery.carrier",
         string="Transportista en Odoo",
+        index='btree_not_null',
         domain="[('active', '=', True)]",
         help="Carrier existente en Odoo al que se mapea este nombre de ML. "
              "Si está vacío, se creará uno automáticamente al recibir un envío con este nombre.",
@@ -77,10 +78,15 @@ class MeliCarrierMapping(models.Model):
             ("company_id", "=", company.id),
             ("company_id", "=", False),
         ]
-        mapping = self.search(domain, limit=1)
-
-        if mapping and mapping.carrier_id and mapping.carrier_id.active:
-            return mapping.carrier_id
+        # [26.348 #caso-K10] primero el mapeo de la compania, despues el compartido; y un mapeo
+        # compartido puede apuntar a un transportista de OTRA compania: ese no sirve
+        # (Odoo rechaza la venta por compania inconsistente).
+        mappings = self.search(domain).sorted(lambda m: 0 if m.company_id == company else 1)
+        mapping = mappings[:1]
+        for m in mappings:
+            carrier = m.carrier_id
+            if carrier and carrier.active and (not carrier.company_id or carrier.company_id == company):
+                return carrier
 
         if not mapping:
             # Crear entrada de mapeo vacía para que el usuario la asigne después

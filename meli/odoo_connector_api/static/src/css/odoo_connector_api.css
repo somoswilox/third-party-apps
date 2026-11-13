@@ -1,4 +1,23 @@
-.o_form_view .o_horizontal_separator:not(:empty) {
-  box-shadow: 0 4px 0 #e6e6e6;
-  font-size: 1.162em;
-}
+/* odoo_connector_api — estilos propios del módulo.
+ *
+ * #514-9 (cliente Z, cuenta caso-K56): acá vivía esta regla —
+ *
+ *     .o_form_view .o_horizontal_separator:not(:empty) {
+ *       box-shadow: 0 4px 0 #e6e6e6;
+ *       font-size: 1.162em;
+ *     }
+ *
+ * Se cargaba en `web.assets_backend`, o sea en TODO el backend de Odoo, y le
+ * cambiaba la sombra y el tamaño de letra a los separadores de CUALQUIER
+ * formulario: ventas, contactos, facturas, los del cliente. Nada que ver con
+ * este módulo.
+ *
+ * Y no era una regla acotable: `o_horizontal_separator` no aparece en ninguna
+ * vista ni en ningún JS de odoo_connector_api (verificado con grep sobre todo
+ * el módulo, 0 hits), así que no había ningún elemento propio al cual limitarla.
+ * Por eso se elimina en vez de scopearse.
+ *
+ * El archivo se conserva —vacío— porque está declarado en el `assets` del
+ * manifest y es el lugar donde van los estilos propios que el módulo llegue a
+ * necesitar.
+ */

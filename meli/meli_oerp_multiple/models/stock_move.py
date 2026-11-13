@@ -5,7 +5,41 @@ from odoo.tools.translate import _
 import logging
 import time
 import json
+import psycopg2
+from contextlib import contextmanager
 _logger = logging.getLogger(__name__)
+
+# CONTRATO ANTE UN ERROR DE POSTGRES EN ESTOS HOOKS  (revisado 16-sep-2026, 26.121)
+#
+# Un error de psycopg2 SIN contencion aborta la transaccion ENTERA: toda query posterior del
+# MISMO cursor muere con "current transaction is aborted, commands ignored until end of
+# transaction block". Por eso, hasta 26.120, aca NUNCA se tragaba el error: se re-lanzaba.
+#
+# Esa regla resolvia el camino del USUARIO y sigue siendo correcta para el: estos helpers
+# corren dentro de hooks de stock.move (_action_assign/_action_done/write), o sea dentro de la
+# transaccion de quien valida un albaran o confirma una venta. Tragarse el error ahi dejaria su
+# operacion por la mitad sin mensaje claro, y encima propagar es lo que la vuelve auto-curativa:
+# odoo/service/model.py::retrying() reintenta el request solo ante SerializationFailure.
+#
+# ⚠️ PERO EN UN CRON NO HAY retrying(). El job muere, Odoo le suma failure_count y --medido en
+# produccion de caso-K22 el 16-sep-- TERMINA DESACTIVANDO EL CRON: el de Amazon FBA (id 155) se
+# apago con 21 fallos, cuatro de ellos provocados por el UPDATE de mas abajo (08:59, 10:18,
+# 11:32 y un deadlock a las 14:49 contra el auto-workflow de Shopify). El hook de meli, corriendo
+# como invitado dentro del cron de OTRO modulo, se llevaba puesto al anfitrion.
+#
+# ⇒ SOLUCION: las escrituras de sello van dentro de un SAVEPOINT (_meli_stamp_savepoint).
+#   Con savepoint el fallo revierte SOLO hasta el punto de control y la transaccion de afuera
+#   queda usable, con lo cual la razon para propagar desaparece y se puede loguear y seguir.
+#   Si un lote choca se pierde el SELLO DE TIEMPO de esa pasada y se ENCOLA un job diferido
+#   ('Meli Internal Jobs') con esos productos (MELI_STAMP_RETRY); el cron "Meli Stock
+#   Diagnostic" sigue siendo la red. Se loguea WARNING con los ids para que sea rastreable.
+#
+# ⚠️ (26.221, caso-K22 12-oct) `cr.savepoint()` hace flush ANTES del SAVEPOINT: lo que choca ahi son
+#   escrituras pendientes DEL LLAMADOR y eso NO se contiene ni se traga — se flushea afuera del
+#   try y propaga tal cual (SerializationFailure ⇒ retrying() reintenta el request). Atraparlo
+#   antes del yield producia "generator didn't yield" y dejaba la tx del llamador abortada.
+#
+# ⛔ Si algun dia se saca el savepoint, HAY QUE VOLVER A PROPAGAR: las dos cosas van juntas.
 
 # Benchmark threshold in seconds - only log detailed benchmarks if total time exceeds this
 MELI_BENCHMARK_THRESHOLD = 0.5
@@ -44,6 +78,22 @@ MELI_USE_INTELLIGENT_BOTTLENECK = True
 # Example: min=36, buffer=20% → include if potential_kits < 36 * 1.2 = 43.2
 MELI_BOTTLENECK_BUFFER_PERCENT = 20
 
+
+
+def _meli_moves_vivos(moves, ret):
+    """[#caso-K65 543, 26.383] moves sobre los que corre el hook de meli DESPUES del super()._action_done.
+
+    mrp (18+: mrp/models/stock_move.py _action_done -> action_explode) explota los moves de KIT
+    que llegan sin explotar y BORRA el move original: `self` queda con un registro inexistente y
+    leerle cualquier campo tira MissingError ("El registro no existe o fue eliminado"), que
+    revierte la validacion del picking entero. Se usan los moves de `self` que siguen existiendo
+    mas los que devolvio el super (los hechos, incluye los componentes del kit). Para productos
+    normales `ret` esta contenido en `self`: el conjunto no cambia.
+    """
+    vivos = moves.exists()
+    if isinstance(ret, models.BaseModel) and ret._name == 'stock.move':
+        vivos |= ret.exists().with_env(moves.env)
+    return vivos
 
 class stock_move(models.Model):
 
@@ -106,7 +156,7 @@ class stock_move(models.Model):
             benchmark_data['bomlines_found'] = len(bomlines)
 
             if self._meli_log_enabled():
-                _logger.info(
+                _logger.debug(
                     "MELI_DEBUG _get_meli_products_to_update BOM search: "
                     "move_products=%s, bomlines_found=%d",
                     list(move_product_ids)[:5], len(bomlines)
@@ -541,10 +591,23 @@ class stock_move(models.Model):
                 account=account
             )
 
+            # [un caso, 26.217] El job diferido lo consume SOLO el cron 'Meli Internal Jobs'. Si esta
+            # apagado, el stock de esta entrada no llega nunca a ML y nadie se entera: alerta.
+            try:
+                with self.env.cr.savepoint():
+                    _cron = self.env.ref('meli_oerp_multiple.ir_cron_module_internal_jobs', raise_if_not_found=False)
+                    if not _cron or not _cron.sudo().active:
+                        account._meli_injobs_alert(
+                            "se encolo la actualizacion de %s producto(s) para el cron 'Meli Internal Jobs', "
+                            "pero ese cron esta APAGADO: el stock no se va a publicar en Mercado Libre "
+                            "hasta encenderlo (o usar 'Publicar stock')." % len(json.loads(internals.get("model_ids") or "[]")))
+            except Exception as _e:
+                _logger.warning("MELI deferred: chequeo del cron fallo: %s", _e)
+
             if self._meli_log_enabled():
                 t_total = time.time() - t_start
                 total_boms = sum(significant_data.get(c, {}).get('bom_count', 0) for c in component_ids)
-                _logger.info(
+                _logger.debug(
                     "MELI_BENCHMARK _create_component_stock_notification: "
                     "notification=%s, components=%d, total_affected_boms=%d, time=%.3fs | "
                     "components: %s",
@@ -557,6 +620,11 @@ class stock_move(models.Model):
 
             return noti
 
+        except psycopg2.Error:
+            # Ultimo recurso: un error de Postgres que NO quedo contenido por un savepoint
+            # (ver el contrato al principio del archivo). Aca la transaccion ya esta envenenada
+            # y no hay nada que salvar: se propaga, que es lo unico correcto.
+            raise
         except Exception as e:
             _logger.error(
                 "MELI_BENCHMARK _create_component_stock_notification FAILED: %s",
@@ -620,9 +688,22 @@ class stock_move(models.Model):
                 account=account
             )
 
+            # [un caso, 26.217] El job diferido lo consume SOLO el cron 'Meli Internal Jobs'. Si esta
+            # apagado, el stock de esta entrada no llega nunca a ML y nadie se entera: alerta.
+            try:
+                with self.env.cr.savepoint():
+                    _cron = self.env.ref('meli_oerp_multiple.ir_cron_module_internal_jobs', raise_if_not_found=False)
+                    if not _cron or not _cron.sudo().active:
+                        account._meli_injobs_alert(
+                            "se encolo la actualizacion de %s producto(s) para el cron 'Meli Internal Jobs', "
+                            "pero ese cron esta APAGADO: el stock no se va a publicar en Mercado Libre "
+                            "hasta encenderlo (o usar 'Publicar stock')." % len(json.loads(internals.get("model_ids") or "[]")))
+            except Exception as _e:
+                _logger.warning("MELI deferred: chequeo del cron fallo: %s", _e)
+
             if self._meli_log_enabled():
                 t_total = time.time() - t_start
-                _logger.info(
+                _logger.debug(
                     "MELI_BENCHMARK _create_deferred_stock_update_notification: "
                     "created notification %s for %d products in %.3fs | "
                     "moves=%d, direct=%d, bom_parents=%d, bomlines=%d",
@@ -637,12 +718,45 @@ class stock_move(models.Model):
 
             return noti
 
+        except psycopg2.Error:
+            # Ultimo recurso: un error de Postgres que NO quedo contenido por un savepoint
+            # (ver el contrato al principio del archivo). Aca la transaccion ya esta envenenada
+            # y no hay nada que salvar: se propaga, que es lo unico correcto.
+            raise
         except Exception as e:
             _logger.error(
                 "MELI_BENCHMARK _create_deferred_stock_update_notification FAILED: %s",
                 e, exc_info=True
             )
             return False
+
+    def _meli_post_stock_enabled(self):
+        """[caso-K15 cliente E] True si ALGUNA cuenta ML tiene 'Publicar Stock'
+        (mercadolibre_cron_post_update_stock) prendido.
+
+        Todo lo que hacen _update_meli_bindings / _force_meli_stock_update (deteccion de
+        cuello de botella por SQL sobre las LdM, expansion a padres de LdM, notificaciones
+        diferidas 'internal_job', sellos meli_stock_moves_update) existe para alimentar a ese
+        cron. Con el flag apagado en todas las cuentas, ese trabajo corre DENTRO de la
+        transaccion de stock del usuario (fabricacion, entregas, reservas) y no lo consume
+        nadie. Medido en cliente E el 01-oct-2026: miles de calculos de cuello de botella y de
+        notificaciones internal_job por dia que quedaban RECEIVED para siempre, corridas de
+        hasta 11 s y errores de serializacion que abortaban la transaccion del usuario
+        (mrp.workorder button_start).
+
+        Sin cuentas multiple (modo mono-empresa) se mantiene el comportamiento de siempre.
+        Al volver a prender 'Publicar Stock': correr una actualizacion completa de stock
+        (mientras estuvo apagado no se sellaron movimientos ni padres de LdM).
+        """
+        accounts = self.env['mercadolibre.account'].sudo().search([])
+        if not accounts:
+            return True
+        for account in accounts:
+            cfg = account.configuration or account.company_id
+            if cfg and 'mercadolibre_cron_post_update_stock' in cfg._fields \
+                    and cfg.mercadolibre_cron_post_update_stock:
+                return True
+        return False
 
     def _update_meli_bindings(self):
         """
@@ -662,6 +776,10 @@ class stock_move(models.Model):
         OPTIMIZED & BENCHMARKED: Uses batch queries and tracks performance.
         """
         if self.env.context.get('meli_skip_stock_update'):
+            return
+
+        # [caso-K15 cliente E] nadie publica stock: no calcular nada dentro de la tx del usuario.
+        if not self._meli_post_stock_enabled():
             return
 
         t_start = time.time()
@@ -698,7 +816,7 @@ class stock_move(models.Model):
                 # we can skip the notification entirely!
                 if not any_bottleneck and not sig_bom_parents:
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _update_meli_bindings BOTTLENECK_SKIP: "
                             "components=%d, all %d BOMs skipped (not bottleneck, threshold=%d kits) | "
                             "No update needed!",
@@ -710,6 +828,10 @@ class stock_move(models.Model):
                         products = self.env['product.product'].browse(list(move_product_ids))
                         try:
                             products.process_meli_stock_moves_update()
+                        except psycopg2.Error:
+                            # [caso-K15] see note at the top of the file: never swallow a DB error
+                            # (antes el except Exception lo tragaba y la tx quedaba abortada)
+                            raise
                         except Exception as e:
                             _logger.debug("Error updating component products: %s", e)
                     return
@@ -733,7 +855,7 @@ class stock_move(models.Model):
                     direct_only = move_product_ids - sig_bom_parents - component_ids - sig_bom_skipped
 
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _update_meli_bindings COMPONENT_COALESCE: "
                             "components=%d | impacted=%d BOMs, SKIPPED=%d BOMs (not bottleneck) | "
                             "notification=%s, direct_only=%d",
@@ -746,6 +868,10 @@ class stock_move(models.Model):
                         products = self.env['product.product'].browse(list(direct_only))
                         try:
                             products.process_meli_stock_moves_update()
+                        except psycopg2.Error:
+                            # [caso-K15] see note at the top of the file: never swallow a DB error
+                            # (antes el except Exception lo tragaba y la tx quedaba abortada)
+                            raise
                         except Exception as e:
                             _logger.debug("Error updating direct-only products: %s", e)
 
@@ -767,7 +893,7 @@ class stock_move(models.Model):
                 )
                 if noti:
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _update_meli_bindings DEFERRED: "
                             "%d products queued via notification (threshold=%d)",
                             product_count, MELI_DEFERRED_UPDATE_THRESHOLD
@@ -781,16 +907,22 @@ class stock_move(models.Model):
             # Small batch: update directly
             t_update = time.time()
             products = self.env['product.product'].browse(list(products_to_update))
-            try:
-                products.process_meli_stock_moves_update()
-            except Exception as e:
-                _logger.debug("Error in batch meli_stock_moves_update: %s", e)
+            with self._meli_stamp_savepoint(
+                "_update_meli_bindings DIRECT", products_to_update
+            ):
+                try:
+                    products.process_meli_stock_moves_update()
+                except psycopg2.Error:
+                    # el savepoint contiene el fallo: lo maneja el context manager
+                    raise
+                except Exception as e:
+                    _logger.debug("Error in batch meli_stock_moves_update: %s", e)
             t_update_end = time.time()
 
             t_total = time.time() - t_start
 
             if self._meli_log_enabled():
-                _logger.info(
+                _logger.debug(
                     "MELI_BENCHMARK _update_meli_bindings DIRECT: moves=%d, products=%d "
                     "(direct=%d, bom_parents=%d), bomlines=%d, total_time=%.3fs",
                     benchmark_data['moves_count'],
@@ -813,8 +945,119 @@ class stock_move(models.Model):
                         benchmark_data
                     )
 
+        except psycopg2.Error:
+            # Ultimo recurso: un error de Postgres que NO quedo contenido por un savepoint
+            # (ver el contrato al principio del archivo). Aca la transaccion ya esta envenenada
+            # y no hay nada que salvar: se propaga, que es lo unico correcto.
+            raise
         except Exception as e:
             _logger.error(e, exc_info=True)
+
+    @contextmanager
+    def _meli_stamp_savepoint(self, what, ids=None):
+        """Contiene las escrituras de SELLO de stock dentro de un SAVEPOINT.
+
+        Ver el contrato al principio del archivo. Garantias (26.221):
+
+        1. El flush de las escrituras PENDIENTES DEL LLAMADOR va AFUERA de la contencion.
+           `cr.savepoint()` hace `cr.flush()` ANTES de emitir el SAVEPOINT: si ese flush choca
+           (p.ej. el UPDATE de `standard_price` que dejo pendiente la valorizacion de una
+           devolucion), no hay savepoint que lo contenga y la tx ya quedo abortada por un
+           UPDATE que NO es de meli. Hasta 26.220 ese error se atrapaba ANTES del `yield`
+           ⇒ "generator didn't yield" (RuntimeError) ⇒ lo tragaba el `except Exception` de
+           `_update_meli_bindings` ⇒ el llamador seguia con la tx envenenada ("current
+           transaction is aborted") y `retrying()` de Odoo NO reintentaba (el error final ya
+           no era SerializationFailure). Ahora ese error propaga TAL CUAL: es del llamador, y
+           en un request HTTP Odoo lo reintenta solo.
+        2. `yield` exactamente UNA vez; nada anterior al `yield` se atrapa.
+        3. Un error de Postgres DENTRO del bloque revierte SOLO el bloque y la tx del
+           llamador queda usable (se loguea MELI_STAMP_SKIP).
+        4. Si el sello se omitio, se ENCOLA un job diferido ('Meli Internal Jobs') con esos
+           productos para que el stock se publique igual (MELI_STAMP_RETRY), en lugar de
+           depender de que haya un proximo movimiento.
+        """
+        cr = self.env.cr
+        # (1) errores aca = del llamador (o tx ya abortada): propagan sin envolver.
+        cr.flush()
+        # flush=True: su flush de entrada ya no tiene nada pendiente, y su rollback limpia la
+        # cache del ORM de lo escrito adentro del bloque.
+        sp = cr.savepoint()
+        try:
+            with sp:
+                yield
+        except psycopg2.Error as e:
+            _logger.warning(
+                "MELI_STAMP_SKIP %s: %s revertido por %s. La tx del llamador sigue usable; "
+                "se encola reintento (ids=%s)",
+                what,
+                "bloque de sello",
+                e.__class__.__name__,
+                (list(ids)[:20] if ids else "n/d"),
+            )
+            self._meli_stamp_retry_later(what, ids)
+
+    def _meli_stamp_retry_later(self, what, ids):
+        """Reintento de un sello omitido: job diferido para el cron 'Meli Internal Jobs'.
+
+        Nunca rompe al llamador: corre en su propio savepoint y cualquier fallo se loguea
+        (queda la red del cron 'Meli Stock Diagnostic')."""
+        if not ids:
+            return False
+        ids = list(ids)
+        sp = self.env.cr.savepoint()  # sin pendientes: lo previo ya se flusheo o se revirtio
+        try:
+            with sp:
+                noti = self._create_deferred_stock_update_notification(ids, {
+                    'moves_count': len(self), 'move_products': len(ids),
+                    'bom_parent_products': 0, 'bomlines_found': 0,
+                })
+            _logger.warning(
+                "MELI_STAMP_RETRY %s: %s para %d producto(s) (ids=%s)",
+                what,
+                ("encolado job diferido %s" % noti.id) if noti else "NO se pudo encolar",
+                len(ids), ids[:20],
+            )
+            return noti
+        except Exception as e:
+            _logger.warning(
+                "MELI_STAMP_RETRY %s: no se pudo encolar (%s: %s); queda el cron "
+                "'Meli Stock Diagnostic' (ids=%s)", what, e.__class__.__name__, e, ids[:20],
+            )
+            return False
+
+    # [caso de un cliente] Estados "sanos" que vuelven a la cola cuando hay un movimiento
+    # nuevo. Los de error (revision_error, revision_blocked, multiwarehouse, ...) NO: piden revision.
+    MELI_REQUEUE_HEALTHY_STATUSES = ('updated', 'updated_with_warning', 'revision_unmoved', 'revision')
+
+    def _meli_requeue_stamped_bindings(self, product_ids):
+        """[un caso, 26.223] Re-encola (meli_stock_status='update') los bindings SANOS de `product_ids`
+        cuya fecha de movimiento quedo despues del ultimo envio de stock.
+
+        _force_meli_stock_update (reservas, cancelaciones, des-reservas) sellaba la fecha con NOW()
+        pero, a diferencia de _update_meli_bindings, no recalculaba el estado: el binding seguia en
+        'updated' y la cola de stock (que solo toma update / update_rt / NULL) no lo veia hasta que
+        algo corriera fix_inconsistent_stock_status -- que el cron dedicado de stock no corre.
+        Mismos filtros que el caso 9 de mercadolibre.product._batch_update_stock_status.
+        Se llama DENTRO del savepoint del sello del llamador. Devuelve la cantidad re-encolada."""
+        if not product_ids:
+            return 0
+        self.env.cr.execute("""
+            UPDATE mercadolibre_product mp
+            SET meli_stock_status = 'update'
+            WHERE mp.product_id IN %s
+              AND mp.meli_stock_status IN %s
+              AND (mp.meli_last_status IS NULL OR mp.meli_last_status IN ('active', 'paused'))
+              AND (mp.stock_error IS NULL OR mp.stock_error = '' OR mp.stock_error LIKE '%%Ok%%')
+              AND (mp.stock_error IS NULL OR mp.stock_error NOT LIKE '%%multiwarehouse%%')
+              AND mp.meli_stock_moves_update IS NOT NULL
+              AND (mp.stock_update IS NULL OR mp.meli_stock_moves_update > mp.stock_update)
+        """, (tuple(product_ids), self.MELI_REQUEUE_HEALTHY_STATUSES))
+        n = self.env.cr.rowcount
+        if n:
+            self.env['mercadolibre.product'].invalidate_model(['meli_stock_status'])
+            if self._meli_log_enabled():
+                _logger.info("MELI _force_meli_stock_update: %d binding(s) re-encolados (update)", n)
+        return n
 
     def _force_meli_stock_update(self):
         """
@@ -833,6 +1076,10 @@ class stock_move(models.Model):
         BENCHMARKED: Tracks performance for analysis.
         """
         if self.env.context.get('meli_skip_stock_update'):
+            return
+
+        # [caso-K15 cliente E] nadie publica stock: no calcular nada dentro de la tx del usuario.
+        if not self._meli_post_stock_enabled():
             return
 
         t_start = time.time()
@@ -867,30 +1114,34 @@ class stock_move(models.Model):
                 # If NO BOMs are impacted, skip notification
                 if not any_bottleneck and not sig_bom_parents:
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _force_meli_stock_update BOTTLENECK_SKIP: "
                             "components=%d, all %d BOMs skipped (not bottleneck)",
                             len(component_ids), len(sig_bom_skipped)
                         )
                     # Still update the component product itself AND its bindings
                     if move_product_ids:
-                        self.env.cr.execute("""
-                            UPDATE product_product
-                            SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
-                            WHERE id IN %s
-                        """, (tuple(move_product_ids),))
-                        self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
+                        with self._meli_stamp_savepoint(
+                            "_force_meli_stock_update BOTTLENECK_SKIP", move_product_ids
+                        ):
+                            self.env.cr.execute("""
+                                UPDATE product_product
+                                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                                WHERE id IN %s
+                            """, (tuple(move_product_ids),))
+                            self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
 
-                        # Also update bindings for these products
-                        self.env.cr.execute("""
-                            UPDATE mercadolibre_product mp
-                            SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
-                                product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
-                            WHERE mp.product_id IN %s
-                        """, (tuple(move_product_ids),))
-                        self.env['mercadolibre.product'].invalidate_model(
-                            ['meli_stock_moves_update', 'product_meli_stock_moves_update']
-                        )
+                            # Also update bindings for these products
+                            self.env.cr.execute("""
+                                UPDATE mercadolibre_product mp
+                                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
+                                    product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                                WHERE mp.product_id IN %s
+                            """, (tuple(move_product_ids),))
+                            self.env['mercadolibre.product'].invalidate_model(
+                                ['meli_stock_moves_update', 'product_meli_stock_moves_update']
+                            )
+                            self._meli_requeue_stamped_bindings(move_product_ids)
                     return
 
                 benchmark_data = {
@@ -909,7 +1160,7 @@ class stock_move(models.Model):
                     direct_only = move_product_ids - sig_bom_parents - component_ids - sig_bom_skipped
 
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _force_meli_stock_update COMPONENT_COALESCE: "
                             "components=%d | impacted=%d BOMs, SKIPPED=%d | notification=%s",
                             len(component_ids), len(sig_bom_parents), len(sig_bom_skipped),
@@ -918,12 +1169,27 @@ class stock_move(models.Model):
 
                     # SQL update for direct-only products
                     if direct_only:
-                        self.env.cr.execute("""
-                            UPDATE product_product
-                            SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
-                            WHERE id IN %s
-                        """, (tuple(direct_only),))
-                        self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
+                        with self._meli_stamp_savepoint(
+                            "_force_meli_stock_update COMPONENT_COALESCE", direct_only
+                        ):
+                            self.env.cr.execute("""
+                                UPDATE product_product
+                                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                                WHERE id IN %s
+                            """, (tuple(direct_only),))
+                            self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
+                            # [un caso, 26.223] antes se sellaba el producto pero NO sus bindings, que
+                            # quedaban con la fecha vieja y fuera de la cola. Igual que BOTTLENECK_SKIP.
+                            self.env.cr.execute("""
+                                UPDATE mercadolibre_product mp
+                                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
+                                    product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                                WHERE mp.product_id IN %s
+                            """, (tuple(direct_only),))
+                            self.env['mercadolibre.product'].invalidate_model(
+                                ['meli_stock_moves_update', 'product_meli_stock_moves_update']
+                            )
+                            self._meli_requeue_stamped_bindings(direct_only)
 
                     return
 
@@ -943,7 +1209,7 @@ class stock_move(models.Model):
                 )
                 if noti:
                     if self._meli_log_enabled():
-                        _logger.info(
+                        _logger.debug(
                             "MELI_BENCHMARK _force_meli_stock_update DEFERRED: "
                             "%d products queued via notification (threshold=%d)",
                             product_count, MELI_DEFERRED_UPDATE_THRESHOLD
@@ -952,32 +1218,40 @@ class stock_move(models.Model):
 
             # Small batch: SQL UPDATE directly
             t_sql1 = time.time()
-            self.env.cr.execute("""
-                UPDATE product_product
-                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
-                WHERE id IN %s
-            """, (tuple(products_to_update),))
-            self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
+            binding_rows = []
+            with self._meli_stamp_savepoint(
+                "_force_meli_stock_update DIRECT", products_to_update
+            ):
+                self.env.cr.execute("""
+                    UPDATE product_product
+                    SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                    WHERE id IN %s
+                """, (tuple(products_to_update),))
+                self.env['product.product'].invalidate_model(['meli_stock_moves_update'])
             t_sql1_end = time.time()
 
             t_sql2 = time.time()
-            updated_bindings = self.env.cr.execute("""
-                UPDATE mercadolibre_product mp
-                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
-                    product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
-                WHERE mp.product_id IN %s
-                RETURNING mp.id, mp.product_id
-            """, (tuple(products_to_update),))
-            binding_rows = self.env.cr.fetchall()
-            self.env['mercadolibre.product'].invalidate_model(
-                ['meli_stock_moves_update', 'product_meli_stock_moves_update']
-            )
+            with self._meli_stamp_savepoint(
+                "_force_meli_stock_update DIRECT bindings", products_to_update
+            ):
+                self.env.cr.execute("""
+                    UPDATE mercadolibre_product mp
+                    SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
+                        product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                    WHERE mp.product_id IN %s
+                    RETURNING mp.id, mp.product_id
+                """, (tuple(products_to_update),))
+                binding_rows = self.env.cr.fetchall()
+                self.env['mercadolibre.product'].invalidate_model(
+                    ['meli_stock_moves_update', 'product_meli_stock_moves_update']
+                )
+                self._meli_requeue_stamped_bindings(products_to_update)
             t_sql2_end = time.time()
 
             t_total = time.time() - t_start
 
             if self._meli_log_enabled():
-                _logger.info(
+                _logger.debug(
                     "MELI_BENCHMARK _force_meli_stock_update DIRECT: moves=%d, products=%d "
                     "(direct=%d, bom_parents=%d), bomlines=%d, total_time=%.3fs",
                     benchmark_data['moves_count'],
@@ -1000,21 +1274,30 @@ class stock_move(models.Model):
                         benchmark_data
                     )
 
+        except psycopg2.Error:
+            # Ultimo recurso: un error de Postgres que NO quedo contenido por un savepoint
+            # (ver el contrato al principio del archivo). Aca la transaccion ya esta envenenada
+            # y no hay nada que salvar: se propaga, que es lo unico correcto.
+            raise
         except Exception as e:
             _logger.error(e, exc_info=True)
 
-    def _action_assign(self):
+    def _action_assign(self, force_qty=False):
         """Override to update MeLi bindings on stock reservation.
         Uses _force_meli_stock_update() to set date to NOW() since reservations
         don't create new moves (they just change state from confirmed to assigned).
         BENCHMARKED: Tracks total operation time."""
+        # 26.313: force_qty se pasa a super() SOLO si viene con valor. Un override ajeno que
+        # redefine _action_assign(self) sin el parametro (shopify_ept, odoo_connector_api_producteca...)
+        # y queda debajo en el MRO revienta con TypeError en cada reserva si se lo pasamos siempre.
+        assign_kwargs = {'force_qty': force_qty} if force_qty else {}
         if self.env.context.get('meli_skip_stock_update'):
-            return super(stock_move, self)._action_assign()
+            return super(stock_move, self)._action_assign(**assign_kwargs)
 
         t_start = time.time()
 
         t_super = time.time()
-        ret = super(stock_move, self.with_context(meli_skip_stock_update=True))._action_assign()
+        ret = super(stock_move, self.with_context(meli_skip_stock_update=True))._action_assign(**assign_kwargs)
         t_super_end = time.time()
 
         t_meli = time.time()
@@ -1042,8 +1325,10 @@ class stock_move(models.Model):
         t_start = time.time()
         ret = super(stock_move, self.with_context(meli_skip_stock_update=True))._action_done(cancel_backorder=cancel_backorder)
         t_super_end = time.time()
+        # [#caso-K65 543] el move de KIT que mrp explota se BORRA dentro del super: seguir solo con los vivos
+        moves = _meli_moves_vivos(self, ret)
 
-        self._update_meli_bindings()
+        moves._update_meli_bindings()
         t_meli_end = time.time()
 
         t_total = time.time() - t_start

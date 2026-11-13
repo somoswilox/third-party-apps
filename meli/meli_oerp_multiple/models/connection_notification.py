@@ -64,9 +64,34 @@ class MercadoLibreConnectionNotification(models.Model):
     model_ids = fields.Text(string="Models",readonly=False)
     model_ids_processed = fields.Text(string="Models Processed",readonly=False)
 
+    def _meli_account_for_user_id(self, user_id, fallback=None):
+        """Cuenta cuyo `seller_id` coincide con el `user_id` que ML manda en la notificación.
+
+        En multi-cuenta la notificación se BAJA con una cuenta pero el recurso puede ser de OTRA:
+        ML incluye en el payload el `user_id` del seller dueño. Ese es el único dato confiable
+        para saber con qué token hay que pedir el recurso.
+        """
+        if not user_id:
+            return fallback
+        owner = self.env["mercadolibre.account"].sudo().search(
+            [("seller_id", "=", str(user_id))], limit=1)
+        return owner or fallback
+
     def _prepare_values(self, values, company=None, account=None ):
         if not account:
             return {}
+        # FIX multi-cuenta (un cliente, 4-ago-2026): la notificación se guardaba con la cuenta que la
+        # BAJÓ, ignorando el `user_id` del payload (el seller DUEÑO del recurso). Cuando no coinciden,
+        # el fetch posterior pide el recurso con el token equivocado y ML responde 403 — para siempre,
+        # porque nada reasigna la cuenta ni marca la notificación como ajena.
+        # Medido en un cliente: 8.729 notificaciones de un seller atribuidas al otro (2.550 trabadas en
+        # PROCESSING) => 82.514 llamadas denegadas por día, 353 órdenes reintentadas ~233 veces c/u.
+        owner = self._meli_account_for_user_id(values.get("user_id"), fallback=account)
+        if owner and owner.id != account.id:
+            _logger.info(
+                "notificacion %s: user_id %s es de la cuenta '%s', no de '%s' — se reasigna",
+                values.get("_id"), values.get("user_id"), owner.name, account.name)
+            account = owner
         company = (account and account.company_id) or self.env.user.company_id
         seller_id = None
         config = account.configuration
@@ -181,7 +206,6 @@ class MercadoLibreConnectionNotification(models.Model):
                     _logger.error("Error creating notification.")
                     _logger.info(e, exc_info=True)
                     return {"error": "Error creating notification.", "status": "520" }
-                    pass;
             return res
 
             #must upgrade to /missed_feeds
@@ -196,7 +220,6 @@ class MercadoLibreConnectionNotification(models.Model):
             _logger.error("Error connecting to Meli, myfeeds")
             #_logger.info(e, exc_info=True)
             return {"error": "Error connecting to Meli.", "status": "520" }
-            pass;
 
         return {"error": "Error connecting to Meli.", "status": "520" }
 
@@ -261,6 +284,34 @@ class MercadoLibreConnectionNotification(models.Model):
 
         return result
 
+    def _meli_dedupe_state_changed(self, meli=None, orders_model=None):
+        """26.229 - ¿La orden de esta notificación cambió de estado en ML respecto de lo
+        guardado? Un GET liviano a /orders/{id}. True si: no hay mercadolibre.orders todavía, el
+        `status` de ML difiere del guardado, o ML dice 'cancelled' y la venta vinculada no.
+        Ante cualquier error de red/API devuelve False (= comportamiento anterior: se descarta)."""
+        self.ensure_one()
+        if not meli or not self.resource:
+            return False
+        try:
+            res = meli.get("" + str(self.resource), {'access_token': meli.access_token})
+            ojson = res and res.json()
+        except Exception as e:
+            _logger.info("dedupe: no se pudo consultar %s (%s): se mantiene el descarte", self.resource, e)
+            return False
+        if not isinstance(ojson, dict) or 'id' not in ojson or 'error' in ojson:
+            return False
+        Orders = orders_model if orders_model is not None else self.env['mercadolibre.orders']
+        morder = Orders.search([('order_id', '=', str(ojson['id']))], limit=1)
+        if not morder:
+            return True
+        ml_status = str(ojson.get('status') or '')
+        if ml_status != str(morder.status or ''):
+            return True
+        so = morder.sale_order
+        if ml_status == 'cancelled' and so and so.meli_status != 'cancelled':
+            return True
+        return False
+
     def _process_notification_order( self, meli=None):
         #_logger.info("meli_oerp_multiple >> _process_notification_order")
 
@@ -276,7 +327,39 @@ class MercadoLibreConnectionNotification(models.Model):
         if not meli:
             meli = self.env['meli.util'].get_new_instance( company, account )
 
+        # FIX multi-cuenta: `meli` se arma UNA vez con la cuenta del primer registro, pero el
+        # recordset puede traer notificaciones de sellers distintos. Cada una debe pedirse con el
+        # token de SU dueño; si no, ML devuelve 403. Cache por cuenta para no reinstanciar de más.
+        meli_por_cuenta = {account.id: meli}
+
         for noti in self:
+            # Reasignar la notificación a la cuenta dueña del recurso (repara además las que ya
+            # quedaron guardadas con la cuenta equivocada, sin migración de datos).
+            noti_account = noti._meli_account_for_user_id(noti.user_id, fallback=noti.connection_account or account)
+            if noti_account and noti.connection_account and noti_account.id != noti.connection_account.id:
+                _logger.info("notificacion %s reasignada de '%s' a '%s' (user_id %s)",
+                             noti.id, noti.connection_account.name, noti_account.name, noti.user_id)
+                noti.sudo().write({"connection_account": noti_account.id})
+            noti_account = noti_account or account
+            if noti_account.id not in meli_por_cuenta:
+                meli_por_cuenta[noti_account.id] = self.env['meli.util'].get_new_instance(
+                    noti_account.company_id or company, noti_account)
+            meli = meli_por_cuenta[noti_account.id]
+
+            # 26.166 (un cliente, 3 companias / 3 cuentas): el token ya era el de la cuenta DUENA
+            # (arriba), pero `company`/`config` seguian siendo los de la cuenta con la que se ENTRO
+            # (el primer registro / la cuenta que estaba drenando el cron). La orden de la cuenta B
+            # se armaba con la config -y por lo tanto la compania, el almacen y la lista de precios-
+            # de la cuenta A: si el pedido ya existia en su compania, se re-escribia con la otra y
+            # fallaba con "You must set a warehouse on your sale order to proceed" o "company
+            # inconsistencies"; si no existia, se creaba en la compania equivocada. Todo lo que
+            # depende de la cuenta sale ahora de la cuenta de ESTA notificacion.
+            noti_company = noti_account.company_id or company
+            noti_config = noti_account.configuration or config
+            Orders = self.env["mercadolibre.orders"]
+            if noti_company and (self.env.su or noti_company in self.env.user.company_ids):
+                Orders = Orders.with_company(noti_company)
+
             # IDEMPOTENCY CHECK: Skip if same resource was processed recently (5 minutes)
             # This prevents cascading loops when order updates trigger new notifications
             if noti.resource:
@@ -289,6 +372,16 @@ class MercadoLibreConnectionNotification(models.Model):
                     LIMIT 1
                 """, (noti.resource, noti.id))
                 recent_success = self.env.cr.fetchone()
+                # 26.229: el dedupe NO puede tirar un CAMBIO DE ESTADO. La cancelación llega
+                # 1-3 s después de la notificación anterior (casos
+                # reales) y se descartaba: la venta quedaba abierta con la orden cancelada
+                # en ML. Antes de descartar se mira la orden en ML: si su estado difiere del guardado
+                # (o ML dice cancelada y la venta no), se procesa igual. Un loop exige que el estado
+                # cambie en cada vuelta, así que la protección contra cascadas se mantiene.
+                if recent_success and noti._meli_dedupe_state_changed(meli=meli, orders_model=Orders):
+                    _logger.info("IDEMPOTENCY BYPASS: resource %s cambió de estado en ML desde la noti %s: se procesa",
+                                 noti.resource, recent_success[0])
+                    recent_success = None
                 if recent_success:
                     _logger.info("IDEMPOTENCY SKIP: resource %s was processed recently (noti %s)", noti.resource, recent_success[0])
                     noti.state = 'SUCCESS'
@@ -297,7 +390,9 @@ class MercadoLibreConnectionNotification(models.Model):
                     continue
 
             noti.state = 'PROCESSING'
-            #noti.attempts+= 1
+            # [caso-K15 cliente E] contar intentos (se commitea con el PROCESSING). El cron de
+            # notificaciones de ordenes deja de reintentar FAILED al llegar al tope.
+            noti.attempts = (noti.attempts or 0) + 1
             noti.processing_started = ml_datetime(str(datetime.now()))
             MeliCommit( self )
 
@@ -308,71 +403,94 @@ class MercadoLibreConnectionNotification(models.Model):
 
             while retry_count < max_retries:
                 try:
-                    #_logger.info("meli_oerp_multiple >> processing order resource:"+str(noti.resource))
-                    res = meli.get(""+str(noti.resource), {'access_token':meli.access_token} )
+                    # 26.327 (caso-K02): cada intento corre en SU savepoint. Antes un serialization error hacia
+                    # cr.rollback(): eso tiraba la transaccion ENTERA (incluido el SAVEPOINT sp_noti_N del cron
+                    # y la notificacion recien creada por el webhook), el reintento creaba la venta, el RELEASE
+                    # del llamador fallaba y su cr.rollback() descartaba la venta buena. ROLLBACK TO SAVEPOINT
+                    # deja intacto todo lo de afuera. OJO: no renueva el snapshot (REPEATABLE READ): si el
+                    # conflicto es real se repite, la noti queda FAILED y el cron la retoma con snapshot nuevo.
+                    with self.env.cr.savepoint():
+                        #_logger.info("meli_oerp_multiple >> processing order resource:"+str(noti.resource))
+                        res = meli.get(""+str(noti.resource), {'access_token':meli.access_token} )
 
-                    ojson =  res and res.json()
-                    #_logger.info("Notification fetched: ")
-                    #_logger.info(ojson)
+                        ojson =  res and res.json()
+                        #_logger.info("Notification fetched: ")
+                        #_logger.info(ojson)
 
-                    if (ojson and 'error' in ojson):
-                        noti.state = 'FAILED'
-                        noti.processing_errors = "Notification error:"+str(ojson)
-                        MeliCommit( self )
-                        break  # No retry for API errors
-
-                    if (ojson and "id" in ojson):
-
-                        morder = self.env["mercadolibre.orders"].search( [('order_id','=',ojson["id"])], limit=1 )
-
-                        #_logger.info(str(morder))
-                        pdata = { "id": False, "order_json": ojson }
-
-                        so = None
-                        if (morder and len(morder)):
-                            pdata["id"] =  morder.id
-                            so = morder.sale_order or None
-                            #Fix auto seller team assignation, if the team company doesnt match the account company  (access issues)
-                            if so:
-                                so.meli_fix_team( meli=meli, config=config )
-
-
-
-                        # Skip invoice validation on notifications to avoid AFIP concurrent numbering issues.
-                        # mail_notrack + tracking_disable: evita que Odoo escriba chatter/tracking
-                        # en cada campo modificado durante el procesamiento del cron (~2-3s por orden).
-                        rsjson = morder.with_context(
-                            meli_skip_invoice_validation=True,
-                            mail_notrack=True,
-                            tracking_disable=True,
-                            mail_auto_subscribe_no_notify=True,
-                        ).orders_update_order_json( data=pdata, meli=meli, config=config )
-                        #_logger.info("meli_oerp_multiple >> _process_notification_order >> orders_update_order_json >> rsjson: "+str(rsjson))
-
-                        if (rsjson and 'error' in rsjson):
-                            _err = str(rsjson['error'])
-                            # "orden filtrada por fecha" es un SKIP intencional (orden anterior a la
-                            # fecha de corte configurada), no un fallo: marcar SUCCESS para NO
-                            # reprocesar en loop, y loguear a INFO (no ensucia el log como ERROR).
-                            _is_date_filter = 'filtrada por fecha' in _err
-                            # "No product related to meli_id" = el ítem de ML no tiene producto en
-                            # Odoo (publicación borrada/no importada). Reintentar NO lo va a crear,
-                            # así que es otro SKIP no-reintentable: marcar SUCCESS para no reprocesar
-                            # en loop cada ~45s (la orden ya tiene su sale_order). Log a INFO.
-                            _is_no_product = 'No product related to meli_id' in _err
-                            _is_skip = _is_date_filter or _is_no_product
-                            noti.state = 'SUCCESS' if _is_skip else 'FAILED'
-                            noti.processing_errors = _err
+                        if (ojson and 'error' in ojson):
+                            noti.state = 'FAILED'
+                            noti.processing_errors = "Notification error:"+str(ojson)
                             MeliCommit( self )
-                            _msg = "meli_oerp_multiple >> _process_notification_order >> orders_update_order_json >> rsjson error: " + _err
-                            if _is_skip:
-                                _logger.info(_msg)
+                            break  # No retry for API errors
+
+                        if (ojson and "id" in ojson):
+
+                            morder = Orders.search( [('order_id','=',ojson["id"])], limit=1 )
+
+                            #_logger.info(str(morder))
+                            pdata = { "id": False, "order_json": ojson }
+
+                            so = None
+                            if (morder and len(morder)):
+                                pdata["id"] =  morder.id
+                                so = morder.sale_order or None
+                                #Fix auto seller team assignation, if the team company doesnt match the account company  (access issues)
+                                if so:
+                                    so.meli_fix_team( meli=meli, config=noti_config )
+
+
+
+                            # Skip invoice validation on notifications to avoid AFIP concurrent numbering issues.
+                            # mail_notrack + tracking_disable: evita que Odoo escriba chatter/tracking
+                            # en cada campo modificado durante el procesamiento del cron (~2-3s por orden).
+                            rsjson = morder.with_context(
+                                meli_skip_invoice_validation=True,
+                                mail_notrack=True,
+                                tracking_disable=True,
+                                mail_auto_subscribe_no_notify=True,
+                            ).orders_update_order_json( data=pdata, meli=meli, config=noti_config )
+                            #_logger.info("meli_oerp_multiple >> _process_notification_order >> orders_update_order_json >> rsjson: "+str(rsjson))
+
+                            if (rsjson and 'error' in rsjson):
+                                _err = str(rsjson['error'])
+                                # "orden filtrada por fecha" es un SKIP intencional (orden anterior a la
+                                # fecha de corte configurada), no un fallo: marcar SUCCESS para NO
+                                # reprocesar en loop, y loguear a INFO (no ensucia el log como ERROR).
+                                _is_date_filter = 'filtrada por fecha' in _err
+                                # "No product related to meli_id" = el ítem de ML no tiene producto en
+                                # Odoo (publicación borrada/no importada). Reintentar NO lo va a crear,
+                                # así que es otro SKIP no-reintentable: marcar SUCCESS para no reprocesar
+                                # en loop cada ~45s (la orden ya tiene su sale_order). Log a INFO.
+                                _is_no_product = 'No product related to meli_id' in _err
+                                # #caso-K13: la orden la está importando (o ya importó) otro proceso en paralelo
+                                # (barrido del cron de órdenes). No es un fallo: la venta queda hecha por el otro.
+                                _is_parallel = 'MELI_IMPORT_PARALLEL' in _err
+                                # 26.309 (caso-K02): venta BLOQUEADA para actualizar desde ML (meli_update_forbidden).
+                                # El freno no escribe nada y reintentar no cambia nada; como FAILED el cron de
+                                # notificaciones (RECEIVED + FAILED) la retomaba en cada corrida para siempre
+                                # (caso-K02: 60-99/h antes de 26.294, 131-238/h despues). SKIP no-reintentable.
+                                _is_forbidden = (isinstance(rsjson, dict) and bool(rsjson.get('meli_update_forbidden'))) or \
+                                    'Forbidden to upate by meli_oerp' in _err or \
+                                    'Forbidden to update sale order by meli_oerp' in _err
+                                _is_skip = _is_date_filter or _is_no_product or _is_parallel or _is_forbidden
+                                noti.state = 'SUCCESS' if _is_skip else 'FAILED'
+                                # 26.327 (caso-K02): la guarda paralela NO garantiza que la venta exista: si
+                                # el otro proceso todavia no commiteo (o fallo), como SUCCESS nadie la
+                                # retomaba salvo el barrido (limit=10). Sin mercadolibre.orders visible
+                                # queda RECEIVED: la proxima corrida del cron la ve y la actualiza.
+                                if _is_parallel and not Orders.search([('order_id', '=', ojson["id"])], limit=1):
+                                    noti.state = 'RECEIVED'
+                                noti.processing_errors = _err
+                                MeliCommit( self )
+                                _msg = "meli_oerp_multiple >> _process_notification_order >> orders_update_order_json >> rsjson error: " + _err
+                                if _is_skip:
+                                    _logger.info(_msg)
+                                else:
+                                    _logger.error(_msg)
                             else:
-                                _logger.error(_msg)
-                        else:
-                            noti.state = 'SUCCESS'
-                            noti.processing_errors = str(rsjson)
-                            MeliCommit( self )
+                                noti.state = 'SUCCESS'
+                                noti.processing_errors = str(rsjson)
+                                MeliCommit( self )
 
                     break  # Success, exit retry loop
 
@@ -385,7 +503,8 @@ class MercadoLibreConnectionNotification(models.Model):
                             _logger.warning("meli_oerp_multiple >> _process_notification_order >> serialization error, retry %d/%d", retry_count, max_retries)
                             import time
                             time.sleep(0.5 * retry_count)  # Exponential backoff: 0.5s, 1s, 1.5s
-                            self.env.cr.rollback()  # Rollback the failed transaction
+                            # 26.327: el savepoint del intento ya se revirtio al salir del `with`;
+                            # NO cr.rollback() (mataria el savepoint del llamador y su trabajo).
                             continue
                     # Non-retryable error or max retries reached
                     noti.state = 'FAILED'
@@ -635,11 +754,11 @@ class MercadoLibreConnectionNotification(models.Model):
 
     def _process_notification_item(self, meli=None):
         """
-        REFATODO: Procesa webhooks de tipo 'items' de MercadoLibre.
+        BATCH: Procesa webhooks de tipo 'items' de MercadoLibre.
         Cuando ML notifica que un item cambió, busca el binding correspondiente
         y actualiza meli_last_status en BD sin necesidad de polling.
         Requiere activar 'Process all notifications' en la configuración.
-        Ver .roots/refatodo/debug/fixes-log.md
+        Ver documentación interna
         """
         account = self.connection_account
         if not account:
@@ -653,7 +772,7 @@ class MercadoLibreConnectionNotification(models.Model):
         for noti in self:
             try:
                 resource = noti.resource or ""
-                # Extraer meli_id del resource tipo "/items/MLM1234567890"
+                # Extraer meli_id del resource tipo "/items/MLM<id>"
                 meli_id = resource.replace("/items/", "").strip()
                 if not meli_id:
                     noti.state = 'FAILED'

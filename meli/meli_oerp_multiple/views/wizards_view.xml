@@ -2,26 +2,139 @@
 <odoo>
     <data>
 
+      <!-- 26.345 (caso-K21 FASE 2): asistente Publicar rediseñado, MENOS PASOS. Mismo lenguaje visual que
+           «Importar Ventas ML» e «Importar Masivamente ML»: sheet, resumen con contadores, grilla con badges,
+           opciones avanzadas aparte, UN botón primario. Lo que falta se carga en la grilla (se guarda en la
+           plantilla) y «Revisar en ML» valida en seco contra /items/validate. -->
       <record id="view_product_template_post" model="ir.ui.view">
             <field name="name">Post to Mercado Libre</field>
             <field name="model">mercadolibre.product.template.post</field>
             <field name="inherit_id" ref="meli_oerp.view_product_template_post"/>
             <field name="arch" type="xml">
-              <xpath expr="//field[@name='force_meli_pub']" position="before">
-                      <field name="force_meli_new_pub"/>
-                        <field name="force_meli_new_title"
-                          invisible="force_meli_new_pub == False"
-                          />
-                        <field name="force_meli_new_price"
-                          invisible="force_meli_new_pub == False"
-                          />
-                        <field name="force_meli_new_pricelist"
-                          invisible="force_meli_new_pub == False"
-                          />
-                        <field name="force_meli_listing_type"
-                          invisible="force_meli_new_pub == False"
-                          />
-                      <field name="connectors"/>
+              <xpath expr="//form/group[1]" position="replace">
+                <sheet>
+                  <!-- RESUMEN -->
+                  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-bg-success" style="font-size:13px; padding:6px 12px;"
+                          invisible="p_count_ready == 0">
+                      <i class="fa fa-check-circle" title="Listos"/> <field name="p_count_ready" readonly="1" nolabel="1" class="oe_inline"/> listos para publicar
+                    </span>
+                    <span class="badge rounded-pill text-bg-warning" style="font-size:13px; padding:6px 12px;"
+                          invisible="p_count_missing == 0">
+                      <i class="fa fa-exclamation-triangle" title="Con faltantes"/> <field name="p_count_missing" readonly="1" nolabel="1" class="oe_inline"/> con datos por completar (abajo)
+                    </span>
+                    <span class="badge rounded-pill text-bg-info" style="font-size:13px; padding:6px 12px;"
+                          invisible="p_count_published == 0">
+                      <i class="fa fa-refresh" title="Ya publicados"/> <field name="p_count_published" readonly="1" nolabel="1" class="oe_inline"/> ya publicados (se actualizan)
+                    </span>
+                    <span class="badge rounded-pill text-bg-success" style="font-size:13px; padding:6px 12px;"
+                          invisible="p_count_checked == 0">
+                      <i class="fa fa-thumbs-up" title="Revisados"/> ML OK en <field name="p_count_checked" readonly="1" nolabel="1" class="oe_inline"/>
+                    </span>
+                    <span class="badge rounded-pill text-bg-danger" style="font-size:13px; padding:6px 12px;"
+                          invisible="p_count_check_error == 0">
+                      <i class="fa fa-times-circle" title="Rechazados"/> ML rechaza <field name="p_count_check_error" readonly="1" nolabel="1" class="oe_inline"/>
+                    </span>
+                  </div>
+
+                  <!-- CUENTA, PRECIO Y QUÉ HACER -->
+                  <group col="2">
+                    <group string="Cuenta y precio">
+                      <field name="connectors" options="{'no_create': True}"/>
+                      <field name="force_meli_new_pricelist" string="Lista de precios" options="{'no_create': True}"
+                             invisible="force_meli_new_pub == False"/>
+                    </group>
+                    <group string="Qué hacer">
+                      <field name="p_operation" widget="radio" nolabel="1" colspan="2"/>
+                    </group>
+                  </group>
+
+                  <!-- campos que el código usa y no se muestran -->
+                  <field name="post_stock" invisible="1"/>
+                  <field name="post_price" invisible="1"/>
+                  <field name="post_title" invisible="1"/>
+                  <field name="action_pause" invisible="1"/>
+                  <field name="w_precheck_html" invisible="1"/>
+
+                  <notebook>
+                    <page string="Productos" name="p_productos">
+                      <div class="alert alert-warning py-2 mb-2" role="status" invisible="p_count_missing == 0">
+                        <i class="fa fa-pencil" title="Completar"/> Completá lo que falta <strong>acá mismo</strong>: se guarda en el producto al revisar o publicar.
+                        La categoría marcada como sugerida la propuso Mercado Libre: podés cambiarla.
+                      </div>
+                      <field name="p_line_ids" nolabel="1">
+                        <list editable="bottom" create="false" delete="false"
+                              decoration-warning="p_state == 'missing'"
+                              decoration-info="p_state == 'published'"
+                              decoration-danger="ml_check_state == 'error'">
+                          <field name="image_128" widget="image" options="{'size': [32, 32]}" string=" " readonly="1"/>
+                          <field name="product_tmpl_id" readonly="1" force_save="1"/>
+                          <field name="default_code" optional="hide"/>
+                          <field name="p_state" widget="badge"
+                                 decoration-success="p_state == 'ready'"
+                                 decoration-warning="p_state == 'missing'"
+                                 decoration-info="p_state == 'published'"/>
+                          <field name="ml_check_state" widget="badge" optional="show"
+                                 decoration-success="ml_check_state in ('ok', 'warn')"
+                                 decoration-danger="ml_check_state == 'error'"
+                                 decoration-muted="ml_check_state == 'skip'"/>
+                          <field name="ml_check_msg" optional="show"/>
+                          <field name="meli_category" options="{'no_create': True}"/>
+                          <field name="category_suggested" widget="boolean" string="Sug." optional="show" force_save="1"/>
+                          <field name="meli_brand"/>
+                          <field name="p_manufacturer" optional="show" readonly="1"/>
+                          <field name="meli_model"/>
+                          <field name="meli_seller_package_height" placeholder="cm"/>
+                          <field name="meli_seller_package_width" placeholder="cm"/>
+                          <field name="meli_seller_package_length" placeholder="cm"/>
+                          <field name="meli_seller_package_weight" placeholder="g"/>
+                          <field name="meli_description" optional="show"/>
+                          <field name="p_vat" optional="show" readonly="1"/>
+                          <field name="p_price" optional="show" readonly="1"/>
+                          <field name="p_pricelist_id" optional="hide" readonly="1"/>
+                          <field name="p_currency_id" column_invisible="1"/>
+                          <field name="p_binding_id" column_invisible="1"/>
+                          <field name="p_missing" string="Falta" optional="show"/>
+                          <field name="p_published" column_invisible="1" force_save="1"/>
+                        </list>
+                      </field>
+                    </page>
+                    <page string="Opciones avanzadas" name="p_avanzadas">
+                      <group col="2">
+                        <group string="Publicación nueva">
+                          <field name="force_meli_new_pub"/>
+                          <field name="force_meli_new_title" invisible="force_meli_new_pub == False"/>
+                          <field name="force_meli_new_price" invisible="force_meli_new_pub == False"/>
+                          <field name="force_meli_listing_type" invisible="force_meli_new_pub == False"/>
+                        </group>
+                        <group string="Comportamiento">
+                          <field name="force_meli_pub"/>
+                          <field name="force_meli_active"/>
+                          <field name="force_meli_variant"/>
+                        </group>
+                        <group string="Impuestos (cada producto lleva el IVA de su impuesto de venta)">
+                          <field name="meli_vat_default"/>
+                          <field name="meli_import_duty_default"/>
+                        </group>
+                      </group>
+                    </page>
+                  </notebook>
+                </sheet>
+              </xpath>
+              <xpath expr="//footer" position="replace">
+                <footer>
+                  <button name="product_template_post" string="Publicar" type="object" class="btn-primary oe_highlight"
+                          icon="fa-globe" title="Publicar/Actualizar en Mercado Libre con lo cargado arriba"/>
+                  <!-- #caso-K21 (26.371): camino NUEVO (modo familia en cuentas user_product; una publicación por
+                       variante en cuentas clásicas). La publicación recuerda el camino (meli_post_mode). -->
+                  <button name="product_template_post_new" string="Publicar (nuevo)" type="object" class="btn-secondary"
+                          icon="fa-sitemap"
+                          title="Camino nuevo: cada variante es su propia publicación (familia en cuentas user product). Las actualizaciones de estas publicaciones siguen este camino."/>
+                  <button name="action_p_validate" string="Revisar en ML (sin publicar)" type="object" class="btn-secondary"
+                          icon="fa-check-square-o" invisible="p_operation != 'full'"
+                          title="Arma la publicación y le pregunta a Mercado Libre si la aceptaría, sin publicar nada"/>
+                  <button string="Cerrar" class="oe_link" special="cancel"/>
+                </footer>
               </xpath>
             </field>
       </record>
@@ -33,6 +146,22 @@
             <field name="arch" type="xml">
               <xpath expr="//button[@name='product_template_post']" position="attributes">
                 <attribute name="title" >Publicar/Actualizar Publicacion en Mercado Libre</attribute>
+              </xpath>
+            </field>
+      </record>
+
+      <!-- 26.101 (un cliente, 19-ago-2026): el asistente masivo de VARIANTES no
+           pedia cuenta y publicaba todo con un unico token (403 de ML en las
+           publicaciones de las otras cuentas). Ahora despacha por binding con la
+           cuenta de cada publicacion; este campo es un FILTRO OPCIONAL, a
+           diferencia del asistente de plantillas donde la cuenta es obligatoria. -->
+      <record id="view_product_post_multiple" model="ir.ui.view">
+            <field name="name">Post to Mercado Libre (multi-cuenta)</field>
+            <field name="model">mercadolibre.product.post</field>
+            <field name="inherit_id" ref="meli_oerp.view_product_post"/>
+            <field name="arch" type="xml">
+              <xpath expr="//field[@name='force_meli_pub']" position="before">
+                <field name="connectors" widget="many2many_tags"/>
               </xpath>
             </field>
       </record>
@@ -326,9 +455,17 @@
                 <field name="arch" type="xml">
                   <form string="Add Product" version="7.0">
                       <h2>Choose MercadoLibre Account to bind</h2>
-                      <field name="connectors" widget="many2many_tags"/>
-                      <field name="meli_id"/>
-                      <field name="meli_id_variation"/>
+                      <!-- Los campos van DENTRO de un group: un <field> suelto bajo <form>
+                           se dibuja SIN label en Odoo 17+, y asi estaba. El usuario no veia
+                           donde poner el MLA, lo dejaba vacio y la accion no hacia nada
+                           (22-sep-2026). Era el unico de los cuatro wizards de
+                           vinculacion sin etiquetas. -->
+                      <group>
+                          <field name="connectors" widget="many2many_tags"/>
+                          <field name="meli_id"/>
+                          <field name="meli_id_variation"/>
+                          <field name="bind_only"/>
+                      </group>
                       <footer>
                           <button name="product_product_add_to_connector" string="Add To Connector / Bind"  type="object" class="oe_highlight"  />
                             <button string="Cancel" class="oe_link" special="cancel" />
@@ -862,4 +999,14 @@
         </record>
 
     </data>
+      <!-- [caso-K01 #caso-K33] Refresco en lote de la foto de stock de ML en vinculaciones -->
+      <record id="action_server_meli_stock_resume_refresh" model="ir.actions.server">
+          <field name="name">Actualizar resumen de stock de MercadoLibre</field>
+          <field name="model_id" ref="model_mercadolibre_product"/>
+          <field name="binding_model_id" ref="model_mercadolibre_product"/>
+          <field name="binding_view_types">list,form</field>
+          <field name="state">code</field>
+          <field name="code">records.action_meli_stock_resume_refresh()</field>
+      </record>
+
 </odoo>

@@ -8,7 +8,7 @@
 
 {
     'name': 'Odoo Connector Api - OCAPI',
-    'version': '18.0.26.8',
+    'version': '18.0.26.394',
     'author': 'Moldeo Interactive',
     'website': 'https://www.moldeointeractive.com',
     "category": "Sales",
@@ -55,9 +55,6 @@
     'currency': 'EUR',
     'license': 'GPL-3',
     #"external_dependencies": {"python": ['pdf2image']},
-    'demo_xml': [],
-    'active': False,
-    'installable': True,
     'application': True,
 
 }

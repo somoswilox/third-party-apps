@@ -35,6 +35,45 @@ class ResCompany(models.Model):
     mercadolibre_process_payments_supplier_fea = fields.Boolean(string="Process payments fea to Supplier ML")
     mercadolibre_process_payments_supplier_shipment = fields.Boolean(string="Process payments shipping list cost to Supplier ML")
 
+    meli_supplier_fee_mode = fields.Selection(
+        selection=[
+            ("fee_amount", "Como lo informa MercadoPago (comisión + cupón)"),
+            ("charges_only", "Sólo la comisión (cargos de tipo 'fee')"),
+        ],
+        string="Importe del pago de comisión a MercadoLibre",
+        default="fee_amount",
+        help="Con qué importe se crea el pago de comisión a MercadoLibre S.R.L. "
+             "(el 'PMERCP … FEE').\n\n"
+             "• Como lo informa MercadoPago (por defecto): usa el 'fee_amount' del pago, "
+             "que viene con la comisión Y el cupón sumados. Es el comportamiento de "
+             "siempre; no cambia nada de lo que ya funciona.\n"
+             "• Sólo la comisión: usa únicamente los cargos de tipo 'fee'. El cupón queda "
+             "afuera (tiene su propio tipo de cargo).\n\n"
+             "Cuándo conviene la segunda opción: al conciliar el diario de Mercado Pago, "
+             "la línea de comisión del extracto es 'comisión + envío' y NO incluye el "
+             "cupón. Si el pago se crea con el cupón adentro, esa línea no cierra nunca y "
+             "hay que ajustarla a mano. Para que el cruce cierre del todo suele además "
+             "hacer falta activar 'Process payments shipping list cost to Supplier ML', "
+             "que genera el pago del envío.\n\n"
+             "Sólo afecta a los pagos que se creen (o se corrijan) de aquí en adelante: "
+             "los ya conciliados no se tocan."
+    )
+
+    meli_supplier_fee_exclude_charges = fields.Char(
+        string="Cargos que NO son comisión",
+        default="financing_fee,financing_add_on_fee",
+        help="Nombres de cargo que NO se suman al pago de comisión a MercadoLibre S.R.L. "
+             "cuando el importe se calcula con 'Sólo la comisión'. Separados por comas.\n\n"
+             "Por defecto quedan afuera 'financing_fee' y 'financing_add_on_fee' (el costo "
+             "de la financiación en cuotas): MercadoPago no los incluye en la línea de "
+             "comisión del extracto, así que sumarlos al pago volvería a dejar el cruce sin "
+             "cerrar.\n\n"
+             "La comisión real son los cargos 'meli_percentage_fee' y 'flat_fee'. Si en su "
+             "operación aparece algún otro cargo de tipo 'fee' que tampoco viaja en la "
+             "línea de comisión del extracto, agréguelo acá.\n\n"
+             "Vacío = se suman todos los cargos de tipo 'fee'."
+    )
+
     mercadolibre_payment_receipt_validation = fields.Selection([('draft','Borrador'),('validate','Autovalidación'),('concile','Conciliar')], string="Payment validation",default='draft')
 
     mercadolibre_process_payments_journal = fields.Many2one("account.journal",string="Account Journal for MercadoLibre")
@@ -134,10 +173,69 @@ class ResCompany(models.Model):
         help="Sincronizar charges_details de MercadoPago (retenciones ISR/IVA, comisiones detalladas, etc.)",
     )
 
+    # #caso-K72 (caso-K21 cliente F): retenciones que MercadoPago aplica al cobro, registradas con
+    # l10n_ar_withholding (Odoo 17/18/19, AR). Opt-in: apagado = el cobro se crea como siempre.
+    mercadolibre_ar_withholding_on_payment = fields.Boolean(
+        string="Registrar retenciones de MercadoPago en el cobro (AR)",
+        default=False,
+        help="Requiere el modulo 'Argentina - Payment Withholdings' (l10n_ar_withholding). "
+             "Cuando el cobro de MercadoPago trae retenciones (Impuesto a los Debitos y Creditos, "
+             "SIRTAC, IIBB...), el pago del cliente se registra por el NETO y cada retencion queda "
+             "como linea de retencion del pago, igual que al registrarla a mano. La factura queda "
+             "pagada por el total. Cada retencion necesita una regla en MercadoLibre > Impuestos "
+             "confirmada, con un impuesto de tipo 'Retencion en pago de cliente', y la compania "
+             "necesita la 'Cuenta base de impuestos' de retenciones configurada.",
+    )
+
     #mercadolibre_account_payment_receiptbook_id = fields.Many2one( "account.payment.receiptbook", string="Recibos")
     #mercadolibre_account_payment_supplier_receiptbook_id = fields.Many2one( "account.payment.receiptbook", string="Ordenes de pago")
     #mercadolibre_customer_payment_method_id = fields.Many2one( "l10n_mx_edi.payment.method", string="Customer Payment Method")
     #mercadolibre_provider_payment_method_id = fields.Many2one( "l10n_mx_edi.payment.method", string="Provider Payment Method")
+
+
+    # ------------------------------------------------------------------ #
+    #  un caso — Red de seguridad de re-facturacion (ver sale.order          #
+    #  _meli_requeue_uninvoiced en models/order.py).                      #
+    #  OJO multi-cuenta: en instancias con meli_oerp_multiple la config   #
+    #  EFECTIVA es `mercadolibre.configuration`, NO res.company. Los      #
+    #  campos gemelos de alla DEBEN tener los MISMOS defaults que estos   #
+    #  (fue el bug del un caso: defaults distintos = opcion apagada sin que  #
+    #  se note).                                                          #
+    # ------------------------------------------------------------------ #
+    mercadolibre_invoice_requeue = fields.Boolean(
+        string="Reintentar facturas que fallaron",
+        default=True,
+        help="Barrido periodico que vuelve a intentar emitir la factura de las ventas de "
+             "MercadoLibre pagadas que quedaron sin factura posteada (rechazo de ARCA, "
+             "webservice caido, tipo de documento faltante...). Requiere ademas que el cron "
+             "'MELI: reintentar facturas que quedaron sin emitir' este activo.")
+    mercadolibre_invoice_requeue_days = fields.Integer(
+        string="Dias hacia atras (reintento de factura)",
+        default=30,
+        help="Ventana en dias (por fecha del pedido) de ventas a considerar en el barrido "
+             "de re-facturacion.")
+    mercadolibre_invoice_requeue_limit = fields.Integer(
+        string="Max ventas por ciclo (reintento de factura)",
+        default=20,
+        help="Tope de ventas a re-facturar por ciclo del cron, para acotar el uso del "
+             "webservice fiscal y el tiempo del cron.")
+    mercadolibre_invoice_requeue_max_retries = fields.Integer(
+        string="Max reintentos por venta (factura)",
+        default=8,
+        help="Cuantas veces se reintenta emitir la factura de una misma venta antes de "
+             "marcarla como TRABADA, avisar por actividad y dejar de tocarla.")
+
+    def cron_meli_invoice_requeue(self):
+        """un caso - Cron de re-facturacion (mono-cuenta). `meli_oerp_multiple` lo override
+        para iterar todas las mercadolibre.account con su token y su compania."""
+        company = self.env.user.company_id
+        if not company.mercadolibre_invoice_requeue:
+            return True
+        apistate = self.env['meli.util'].get_new_instance(company)
+        if apistate and apistate.needlogin_state:
+            _logger.warning("cron_meli_invoice_requeue: cuenta SIN LOGIN (token vencido) — se omite.")
+            return True
+        return self.env['sale.order']._meli_requeue_uninvoiced(meli=apistate, config=company)
 
     def hi(self):
         return True

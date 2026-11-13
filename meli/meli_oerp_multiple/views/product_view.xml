@@ -42,6 +42,12 @@
                     confirm="¿Está seguro que quiere publicar/actualizar precio en ML?"
                     class="oe_stat_button"
                     icon="fa-globe"/>
+                  <button name='action_meli_post_manufacturing_time' type="object"
+                    string="Publicar Plazo"
+                    title="Publicar sólo el plazo de entrega (Manufacturing time) en ML, sin actualizar la publicación"
+                    confirm="¿Publicar en ML sólo el plazo de entrega de esta publicación?"
+                    class="oe_stat_button"
+                    icon="fa-clock-o"/>
                   <button name='product_template_update' type="object"
                     string="Importar"
                     title="Importar datos desde ML"
@@ -149,6 +155,7 @@
                 <group name="Basic description">
                   <field name="meli_title" />
                   <field name="meli_family_name" />
+                  <field name="meli_post_mode" readonly="1"/>
                   <field name="meli_mercadolibre_banner" />
                   <field name="meli_description" />
                   <field name="meli_category" />
@@ -254,6 +261,12 @@
                     invisible="meli_state == True or meli_id == False"
                     class="oe_stat_button"
                     icon="fa-globe"/>
+                  <button name='action_meli_post_manufacturing_time' type="object"
+                    string="Publicar Plazo"
+                    title="Publicar sólo el plazo de entrega (Manufacturing time) en ML, sin actualizar la publicación"
+                    invisible="meli_state == True or meli_id == False"
+                    class="oe_stat_button"
+                    icon="fa-clock-o"/>
                   <button name='product_meli_status_active' type="object"
                     string="Activar"
                     title="Activar producto en ML"
@@ -330,6 +343,7 @@
                   <field name="meli_stock_resume_available"/>
                   <field name="meli_stock_resume_mercadolibre"/>
                   <field name="meli_stock_resume_mercadolibre_multi"/>
+                  <field name="meli_stock_resume_date"/>
                   <field name="meli_stock_moves_update"/>
                   <field name="stock_update"/>
                   <field name="stock_error"/>
@@ -364,6 +378,7 @@
                 <group>
                   <field name="meli_title" />
                   <field name="meli_family_name" />
+                  <field name="meli_post_mode" readonly="1"/>
                   <!--field name="meli_description_banner_id" on_change="product_on_change_meli_banner( meli_description_banner_id)" /-->
                   <field name="meli_category" options="{'no_create': True}"/>
                   <field name="meli_brand"/>
@@ -516,6 +531,7 @@
                 <button name='product_template_post_stock' type="object"
                   string="Publicar Stock"
                   title="Publicar Stock en ML"
+                  context="{'meli_post_stock_notify': True}"
                   class="oe_stat_button"
                   icon="fa-globe"/>
                 <button name='product_template_post_price' type="object"
@@ -930,6 +946,7 @@
             <field name="meli_stock_resume_on_hand" optional="show"/>
             <field name="meli_stock_resume_available" optional="show"/>
             <field name="meli_stock_resume_mercadolibre_multi" optional="show"/>
+            <field name="meli_stock_resume_date" optional="hide"/>
             <field name="meli_stock_status" optional="show"/>
             <field name="meli_last_status" string="Estado ML" widget="badge" optional="show"
                    decoration-success="meli_last_status == 'active'"

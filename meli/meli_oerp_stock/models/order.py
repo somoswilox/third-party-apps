@@ -28,12 +28,60 @@ import pdb
 import requests
 import re
 
+from datetime import timedelta
+from datetime import datetime as _datetime  # alias: los `import *` de abajo re-ligan `datetime`
+
 from .product_sku_rule import *
 from odoo.addons.meli_oerp.models.versions import *
+from odoo.exceptions import UserError as _MeliUserError, ValidationError as _MeliValidationError
+
+class _MeliCloseNotClosed(Exception):
+    """Interno del barrido un caso: fuerza el rollback del savepoint de un pedido
+    cuando `meli_deliver` reportó errores en `res['errors']`."""
+
+
+
+try:
+    import inspect as _inspect
+    # 26.394: `routine` (modo 'important') existe desde meli_oerp 26.394; con uno anterior no se pasa.
+    _MELI_POST_HAS_ROUTINE = 'routine' in _inspect.signature(meli_message_post).parameters
+except Exception:
+    _MELI_POST_HAS_ROUTINE = False
+
+
+def _meli_stock_post_once(order, body, config, once_key):
+    """26.394 (un caso): aviso de almacén UNA vez por venta+almacén, respetando
+    mercadolibre_notification_mode (lo hace meli_message_post). Es aviso de RUTINA: con el
+    modo 'important' va sólo al log.
+
+    Guarda de legado LOCAL (no usa el `legacy_text` de meli_oerp 26.394) para que este
+    módulo no exija un meli_oerp nuevo: si la venta ya tiene el texto sin marca (ventas
+    anteriores a 26.394), no se repostea."""
+    try:
+        if order.id and order.env['mail.message'].sudo().search_count([
+                ('model', '=', order._name), ('res_id', '=', order.id),
+                ('body', 'like', body)], limit=1):
+            _logger.debug("ML(stock) aviso ya presente en %s: %s", order.name, body)
+            return
+    except Exception as e:
+        _logger.warning("ML(stock) legacy check failed on %s: %s", order.id, e)
+    kw = {'routine': True} if _MELI_POST_HAS_ROUTINE else {}
+    meli_message_post(order, body, config=config, once_key=once_key, **kw)
+
 
 class SaleOrder(models.Model):
 
     _inherit = "sale.order"
+
+    # FIX un caso v2 — rotación del barrido de cierre: último intento (ok, error o
+    # salteado). El barrido excluye los intentados hace menos de 24 h y prioriza
+    # los nunca intentados, así un bloque que falla siempre (p.ej. por
+    # stock_no_negative) no ocupa el lote entero en cada corrida.
+    meli_close_attempt_date = fields.Datetime(
+        string="ML: último intento de cierre de entrega",
+        copy=False, readonly=True, index=True,
+        help="Técnico (barrido): fecha del último intento automático de "
+             "cerrar las entregas de un pedido ya entregado en MercadoLibre.")
 
     def _meli_order_update( self, config=None, data=None ):
         #_logger.info("_meli_order_update")
@@ -42,14 +90,15 @@ class SaleOrder(models.Model):
             wh_id = order._meli_get_warehouse_id(config=config)
 
             if wh_id and order.warehouse_id!=wh_id:
-                # FIX #415 (NipSkin/Inity 520, tickets #414/#415): el patron MeliRollback
+                # FIX un caso (un cliente, tickets un caso): el patron MeliRollback
                 # (orders.py orders_update_order) revierte el write del warehouse y la 2da
                 # llamada re-posteaba -> spam. La asignacion se MANTIENE, pero el mensaje se
                 # postea solo si no hay ya uno identico reciente (slice acotado por performance).
+                # 26.394 (un caso): la guarda miraba sólo los últimos 20 mensajes ⇒ cuando el
+                # chatter crecía el aviso volvía a salir en cada sync. Ahora: una vez por venta y
+                # almacén (once_key + guarda de legado para ventas viejas sin marca).
                 _wh_msg = "ML(stock): Almacen; asignando: "+str(wh_id and wh_id.name)
-                _wh_seen = order.message_ids[:20].filtered(lambda m: m.body and _wh_msg in (m.body or ""))
-                if not _wh_seen:
-                    meli_message_post(order, _wh_msg, config=config)
+                _meli_stock_post_once(order, _wh_msg, config, "stock-wh-%s-%s" % (order.id, wh_id.id))
                 order.warehouse_id = wh_id
 
             #is_full = 'order_json' in data
@@ -58,11 +107,9 @@ class SaleOrder(models.Model):
                 #seleccionar almacen para la orden
                 wh_id = order._meli_get_warehouse_id(config=config)
                 if wh_id and order.warehouse_id!=wh_id:
-                    # FIX #415: mismo guard de idempotencia que arriba (patron MeliRollback).
+                    # FIX un caso: mismo guard de idempotencia que arriba (patron MeliRollback).
                     _wh_msg = "ML(stock): Almacen; asignando para fulfillment: "+str(wh_id and wh_id.name)
-                    _wh_seen = order.message_ids[:20].filtered(lambda m: m.body and _wh_msg in (m.body or ""))
-                    if not _wh_seen:
-                        meli_message_post(order, _wh_msg, config=config)
+                    _meli_stock_post_once(order, _wh_msg, config, "stock-wh-full-%s-%s" % (order.id, wh_id.id))
                     order.warehouse_id = wh_id
 
             order_type = self.env["mercadolibre.orders"].get_sale_order_type( config=config, sale_order=order, shipment=(order and order.meli_shipment) )
@@ -219,51 +266,360 @@ class SaleOrder(models.Model):
             )
 
         # 3) Procesamos cada OUT seguro
+        # FIX un caso v2 (savepoint): cada picking corre dentro de un SAVEPOINT. Si
+        # `button_validate` falla a mitad de camino (caso típico: stock_no_negative
+        # "would become negative"), la escritura parcial del quant, el heal de
+        # reservas (un caso) y el qty_done forzado quedaban sucios en la transacción y
+        # el `cr.commit()` de quien llamó (barrido un caso, cron de órdenes) los
+        # persistía: el stock bajaba SIN ningún move done (un cliente, 28-sep-2026).
+        # Al salir por excepción, el savepoint hace `cr.clear()` (descarta el cache
+        # sucio) + ROLLBACK TO SAVEPOINT: ese picking queda exactamente como estaba.
         for spick in pickings:
             try:
-                _logger.debug("[meli_deliver] Procesando %s (%s) state=%s", spick.name, spick.id, spick.state)
+                with self.env.cr.savepoint():
+                    _logger.debug("[meli_deliver] Procesando %s (%s) state=%s", spick.name, spick.id, spick.state)
 
-                # Confirmar si está en borrador
-                if spick.state == 'draft':
-                    spick.action_confirm()
+                    # Confirmar si está en borrador
+                    if spick.state == 'draft':
+                        spick.action_confirm()
 
-                # Asignar si está confirmado/en espera (reserva si hay stock)
-                if spick.state in ('confirmed', 'waiting'):
-                    spick.action_assign()
+                    # Asignar si está confirmado/en espera (reserva si hay stock)
+                    if spick.state in ('confirmed', 'waiting'):
+                        spick.action_assign()
 
-                # --- FIX #353 v2: sanear reservas fantasma antes de validar ---
-                # Lógica canónica extraída al helper stock.picking._meli_heal_phantom_reserve
-                # (ver models/stock_location.py). Detecta desync ML↔quant
-                # (move_line.reserved > stock_quant.reserved_quantity), intenta
-                # do_unreserve+action_assign y, si el guard de _action_done lo impide,
-                # alinea el quant vía SQL (fallback robusto). El MISMO helper corre en
-                # el override de button_validate para cubrir el cierre MANUAL del UI.
-                if spick.state not in ('done', 'cancel'):
-                    spick._meli_heal_phantom_reserve()
+                    # --- FIX 26.381 (6-nov-2026): reserva SIN lote de un producto con lote/serie
+                    # (legado de versiones sin savepoint). Ver stock.picking._meli_heal_lotless_reserve.
+                    if spick.state not in ('done', 'cancel'):
+                        spick._meli_heal_lotless_reserve()
 
-                # Si sigue sin cantidades hechas, forzamos qty_done
-                if spick.state not in ('done', 'cancel'):
-                    # Si no hay qty_done en ninguna línea, lo forzamos
-                    _qf = 'quantity' if not hasattr(spick.move_line_ids[:1], 'qty_done') else 'qty_done'
-                    all_zero = all(not getattr(ml, _qf, 0.0) for ml in spick.move_line_ids)
-                    if all_zero or not spick.move_line_ids:
-                        changed = _force_qty_done(spick)
-                        _logger.info("[meli_deliver] %s qty_done %s", spick.name, "forzado" if changed else "no requerido")
+                    # --- FIX un caso v2: sanear reservas fantasma antes de validar ---
+                    # Lógica canónica extraída al helper stock.picking._meli_heal_phantom_reserve
+                    # (ver models/stock_location.py). Detecta desync ML↔quant
+                    # (move_line.reserved > stock_quant.reserved_quantity), intenta
+                    # do_unreserve+action_assign y, si el guard de _action_done lo impide,
+                    # alinea el quant vía SQL (fallback robusto). El MISMO helper corre en
+                    # el override de button_validate para cubrir el cierre MANUAL del UI.
+                    # FIX cierre sin stock (29-oct-2026): ¿la cantidad hecha la puso ESTE
+                    # cierre automático? Ver _meli_heal_phantom_reserve (guarda del operador).
+                    _auto_qty = False
+                    if spick.state not in ('done', 'cancel'):
+                        spick._meli_heal_phantom_reserve()
 
-                # Validar evitando wizards (backorder / immediate transfer)
-                if spick.state not in ('done', 'cancel'):
-                    spick.with_context(skip_backorder=True, skip_immediate=True).button_validate()
-                    _logger.info("[meli_deliver] Validado %s (%s)", spick.name, spick.id)
+                    # Si sigue sin cantidades hechas, forzamos qty_done
+                    if spick.state not in ('done', 'cancel'):
+                        # Si no hay qty_done en ninguna línea, lo forzamos
+                        _qf = 'quantity' if not hasattr(spick.move_line_ids[:1], 'qty_done') else 'qty_done'
+                        all_zero = all(not getattr(ml, _qf, 0.0) for ml in spick.move_line_ids)
+                        if all_zero or not spick.move_line_ids:
+                            changed = _force_qty_done(spick)
+                            _auto_qty = bool(changed)
+                            _logger.info("[meli_deliver] %s qty_done %s", spick.name, "forzado" if changed else "no requerido")
+
+                    # Validar evitando wizards (backorder / immediate transfer)
+                    if spick.state not in ('done', 'cancel'):
+                        # FIX cierre sin stock: si la cantidad la forzó este cierre, el saneo del
+                        # override de button_validate NO la toma como carga del operador.
+                        spick.with_context(skip_backorder=True, skip_immediate=True,
+                                           meli_deliver_forced_qty=_auto_qty).button_validate()
+                        _logger.info("[meli_deliver] Validado %s (%s)", spick.name, spick.id)
 
             except Exception as e:
-                _logger.error("[meli_deliver] Error procesando %s (%s): %s", spick.name, spick.id, e)
-                _logger.info(e, exc_info=True)
-                # registramos pero seguimos con el resto
-                res.setdefault('errors', []).append({'picking': spick.name, 'id': spick.id, 'error': str(e)})
+                # [caso-K02, 26.307] Una REGLA DE NEGOCIO (UserError/ValidationError: típicamente falta de
+                # stock con stock negativo bloqueado) no es un error de código: WARNING sin traceback.
+                # En caso-K02 el barrido de cierre dejó 46 ERROR + traceback en una sola corrida por esto.
+                _business = isinstance(e, (_MeliUserError, _MeliValidationError))
+                if _business:
+                    _logger.warning("[meli_deliver] %s (%s) no validado (regla de negocio): %s",
+                                    spick.name, spick.id, e)
+                else:
+                    _logger.error("[meli_deliver] Error procesando %s (%s): %s", spick.name, spick.id, e)
+                    _logger.info(e, exc_info=True)
+                # El savepoint ya revirtió TODO lo de este picking (quant, reservas,
+                # qty_done). Registramos y seguimos con el resto; quien llama DEBE
+                # mirar res['errors'] (el barrido un caso lo cuenta como error).
+                res.setdefault('errors', []).append({'picking': spick.name, 'id': spick.id, 'error': str(e),
+                                                     'business': _business})
                 continue
 
         return res
 
+    # ------------------------------------------------------------------
+    # FIX un caso — cierre de entregas ML que quedaron abiertas post-`delivered`
+    # ------------------------------------------------------------------
+    def _meli_sweep_config(self):
+        """Config EFECTIVA del pedido para el barrido de cierre.
+
+        Mismo criterio que el dispatcher multi-cuenta (`account.configuration or
+        account.company_id`): manda la `mercadolibre.configuration` de la cuenta ML,
+        y recién si no hay, la compañía.
+
+        ⚠️ CUIDADO AL TOCAR ESTO: los campos homónimos de `res.company`
+        (`mercadolibre_order_confirmation*`) son LEGACY y en instalaciones reales
+        quedan en `manual`/vacío mientras la config viva está en la
+        `mercadolibre.configuration` de la cuenta. Si esta resolución cae a la
+        compañía cuando no debe, el barrido se auto-apaga en silencio (verificado en
+        un cliente: compañía `manual` vs configuración `paid_confirm_shipped_deliver`).
+        Por eso se busca la cuenta por tres caminos antes de rendirse.
+        """
+        self.ensure_one()
+        account = False
+        # 1) campo propio del pedido (si algún módulo lo agrega)
+        if 'connection_account' in self._fields:
+            account = self.connection_account
+        # 2) camino real en meli_oerp_multiple: la cuenta vive en la orden ML
+        if not account and self.meli_orders:
+            mo = self.meli_orders[:1]
+            if 'connection_account' in mo._fields:
+                account = mo.connection_account
+        # 3) mono-cuenta: si la compañía tiene UNA sola cuenta ML, es esa
+        if not account:
+            Account = self.env.get('mercadolibre.account')
+            if Account is not None:
+                accounts = Account.sudo().search(
+                    [('company_id', '=', (self.company_id or self.env.user.company_id).id)], limit=2)
+                if len(accounts) == 1:
+                    account = accounts
+        config = (account and getattr(account, 'configuration', False)) or False
+        return config or self.company_id or self.env.user.company_id
+
+    def _meli_delivery_on_delivered_enabled(self, config):
+        """True si la config del cliente pide entregar cuando ML ya entregó.
+
+        El barrido NO cambia la política del cliente: sólo termina lo que su propia
+        configuración ya pide. Si entrega a mano (`manual`), no hace nada.
+        Cubre las dos familias de opciones que disparan `meli_deliver`:
+          - `mercadolibre_order_confirmation_delivery[_full]` (`confirm_ml_stock`):
+            `paid_confirm_deliver` / `paid_confirm_shipped_deliver`
+          - `mercadolibre_order_confirmation[_full]` (`confirm_ml`): `paid_delivered`
+        """
+        self.ensure_one()
+        is_full = (self.meli_shipment_logistic_type == "fulfillment")
+
+        def _val(name):
+            return (name in config._fields and config[name]) or ""
+
+        deli = _val("mercadolibre_order_confirmation_delivery_full" if is_full
+                    else "mercadolibre_order_confirmation_delivery")
+        conf = _val("mercadolibre_order_confirmation_full" if is_full
+                    else "mercadolibre_order_confirmation")
+        return ("paid_confirm_deliver" in deli
+                or "paid_confirm_shipped_deliver" in deli
+                or "paid_delivered" in conf)
+
+    # Parámetros del barrido (ir.config_parameter). Se leen en cada corrida:
+    # cambiarlos no requiere -u ni reinicio.
+    _MELI_CLOSE_DAYS_PARAM = 'meli_oerp_stock.close_delivered_days'
+    _MELI_CLOSE_LIMIT_PARAM = 'meli_oerp_stock.close_delivered_limit'
+    _MELI_CLOSE_DAYS_DEFAULT = 180
+    _MELI_CLOSE_LIMIT_DEFAULT = 100
+    _MELI_CLOSE_RETRY_HOURS = 24
+
+    def _meli_close_param(self, key, default):
+        raw = self.env['ir.config_parameter'].sudo().get_param(key)
+        try:
+            val = int(raw) if raw not in (None, False, '') else default
+        except (TypeError, ValueError):
+            _logger.warning("[meli_close_delivered] parámetro %s=%r inválido, uso %s", key, raw, default)
+            val = default
+        return val if val > 0 else default
+
+    @api.model
+    def _meli_close_delivered_candidates(self, days, limit):
+        """Pedidos entregados en ML con alguna salida ML todavía abierta.
+
+        Lote ROTATIVO (FIX un caso v2): excluye los intentados hace menos de
+        `_MELI_CLOSE_RETRY_HOURS` y prioriza los nunca intentados; dentro de cada
+        grupo, el más viejo primero. Antes el orden era sólo `date_order asc`
+        con `limit`: los mismos pedidos que fallan siempre (stock_no_negative)
+        ocupaban el lote entero y el resto nunca se procesaba.
+        """
+        now = fields.Datetime.now()
+        cutoff = now - timedelta(days=days)
+        retry_cutoff = now - timedelta(hours=self._MELI_CLOSE_RETRY_HOURS)
+        candidates = self.env['sale.order'].sudo().search([
+            ('state', 'in', ('sale', 'done')),
+            ('meli_order_id', '!=', False),
+            ('meli_status', 'not in', ('cancelled', 'invalid')),
+            ('meli_shipment.status', '=', 'delivered'),
+            ('date_order', '>=', cutoff),
+            # prefiltro barato en SQL (positivo = "algún picking abierto"); el
+            # criterio real es `_meli_is_ml_out` más abajo.
+            ('picking_ids.state', 'in', ('draft', 'waiting', 'confirmed', 'assigned')),
+            '|', ('meli_close_attempt_date', '=', False),
+                 ('meli_close_attempt_date', '<', retry_cutoff),
+        ], order='date_order asc, id asc')
+        candidates = candidates.sorted(key=lambda o: (
+            bool(o.meli_close_attempt_date),
+            o.meli_close_attempt_date or _datetime.min,
+            o.date_order or _datetime.min,
+            o.id,
+        ))
+        # Filtro real en Python: `_meli_is_ml_out` es el mismo criterio que usa
+        # `meli_deliver` (outgoing, interno/tránsito → cliente, no devolución, no
+        # crossdock), así que no hay riesgo de validar un picking que meli_deliver
+        # después descartaría.
+        todo = self.env['sale.order'].sudo()
+        for order in candidates:
+            if any(p._meli_is_ml_out() for p in order.picking_ids):
+                todo |= order
+            if len(todo) >= limit:
+                break
+        return todo, len(candidates)
+
+    @api.model
+    def _meli_close_delivered_process(self, orders, commit=True):
+        """Intenta cerrar las entregas de `orders`, un pedido por vez.
+
+        Cada pedido corre en un SAVEPOINT: si `meli_deliver` reporta CUALQUIER
+        error en `res['errors']` (o levanta), se revierte el pedido COMPLETO y se
+        cuenta como error — nunca como cerrado. Luego se sella
+        `meli_close_attempt_date` (también en error y salteado) para que el lote
+        rote. `commit=True` (cron) commitea pedido a pedido; los tests pasan
+        `commit=False`.
+        """
+        cr = self.env.cr
+        ok = errors = skipped = blocked = 0
+        failed = []
+        blocked_names = []
+        for order in orders:
+            status = 'error'
+            detail = ''
+            business = False
+            try:
+                with cr.savepoint():
+                    config = order._meli_sweep_config()
+                    if not order._meli_delivery_on_delivered_enabled(config):
+                        status = 'skipped'
+                    else:
+                        res = order.meli_deliver(config=config) or {}
+                        errs = res.get('errors') or []
+                        if errs:
+                            business = all(e.get('business') for e in errs)
+                            detail = '; '.join("%s: %s" % (e.get('picking'), str(e.get('error'))[:200])
+                                               for e in errs[:3])
+                            # revierte el pedido entero (defensa en profundidad:
+                            # meli_deliver ya revirtió cada picking fallido)
+                            raise _MeliCloseNotClosed(detail)
+                        status = 'ok'
+            except _MeliCloseNotClosed:
+                status = 'error'
+            except Exception as e:
+                status = 'error'
+                detail = str(e)[:300]
+                business = isinstance(e, (_MeliUserError, _MeliValidationError))
+            if status == 'ok':
+                ok += 1
+                _logger.info("[meli_close_delivered] cerrado %s", order.name)
+            elif status == 'skipped':
+                skipped += 1
+            else:
+                errors += 1
+                failed.append(order.id)
+                if business:
+                    # [caso-K02, 26.307] falta de stock u otra regla de negocio: se reintenta en
+                    # _MELI_CLOSE_RETRY_HOURS; va al resumen de abajo, no un ERROR por pedido.
+                    blocked += 1
+                    blocked_names.append(order.name)
+                    _logger.debug("[meli_close_delivered] %s no cerrado (regla de negocio): %s",
+                                  order.name, detail)
+                else:
+                    _logger.error("[meli_close_delivered] %s NO cerrado (revertido): %s", order.name, detail)
+            try:
+                with cr.savepoint():
+                    order.with_context(tracking_disable=True).write(
+                        {'meli_close_attempt_date': fields.Datetime.now()})
+            except Exception as e:
+                _logger.error("[meli_close_delivered] no pude sellar el intento de %s: %s", order.name, e)
+            if commit:
+                cr.commit()
+        if blocked:
+            _logger.warning(
+                "[meli_close_delivered] %s pedidos sin cerrar por regla de negocio (p.ej. falta de "
+                "stock); revertidos, se reintentan en %sh: %s%s", blocked, self._MELI_CLOSE_RETRY_HOURS,
+                ', '.join(blocked_names[:20]), ' …' if len(blocked_names) > 20 else '')
+        return {'processed': ok, 'errors': errors, 'skipped': skipped, 'blocked': blocked,
+                'failed_order_ids': failed}
+
+    @api.model
+    def cron_meli_close_delivered_pickings(self, days=None, limit=None):
+        """FIX un caso — cierra las entregas ML que quedaron abiertas después de que
+        MercadoLibre marcó el envío como `delivered`.
+
+        AGUJERO QUE TAPA: `meli_deliver()` sólo corre cuando el conector procesa el
+        pedido (`confirm_ml` / `confirm_ml_stock`) y el envío ya figura entregado. Si
+        el pedido entra a Odoo ANTES de que ML lo marque `delivered`, después **nadie
+        lo vuelve a mirar**: el sweep de importación va `date_desc` (ya no lo alcanza)
+        y `orders_resync_status` lo EXCLUYE por diseño (`shipment_status not in
+        ('delivered',)`, un caso). El picking de salida queda `assigned` para siempre
+        reteniendo la reserva, y el cliente ve "cantidades reservadas que no se liberan".
+
+        SIN COSTO DE API: trabaja sólo con datos que ya están en Odoo.
+
+        - Respeta la config del cliente (`_meli_delivery_on_delivered_enabled`): si
+          entrega a mano, el barrido no hace nada.
+        - Idempotente: `meli_deliver` saltea lo que ya está `done`/`cancel`.
+        - FIX un caso v2 (28-sep-2026, un cliente): un pedido con CUALQUIER error en
+          `meli_deliver` se revierte entero y se cuenta como error (antes se
+          commiteaba y contaba "cerrado": el quant bajaba sin move done). El log
+          final es honesto: cerrados / errores / salteados.
+        - Lote rotativo: ver `_meli_close_delivered_candidates`.
+
+        Ventana y lote por `ir.config_parameter` (sin -u):
+          - `meli_oerp_stock.close_delivered_days`  (default 180)
+          - `meli_oerp_stock.close_delivered_limit` (default 100)
+        El default de 180 días cubre backlogs viejos; el costo lo acota el lote
+        rotativo + el prefiltro SQL de pickings abiertos. Los argumentos explícitos
+        mandan sobre los parámetros, p.ej. desde `odoo shell`:
+            env['sale.order'].cron_meli_close_delivered_pickings(days=365, limit=500)
+        """
+        if not days:
+            days = self._meli_close_param(self._MELI_CLOSE_DAYS_PARAM, self._MELI_CLOSE_DAYS_DEFAULT)
+        if not limit:
+            limit = self._meli_close_param(self._MELI_CLOSE_LIMIT_PARAM, self._MELI_CLOSE_LIMIT_DEFAULT)
+
+        todo, n_candidates = self._meli_close_delivered_candidates(days, limit)
+        if not todo:
+            _logger.info("[meli_close_delivered] nada para cerrar "
+                         "(candidatos entregados con salida abierta en %s días, fuera de "
+                         "reintento: %s)", days, n_candidates)
+            return {'processed': 0, 'errors': 0, 'skipped': 0, 'blocked': 0, 'failed_order_ids': []}
+
+        _logger.info("[meli_close_delivered] %s pedidos entregados en ML con la entrega "
+                     "abierta (de %s candidatos en %s días) — procesando",
+                     len(todo), n_candidates, days)
+        result = self._meli_close_delivered_process(todo, commit=True)
+        _logger.info("[meli_close_delivered] fin — cerrados=%s errores=%s (de ellos por regla de "
+                     "negocio=%s) salteados_por_config=%s", result['processed'], result['errors'],
+                     result['blocked'], result['skipped'])
+        return result
+
+    @api.model
+    def _meli_close_delivered_cron_repair(self):
+        """[caso-K02, 26.307] El cron de cierre nació ONE-SHOT en 16/17.
+
+        El XML no declaraba `numbercall` y en 16/17 `ir.cron.numbercall` vale 1 por defecto: tras
+        la primera corrida Odoo lo deja `numbercall=0, active=False` (odoo/<v>/odoo/addons/base/
+        models/ir_cron.py, "active = active and bool(call_count_left)"). El registro es
+        `noupdate`, así que el `-u` no lo corrige: lo hace la migración llamando a esto.
+
+        - `numbercall=0` + inactivo = lo apagó Odoo al agotarse ⇒ recurrente y activo otra vez.
+        - `numbercall>0` ⇒ recurrente; `active` queda como esté (si lo apagó alguien, sigue apagado).
+        - 18+ no tiene `numbercall` (el cron es recurrente siempre) ⇒ no-op.
+        Devuelve los valores escritos, o False si no había nada que hacer.
+        """
+        cron = self.env.ref('meli_oerp_stock.ir_cron_meli_close_delivered_pickings',
+                            raise_if_not_found=False)
+        if not cron or 'numbercall' not in cron._fields:
+            return False
+        cron = cron.sudo().with_context(active_test=False)
+        if cron.numbercall < 0:
+            return False
+        vals = {'numbercall': -1}
+        if cron.numbercall == 0 and not cron.active:
+            vals['active'] = True
+        cron.write(vals)
+        _logger.info("[meli_close_delivered] cron %s reparado: %s", cron.id, vals)
+        return vals
 
     def meli_produce( self, meli=None, config=None, data=None):
         #_logger.info("meli_produce")
@@ -480,63 +836,9 @@ class SaleOrder(models.Model):
         #_logger.info("meli_oerp_stock confirm_ml ended.")
 
 
-    def ___action_confirm(self):
-
-        _logger.info("order _action_confirm")
-
-        ret = super( SaleOrder, self )._action_confirm()
-
-        _logger.info("order _action_confirm :"+str(self.picking_ids))
-
-        if self.picking_ids:
-
-            for spick in self.picking_ids:
-
-                #_logger.info("_action_confirm Picking state:"+str(spick.state))
-
-                if spick.state in ["assigned"]:
-
-                    _logger.info("_action_confirm picking Asssigned")
-                    #for sp in spick.move_line_ids:
-                    #    spick.action_assign()
-        return ret
-
-    def __action_confirm(self):
-
-        _logger.info("order action_confirm")
-
-        ret = super( SaleOrder, self ).action_confirm()
-
-        _logger.info("order action_confirm :"+str(self.picking_ids)+" ret:"+str(ret))
-
-        if self.picking_ids:
-
-            for spick in self.picking_ids:
-
-                #_logger.info("action_confirm  Picking state:"+str(spick.state))
-
-                if spick.state in ["assigned"]:
-
-                    _logger.info("action_confirm picking Asssigned")
-                    #for mv in spick.move_line_ids_without_package:
-                    #    _logger.info("Move Line: State:"+str(mv.state)
-                    #                +" Product:"+str(mv.product_id and mv.product_id.name)
-                    #                +" Location:"+str(mv.location_id and mv.location_id.name)
-                    #                +" Lot:"+str(mv.lot_id and mv.lot_id.name)
-                    #                +" Qty Reserved:"+str(mv.product_uom_qty)
-                    #                )
-                    #    #mv.state = 'draft'
-                    #spick.do_unreserve()
-                    #spick.action_assign()
-                    #for mv in spick.move_line_ids_without_package:
-                    #    _logger.info("Move Line: State:"+str(mv.state)
-                    #                +" Product:"+str(mv.product_id and mv.product_id.name)
-                    #                +" Location:"+str(mv.location_id and mv.location_id.name)
-                    #                +" Lot:"+str(mv.lot_id and mv.lot_id.name)
-                    #                +" Qty Reserved:"+str(mv.product_uom_qty)
-                    #                )
-                    #spick.action_reassign()
-        return ret
+    # (F8b 20.0) borrados `___action_confirm` y `__action_confirm`: doble guion bajo => Python los renombra
+    # (`_SaleOrder___action_confirm`, `_SaleOrder__action_confirm`) y el ORM nunca los llamaba (codigo muerto,
+    # solo logueaban).
 
 class MercadolibreOrder(models.Model):
 

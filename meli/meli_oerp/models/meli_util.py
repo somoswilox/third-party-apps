@@ -8,6 +8,7 @@ from odoo.tools.translate import _
 import requests
 from requests.adapters import HTTPAdapter
 import json
+import time as _meli_time
 try:
     from urllib import urlencode
 except ImportError:
@@ -23,6 +24,197 @@ from datetime import datetime
 from .versions import *
 from . import versions as _versions
 
+# Seguridad (comms 2026-10-05T15:22:47Z, caso-K14): los tokens/secretos NUNCA van en claro al chatter,
+# al log ni a mercadolibre.notification.logs.
+_MELI_SECRET_KEYS = ('access_token', 'refresh_token', 'client_secret', 'secret_key', 'code')
+
+
+def _meli_mask(value):
+    """Enmascara un secreto: primeros 4 + '…' + ultimos 4 (o '***' si es corto)."""
+    if not value:
+        return str(value)
+    s = str(value)
+    if len(s) <= 12:
+        return '***'
+    return s[:4] + '…' + s[-4:]
+
+
+def _meli_redact(data, omit=False):
+    """Copia de un dict (respuesta OAuth, login_data) con los secretos enmascarados (omit=True: quitados)."""
+    if isinstance(data, dict):
+        if omit:
+            return {k: v for k, v in data.items() if k not in _MELI_SECRET_KEYS}
+        return {k: (_meli_mask(v) if k in _MELI_SECRET_KEYS else v) for k, v in data.items()}
+    return data
+
+
+def meli_is_auth_error(rjson):
+    """[caso-K11] (19-oct-2026) ¿La respuesta de ML es un rechazo del TOKEN?
+
+    Con el token vencido ML responde HTTP 401 {"code": "unauthorized", "message": "invalid access token"},
+    SIN las claves `error` ni `status` (medido en producto 1 19-oct). Los chequeos de siempre
+    (`"error" in rjson`, `status and cause`) no lo veian: no se refrescaba el token y el barrido de
+    ordenes lo leia como "no hay ordenes nuevas".
+    """
+    if not isinstance(rjson, dict):
+        return False
+    code = str(rjson.get("code") or rjson.get("error") or "").lower()
+    message = str(rjson.get("message") or "").lower()
+    status = rjson.get("status")
+    try:
+        status = int(status) if status not in (None, "") else 0
+    except (TypeError, ValueError):
+        status = 0
+    if status == 401 or code in ("unauthorized", "invalid_token", "expired_token", "invalid_grant"):
+        return True
+    return ("access token" in message or "access_token" in message) and ("invalid" in message or "expired" in message)
+
+
+def _meli_company_allows(company, feature):
+    """[un caso] Nivel de seguridad (odoo_connector_api). Sin ese módulo instalado: comportamiento de siempre."""
+    if company and hasattr(company, '_ocapi_security_allows'):
+        return company.sudo()._ocapi_security_allows(feature)
+    return True
+
+
+# ---------------------------------------------------------------------------
+#  [un caso fase 3] URL de la API en un único campo validado + rastro del host alternativo
+# ---------------------------------------------------------------------------
+# res.company.meli_api_url es la ÚNICA fuente del host de la API (reemplaza a
+# mercadolibre_http_proxy de la compañía y http_proxy de la cuenta, que quedan como alias).
+# Si el host no es el oficial, cada request queda registrada: línea JSON en el logger
+# `meli_oerp.proxy_audit` + fila en `meli.proxy.audit`. Nunca tokens, headers, body ni query.
+_proxy_audit_logger = logging.getLogger('meli_oerp.proxy_audit')
+_MELI_BLOCKED_AUDIT_LAST = {}
+
+
+def meli_normalize_api_url(value):
+    """Valida y normaliza la URL de la API. Vacío = oficial. ValueError si no es válida.
+
+    Se admite un prefijo de path (reverse proxy montado en una subruta); no se admiten usuario/clave,
+    query, fragmento ni espacios. Se quita la "/" final.
+    """
+    from urllib.parse import urlsplit
+    if not value or not str(value).strip():
+        return API_HOST_DEFAULT
+    raw = str(value).strip()
+    if any(c.isspace() for c in raw):
+        raise ValueError("la URL no puede tener espacios")
+    parts = urlsplit(raw)
+    if parts.scheme not in ('http', 'https'):
+        raise ValueError("la URL tiene que empezar con https:// (o http://)")
+    if not parts.hostname:
+        raise ValueError("falta el host")
+    if parts.username or parts.password:
+        raise ValueError("la URL no puede llevar usuario ni clave")
+    if parts.query or parts.fragment or raw.endswith('?') or raw.endswith('#'):
+        raise ValueError("la URL no puede llevar parámetros (?...) ni fragmento (#...)")
+    path = parts.path.rstrip('/')
+    return "%s://%s%s" % (parts.scheme, parts.netloc.lower(), path)
+
+
+def _meli_url_parts(url):
+    """(host, path) para el rastro. El path va decodificado y SIN query ni fragmento: el SDK manda
+    la query percent-encoded dentro del path (/%2Fsites%3Faccess_token%3D...), así que se decodifica
+    antes de cortar, y cualquier access_token/refresh_token residual se tapa igual."""
+    import re
+    from urllib.parse import urlsplit, unquote
+    try:
+        u = urlsplit(str(url))
+        path = u.path
+        for _i in range(3):
+            dec = unquote(path)
+            if dec == path:
+                break
+            path = dec
+        path = re.split(r'[?#]', path, 1)[0]
+        path = re.sub(r'(?i)(access_token|refresh_token|client_secret|code)=[^&/]*', r'\1=***', path)
+        return u.netloc, path
+    except Exception:
+        return '', ''
+
+
+def meli_proxy_audit(env, event, company=None, account_label='', host='', method='', path='',
+                     status=None, note=''):
+    """Registra un uso (o bloqueo / cambio) del host alternativo. Nunca levanta excepción.
+
+    Va en un cursor PROPIO: la fila sobrevive aunque la transacción del llamador se revierta, y el
+    modelo no tiene claves foráneas (compañía/usuario como entero + texto) más un lock_timeout, así
+    que la inserción no puede quedar esperando un lock que tenga tomado el propio llamador.
+    """
+    try:
+        company_id = company.id if company else 0
+        company_name = company.sudo().name if company else ''
+        user_login = env.user.sudo().login if env.uid else ''
+    except Exception:
+        company_id, company_name, user_login = 0, '', ''
+    rec = {
+        'event': event, 'db': getattr(env.cr, 'dbname', ''), 'company_id': company_id,
+        'account': account_label or '', 'host': host or '', 'method': (method or '').upper(),
+        'path': path or '', 'status': status, 'user': user_login, 'note': note or '',
+    }
+    try:
+        _proxy_audit_logger.info(json.dumps(rec, ensure_ascii=False, default=str))
+    except Exception:
+        pass
+    if env.context.get('meli_proxy_audit_no_db'):
+        return
+    try:
+        with env.registry.cursor() as cr:
+            cr.execute("SET LOCAL lock_timeout = '2s'")
+            cr.execute("SET LOCAL statement_timeout = '5s'")
+            from odoo import api as _api, SUPERUSER_ID
+            aenv = _api.Environment(cr, SUPERUSER_ID, {})
+            if 'meli.proxy.audit' not in aenv:
+                return
+            aenv['meli.proxy.audit'].create({
+                'event': event,
+                'company_ref': company_id,
+                'company_name': company_name,
+                'account_label': (account_label or '')[:128],
+                'host': (host or '')[:256],
+                'method': (method or '').upper()[:16],
+                'path': (path or '')[:512],
+                'status_code': int(status) if status not in (None, '') else 0,
+                'user_login': user_login,
+                'note': (note or '')[:512],
+            })
+    except Exception as e:
+        _logger.warning("meli proxy audit: no se pudo registrar en la base (%s); queda la línea del log", e)
+
+
+def _meli_audit_callback(env, company, account_label):
+    """Callback (method, url, status) que se cuelga del cliente HTTP cuando el host no es el oficial."""
+    def _cb(method, url, status):
+        host, path = _meli_url_parts(url)
+        meli_proxy_audit(env, 'request', company=company, account_label=account_label, host=host,
+                         method=method, path=path, status=status)
+    return _cb
+
+
+def _meli_audit_wrap_request(obj, callback):
+    """Envuelve obj.request(method, url, ...) (requests.Session o rest_client del SDK)."""
+    if not obj or not callback or not hasattr(obj, 'request'):
+        return False
+    original = obj.request
+
+    def _audited_request(method, url, *args, **kwargs):
+        status = None
+        try:
+            resp = original(method, url, *args, **kwargs)
+            status = getattr(resp, 'status_code', None) or getattr(resp, 'status', None)
+            return resp
+        except Exception as e:
+            status = getattr(e, 'status', None) or 0
+            raise
+        finally:
+            try:
+                callback(method, url, status)
+            except Exception:
+                pass
+    obj.request = _audited_request
+    return True
+
 
 class LoggingRetry(Retry):
     def increment(self, *args, **kwargs):
@@ -36,10 +228,36 @@ class LoggingRetry(Retry):
 #  Configuraciones (siempre se crean ambas; se elige al final del módulo)
 # ---------------------------------------------------------------------------
 
+# Host por defecto de la API de ML. Cualquier otro valor = proxy de rescate de la cuenta/empresa.
+API_HOST_DEFAULT = "https://api.mercadolibre.com"
+
+
+# TODA llamada a la API arma su URL con el host efectivo de la instancia
+# (res.company.meli_api_url, ya resuelto por el Nivel de seguridad en get_new_instance),
+# nunca con https://api.mercadolibre.com fijo. Y sale por la sesión de la instancia, que
+# es la que registra cada request cuando el host no es el oficial.
+def meli_instance_api_host(meli):
+    """Host efectivo de una instancia de ML (sin "/" final). Sin instancia: el oficial."""
+    host = meli and (getattr(meli, "api_host", None) or getattr(meli, "base_url", None))
+    return str(host or API_HOST_DEFAULT).rstrip("/")
+
+
+def meli_instance_url(meli, path):
+    """URL absoluta de `path` (p.ej. "answers", "shipment_labels?...") contra el host de la instancia."""
+    return meli_instance_api_host(meli) + "/" + str(path).lstrip("/")
+
+
+def meli_instance_session(meli):
+    """Sesión HTTP de la instancia (retry + rastro del host alternativo); sin instancia, requests."""
+    return (meli is not None and getattr(meli, "_session", None)) or requests
+
+
 # NoSDK: requests Session con retry
 class MeliConfiguration:
-    def __init__(self, host="https://api.mercadolibre.com"):
+    def __init__(self, host="https://api.mercadolibre.com", audit=None):
         self.host = host
+        # [un caso fase 3] callback (method, url, status) cuando el host no es el oficial.
+        self.audit = audit
         self.retries = LoggingRetry(
             total=3,
             backoff_factor=0.5,
@@ -52,6 +270,8 @@ class MeliConfiguration:
         adapter = HTTPAdapter(max_retries=self.retries)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
+        if self.audit:
+            _meli_audit_wrap_request(session, self.audit)
         return session
 
 
@@ -90,7 +310,8 @@ class MeliApiNoSDK:
     """
 
     AUTH_URL = "https://auth.mercadolibre.com.ar/authorization"
-    TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
+    # el token se pide al host de la instancia (meli_api_url), no a uno fijo.
+    TOKEN_PATH = "oauth/token"
 
     needlogin_state = True
 
@@ -209,11 +430,29 @@ class MeliApiNoSDK:
         return self.base_url.rstrip("/") + "/" + path.lstrip("/")
 
     def _parse_response(self, resp):
-        """Parsea la respuesta HTTP a JSON o texto"""
+        """Parsea la respuesta HTTP a JSON o texto.
+
+        FIX (un cliente, 4-ago-2026) — UNA RESPUESTA VACÍA CON ERROR HTTP YA NO SE LEE COMO ÉXITO.
+        ML devuelve 429 (y a veces 5xx) con **body vacío**. Acá se devolvía `resp.text` == '', y
+        todos los llamadores hacen `if rjson and "error" in rjson` → con '' eso es False, así que
+        el push reportaba *updated/Ok* **sin haber escrito nada en ML**. Es la causa del
+        "figura Actualizado y no actualiza" que el cliente reportó durante semanas, y pasó
+        inadvertida porque no dejaba ni un log.
+        Ahora un status >= 400 con body vacío se convierte en un dict de error explícito.
+        """
         try:
             return resp.json()
         except Exception:
-            return resp.text
+            texto = resp.text
+            status = getattr(resp, "status_code", 200) or 200
+            if not texto and status >= 400:
+                _logger.warning("respuesta VACIA con status %s (%s) — se reporta como error, "
+                                "antes se interpretaba como exito",
+                                status, getattr(resp, "url", "?"))
+                return {"error": "http_%s" % status,
+                        "status": status,
+                        "message": "respuesta vacia con status %s" % status}
+            return texto
 
     def need_login(self):
         return self.needlogin_state
@@ -546,15 +785,16 @@ class MeliApiNoSDK:
 
         url = self._abs_url(path)
 
-        # Para upload legacy, usamos query param access_token
+        # un caso: el token va en el header, nunca en la URL (antes iba como query param).
+        headers = {"Accept": "application/json"}
         if atok:
-            sep = "&" if ("?" in url) else "?"
-            url = f"{url}{sep}access_token={atok}"
+            headers["Authorization"] = f"Bearer {atok}"
 
         try:
             resp = self._session.post(
                 url,
                 files=files,
+                headers=headers,
                 timeout=timeout
             )
             self.response = self._parse_response(resp)
@@ -624,7 +864,7 @@ class MeliApiNoSDK:
     def authorize(self, code, redirect_uri=None):
         """
         Obtiene access_token usando authorization_code (sin SDK).
-        POST a https://api.mercadolibre.com/oauth/token
+        POST a <host de meli_api_url>/oauth/token
         """
         if redirect_uri:
             self.redirect_uri = redirect_uri
@@ -644,7 +884,7 @@ class MeliApiNoSDK:
 
         try:
             resp = self._session.post(
-                self.TOKEN_URL,
+                self._abs_url(self.TOKEN_PATH),
                 data=data,
                 headers=headers,
                 timeout=30
@@ -666,7 +906,7 @@ class MeliApiNoSDK:
     def get_refresh_token(self, code=None, redirect_uri=None):
         """
         Renueva access_token usando refresh_token (sin SDK).
-        POST a https://api.mercadolibre.com/oauth/token
+        POST a <host de meli_api_url>/oauth/token
         """
         data = {
             'grant_type': 'refresh_token',
@@ -682,7 +922,7 @@ class MeliApiNoSDK:
 
         try:
             resp = self._session.post(
-                self.TOKEN_URL,
+                self._abs_url(self.TOKEN_PATH),
                 data=data,
                 headers=headers,
                 timeout=30
@@ -771,6 +1011,9 @@ if _versions.MELI_SDK_AVAILABLE and _meli_sdk and _ApiClient:
         response = ""
         code = ""
         rjson = {}
+        # Host efectivo de ESTA instancia (proxy de rescate de la cuenta/empresa, o el default).
+        # Lo setea get_new_instance; lo necesitan post_mini/put_mini para no perder el proxy.
+        api_host = API_HOST_DEFAULT
         user = {}
 
         # Benchmarking support - class-level attributes (for compatibility with MeliApiNoSDK)
@@ -832,7 +1075,7 @@ if _versions.MELI_SDK_AVAILABLE and _meli_sdk and _ApiClient:
             # supports arbitrary headers.
             # NOTA: **kwargs absorbe cualquier keyword extra desconocido de
             # forma segura — nunca debe tirar TypeError por firma (ver
-            # ERROR extra_headers/get_billing_info, meli_oerp 26.70 Aramid).
+            # ERROR extra_headers/get_billing_info, meli_oerp 26.70 un cliente).
             if extra_headers:
                 return self.get_mini(path, params, extra_headers=extra_headers)
             try:
@@ -894,12 +1137,33 @@ if _versions.MELI_SDK_AVAILABLE and _meli_sdk and _ApiClient:
                 pass
             return self
 
-        def post_mini(self, path, body=None, params={}, extra_headers=None, **kwargs):
-            """POST sin SDK (requests directo) - para compatibilidad"""
-            _nosdk = MeliApiNoSDK(config=configuration_nosdk)
+        def _nosdk_para_escritura(self):
+            """Cliente NoSDK que RESPETA el host de esta instancia (proxy de rescate).
+
+            FIX (un cliente, 4-ago-2026): `post_mini`/`put_mini` armaban el cliente con
+            `configuration_nosdk` — o sea el host POR DEFECTO — descartando el `http_proxy` de la
+            cuenta/empresa. Como TODAS las escrituras del conector pasan por acá (precio, stock,
+            título, publicar), salían por la IP compartida del hosting y volvían 429 con body vacío.
+            Verificado en prod contra MLA<id>: host default → 429 vacío; el mismo PUT por el
+            proxy → 200 y precio aplicado.
+            El host de rescate va **sin auto-retry**, igual que la rama SDK: reintentar contra el
+            proxy sólo amplifica el bloqueo (ver `get_new_instance`, fix 26.49 del 18-jun-2026).
+            """
+            host = getattr(self, "api_host", None) or API_HOST_DEFAULT
+            if host != API_HOST_DEFAULT:
+                config = MeliConfiguration(host=host, audit=getattr(self, "_meli_audit", None))
+                config.retries = False
+            else:
+                config = configuration_nosdk
+            _nosdk = MeliApiNoSDK(config=config)
             _nosdk.__dict__.update({k: v for k, v in self.__dict__.items()
                                      if k in ('client_id', 'client_secret', 'access_token',
                                               'refresh_token', 'redirect_uri', 'seller_id')})
+            return _nosdk
+
+        def post_mini(self, path, body=None, params={}, extra_headers=None, **kwargs):
+            """POST sin SDK (requests directo) - para compatibilidad"""
+            _nosdk = self._nosdk_para_escritura()
             _nosdk.post(path, body, params, extra_headers=extra_headers)
             self.response = _nosdk.response
             self.rjson = _nosdk.rjson
@@ -922,10 +1186,7 @@ if _versions.MELI_SDK_AVAILABLE and _meli_sdk and _ApiClient:
 
         def put_mini(self, path, body=None, params={}, extra_headers=None, **kwargs):
             """PUT sin SDK (requests directo) - para compatibilidad"""
-            _nosdk = MeliApiNoSDK(config=configuration_nosdk)
-            _nosdk.__dict__.update({k: v for k, v in self.__dict__.items()
-                                     if k in ('client_id', 'client_secret', 'access_token',
-                                              'refresh_token', 'redirect_uri', 'seller_id')})
+            _nosdk = self._nosdk_para_escritura()
             _nosdk.put(path, body, params, extra_headers=extra_headers)
             self.response = _nosdk.response
             self.rjson = _nosdk.rjson
@@ -1081,15 +1342,52 @@ class MeliUtil(models.AbstractModel):
             _NEUTRALIZED_REFRESH_LOGGED = True
 
     @api.model
+    def _meli_resolve_api_host(self, company, account_label=''):
+        """[un caso fase 3] (host efectivo, callback de auditoría o None) para la compañía.
+
+        Oficial ⇒ (oficial, None): nada cambia respecto de siempre. Alternativo ⇒ se audita cada
+        request; con el Nivel de seguridad Alto se ignora (fila 'blocked') y se usa el oficial.
+        """
+        raw = company and 'meli_api_url' in company._fields and company.sudo().meli_api_url
+        try:
+            api_host = meli_normalize_api_url(raw)
+        except ValueError as e:
+            _logger.warning("meli: URL de la API inválida en la compañía %s (%s); se usa la oficial",
+                            company and company.id, e)
+            api_host = API_HOST_DEFAULT
+        if api_host == API_HOST_DEFAULT:
+            return API_HOST_DEFAULT, None
+        host, path = _meli_url_parts(api_host)
+        if not _meli_company_allows(company, 'proxy'):
+            _logger.warning("meli: host alternativo %s ignorado por el Nivel de seguridad (compañía %s)",
+                            host, company and company.id)
+            # Fila en la base: una por hora por (base, compañía, host) — get_new_instance corre muchas
+            # veces por minuto en los crons. El log sí registra cada vez.
+            key = (self.env.cr.dbname, company and company.id, host)
+            now = _meli_time.time()
+            if now - _MELI_BLOCKED_AUDIT_LAST.get(key, 0) > 3600:
+                _MELI_BLOCKED_AUDIT_LAST[key] = now
+                meli_proxy_audit(self.env, 'blocked', company=company, account_label=account_label,
+                                 host=host, path=path, note="Nivel de seguridad Alto: se usa la API oficial")
+            return API_HOST_DEFAULT, None
+        return api_host, _meli_audit_callback(self.env, company, account_label)
+
+    @api.model
+    def _meli_view_instance(self, account_id=False):
+        """un caso: instancia de ML para las vistas sin token (/meli/item_api). multiple la pisa por cuenta."""
+        return self.get_new_instance(self.env.user.company_id)
+
+    @api.model
     def get_new_instance(self, company=None, refresh_force=False):
 
         if not company:
             company = self.env.user.company_id
 
-        # Proxy de rescate: si la empresa tiene configurado un host alternativo,
-        # rutear la API (y el OAuth, vía _abs_url) por ese reverse proxy.
-        api_host = company.mercadolibre_http_proxy or "https://api.mercadolibre.com"
-        use_custom_host = api_host != "https://api.mercadolibre.com"
+        # [un caso fase 3] Host de la API: único campo validado res.company.meli_api_url (proxy de
+        # rescate si no es el oficial). Host alternativo ⇒ cada request queda en el rastro; con el
+        # Nivel de seguridad Alto se ignora y se usa el oficial.
+        api_host, _audit_cb = self._meli_resolve_api_host(company)
+        use_custom_host = api_host != API_HOST_DEFAULT
 
         # Crear instancia de MeliApi según modo activo (SDK o requests)
         if _versions.USE_MELI_SDK and MeliApiSDK is not None:
@@ -1098,12 +1396,15 @@ class MeliUtil(models.AbstractModel):
                 # Host de rescate: sin auto-retry (los 429 agravan el rate-limit del proxy).
                 sdk_config.retries = False
                 api_client = _ApiClient(configuration=sdk_config)
+                if not _meli_audit_wrap_request(getattr(api_client, 'rest_client', None), _audit_cb):
+                    _logger.warning("meli proxy audit: el cliente SDK no expone rest_client.request; "
+                                    "sólo queda registrada la creación de la instancia")
             else:
                 api_client = _ApiClient(configuration=configuration_sdk)
             api_rest_client = MeliApi(api_client)
         else:
             if use_custom_host:
-                config = MeliConfiguration(host=api_host)
+                config = MeliConfiguration(host=api_host, audit=_audit_cb)
                 # Host de rescate: sin auto-retry (los 429 agravan el rate-limit del proxy).
                 # Espeja la rama SDK: el config fresco por-host NO debe heredar el Retry
                 # por defecto (status_forcelist=[413,429,503]); reintentar contra el proxy
@@ -1112,6 +1413,10 @@ class MeliUtil(models.AbstractModel):
             else:
                 config = configuration_nosdk
             api_rest_client = MeliApi(config=config)
+        # El host efectivo viaja con la instancia: post_mini/put_mini lo necesitan para no
+        # descartar el proxy de rescate al armar su cliente NoSDK interno.
+        api_rest_client.api_host = api_host
+        api_rest_client._meli_audit = _audit_cb
         api_rest_client.client_id = company.mercadolibre_client_id
         api_rest_client.client_secret = company.mercadolibre_secret_key
         api_rest_client.access_token = company.mercadolibre_access_token or ''
@@ -1155,7 +1460,8 @@ class MeliUtil(models.AbstractModel):
                     return api_rest_client
 
                 #_logger.info(rjson)
-                if ( rjson and "error" in rjson) or refresh_force==True:
+                # [caso-K11] un 401 de token vencido viene sin "error": tambien dispara el refresh
+                if ( rjson and "error" in rjson) or meli_is_auth_error(rjson) or refresh_force==True:
 
                     if company.mercadolibre_cron_refresh or api_rest_client.access_token:
                         internals = {
@@ -1174,7 +1480,7 @@ class MeliUtil(models.AbstractModel):
 
                         #_logger.error(rjson)
 
-                        if rjson["error"]=="not_found":
+                        if rjson.get("error")=="not_found":  # [caso-K11] 26.287: un 401 sin clave "error" tambien entra aca (antes KeyError)
                             api_rest_client.needlogin_state = True
                             logs+= "NOT FOUND"+"\n"
 
@@ -1202,11 +1508,12 @@ class MeliUtil(models.AbstractModel):
                                 try:
                                     #refresh = meli.get_refresh_token()
                                     refresh = api_rest_client.get_refresh_token()
-                                    _logger.info("Refresh result: "+str(refresh))
+                                    _omit = not _meli_company_allows(company, 'token_in_chatter')
+                                    _logger.info("Refresh result: "+str(_meli_redact(refresh, omit=_omit)))
                                     if (refresh):
                                         #refjson = refresh.json()
                                         refjson = refresh
-                                        logs+= str(refjson)+"\n"
+                                        logs+= str(_meli_redact(refjson, omit=_omit))+"\n"
                                         if "access_token" in refjson:
                                             api_rest_client.access_token = refjson["access_token"]
                                             api_rest_client.refresh_token = refjson["refresh_token"]
@@ -1294,8 +1601,7 @@ class MeliUtil(models.AbstractModel):
 
     @api.model
     def get_url_meli_login(self, app_instance):
-        if not company:
-            company = self.env.user.company_id
+        company = self.env.user.company_id  # [26.385] antes: 'company' sin definir (UnboundLocalError)
         REDIRECT_URI = company.mercadolibre_redirect_uri
         url_login_meli = app_instance.auth_url(redirect_URI=REDIRECT_URI)
         return {

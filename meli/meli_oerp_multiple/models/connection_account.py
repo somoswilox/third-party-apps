@@ -28,8 +28,15 @@ _logger = logging.getLogger(__name__)
 import pdb
 import re
 import threading
+from contextlib import contextmanager
+import time as _meli_time  # alias: `from datetime import *` pisa `time`
 #from .warning import warning
 import requests
+from odoo.addons.meli_oerp.models.meli_util import meli_instance_url, meli_instance_session
+from .meli_util import _meli_redact_post, meli_norm_sku
+# 26.390: campos cuyo VALOR nunca sale por /ocapi/<connector>[/<channel>]/status.
+_STATUS_SECRET_SUFFIXES = ('access_token', 'refresh_token', 'secret_key', 'client_secret', 'password')
+from odoo.addons.meli_oerp.models.gtin import meli_gtin_keys  # 26.389 (caso-K77)
 try:
     from urllib import urlencode
 except ImportError:
@@ -51,6 +58,9 @@ import base64
 import hashlib
 from datetime import datetime
 from markupsafe import Markup
+from contextlib import contextmanager
+import psycopg2
+from odoo.exceptions import UserError
 
 
 class MercadoLibreBrand(models.Model):
@@ -77,7 +87,7 @@ class MercadoLibreMaestro(models.Model):
     _name = 'mercadolibre.product.maestro'
     _description = 'MercadoLibre Product Maestro'
 
-    connection_account = fields.Many2one("mercadolibre.account",string="Account")
+    connection_account = fields.Many2one("mercadolibre.account",string="Account", index='btree_not_null')
     company_id = fields.Many2one("res.company",related="connection_account.company_id",string="Company")
 
     name = fields.Char(string="Name",required=True, index=True)
@@ -346,14 +356,11 @@ class MercadoLibreMaestro(models.Model):
             }
 
     def action_open_ml_api(self):
-        """Abre la vista API de la publicación en MercadoLibre con access_token"""
+        """Abre la vista API de la publicación. un caso: la sirve Odoo (/meli/item_api) con el
+        token en el header; antes el access_token iba en la URL que abría el navegador."""
         self.ensure_one()
         if self.meli_id and self.connection_account:
-            account = self.connection_account
-            company = account.company_id or account.env.user.company_id
-            meli = self.env['meli.util'].get_new_instance(company, account)
-            access_token = meli.access_token if meli else ''
-            url = 'https://api.mercadolibre.com/items/%s?access_token=%s' % (self.meli_id, access_token)
+            url = '/meli/item_api/%s?account=%s' % (self.meli_id, self.connection_account.id)
             return {
                 'type': 'ir.actions.act_url',
                 'url': url,
@@ -1135,19 +1142,39 @@ class MercadoLibreConnectionAccount(models.Model):
     _description = "MercadoLibre Account"
     _inherit = "ocapi.connection.account"
 
+    def _meli_fill_seller_id_from_login(self, resp, meli=None):
+        """[26.392] Completa el Seller id de la cuenta con el user_id que devuelve /oauth/token (o el sufijo
+        numérico del access_token) SÓLO si está vacío. Si ya tiene otro valor, deja un warning y no lo pisa
+        (puede ser una cuenta mal elegida al iniciar sesión). Devuelve el seller id resultante."""
+        self.ensure_one()
+        user_id = isinstance(resp, dict) and resp.get('user_id')
+        token = getattr(meli, 'access_token', None) if meli is not None else None
+        if not user_id and token:
+            tail = str(token).rsplit('-', 1)[-1]
+            user_id = tail if tail.isdigit() else False
+        if not user_id:
+            return self.seller_id
+        user_id = str(user_id)
+        if not self.seller_id:
+            self.write({'seller_id': user_id})
+        elif str(self.seller_id) != user_id:
+            _logger.warning("meli_login: el usuario ML que inició sesión (%s) no es el Seller id de la cuenta %s (%s); no se pisa.",
+                            user_id, self.name, self.seller_id)
+        return self.seller_id
+
     def get_connector_version(self):
         for acc in self:
             acc.connector_version = ''
-            version_module_query = """select name, latest_version from ir_module_module where name like '%s'""" % (str("meli_oerp_multiple"))
             cr = MeliCr( self )
-            resquery = cr.execute(version_module_query)
+            # nombre del modulo como parametro (antes: armado con %); misma consulta (F8b 20.0)
+            resquery = cr.execute("""select name, latest_version from ir_module_module where name like %s""", ("meli_oerp_multiple",))
             version_module_res = cr.fetchall()
             if version_module_res:
                 acc.connector_version = str(version_module_res[0][1])
 
     connector_version = fields.Char( compute=get_connector_version, string='Connector Version', help="Versión de este conector", store=False )
 
-    configuration = fields.Many2one( "mercadolibre.configuration", string="Connection Parameters Configuration", help="Connection Parameters Configuration", required=True  )
+    configuration = fields.Many2one( "mercadolibre.configuration", string="Connection Parameters Configuration", help="Connection Parameters Configuration", required=True, index='btree_not_null' )
     #type = fields.Selection([("custom","Custom"),("mercadolibre","MercadoLibre")],string='Connector',index=True)
     type = fields.Selection(selection_add=[("mercadolibre","MercadoLibre")],
 				string='Connector Type',
@@ -1162,15 +1189,123 @@ class MercadoLibreConnectionAccount(models.Model):
         string='Access Token Expires At',
         help='Momento en que vence el access_token actual (ML informa expires_in=21600s = 6h). Se usa para refresh proactivo 15 min antes del vencimiento.'
     )
+    # ------------------------------------------------------------------
+    # TOKEN DESDE PRODUCCION (para instancias de TEST / staging)
+    #
+    # POR QUE EXISTE. A una instancia de test se le vacia el refresh_token a
+    # proposito: si lo tuviera, cada renovacion suya le invalidaria el token a
+    # PRODUCCION, que es una sola credencial por cuenta de ML. Consecuencia: test
+    # NO se auto-renueva nunca y queda "Desconectado" para siempre, aunque el
+    # token funcione. Hasta hoy eso se sostenia con un script externo en la laptop
+    # de alguien, que muere con la sesion y falla mudo: en un cliente estuvo 28 h caido
+    # y lo reporto el cliente, no nosotros.
+    #
+    # QUE HACE. Test lee el access_token vigente de la instancia de produccion por
+    # OCAPI y se lo copia. Desde 26.390 PRODUCCION tiene que permitirlo de forma
+    # explicita (meli_token_copy_allowed en SU cuenta) y test lo pide con
+    # token_copy=True en /ocapi/<connector>/<channel>/status. Sin las dos cosas el
+    # /status no devuelve el token: lo consulta cualquiera que tenga las
+    # credenciales OCAPI de la cuenta (el backend central las tiene de todas).
+    # ------------------------------------------------------------------
+    meli_produccion_uri = fields.Char(
+        string="URI de Produccion (token)",
+        size=512,
+        groups="base.group_system",
+        help="URI base de la instancia de PRODUCCION desde la que esta cuenta copia el "
+             "access_token, por ejemplo https://micliente.odoo.com . Se usa SOLO en "
+             "instancias de test/staging, que no pueden renovar el token por si mismas. "
+             "Vacio = mecanismo apagado.",
+    )
+    meli_produccion_channel = fields.Char(
+        string="Channel OCAPI de Produccion",
+        size=128,
+        groups="base.group_system",
+        help="El <channel> de la ruta /ocapi/<connector>/<channel>/status en produccion. "
+             "OJO: la ruta base /ocapi/<connector>/status NO sirve, devuelve el literal "
+             "'connected' y no incluye los tokens.",
+    )
+    meli_produccion_connector = fields.Char(
+        string="Connector OCAPI de Produccion",
+        size=128,
+        default="mercadolibre",
+        groups="base.group_system",
+        help="El <connector> de la ruta /ocapi/<connector>/<channel>/status. Tiene que coincidir "
+             "con el 'name' o el 'type' de la cuenta OCAPI de produccion, o el endpoint responde "
+             "vacio aunque el token sea correcto.",
+    )
+    meli_produccion_client_id = fields.Char(
+        string="Client Id de Produccion",
+        size=256,
+        groups="base.group_system",
+        help="client_id de la cuenta de MercadoLibre en la instancia de PRODUCCION. Es el mismo "
+             "protocolo que usa el OFF para consultar la produccion de nuestros clientes: la "
+             "cuenta se busca por client_id + secret_key.",
+    )
+    meli_produccion_secret_key = fields.Char(
+        string="Secret Key de Produccion",
+        size=256,
+        groups="base.group_system",
+        help="secret_key de la cuenta de MercadoLibre en PRODUCCION. No se escribe nunca en el log "
+             "ni en el chatter.",
+    )
+    meli_produccion_enabled = fields.Boolean(
+        string="Traer token de Produccion",
+        default=False,
+        groups="base.group_system",
+        help="Interruptor explicito. Con esto tildado, el cron de estado copia el access_token "
+             "de produccion cuando detecta que rotó. NO se activa solo.",
+    )
+    meli_produccion_last_sync = fields.Datetime(
+        string="Ultima copia de token",
+        readonly=True,
+        groups="base.group_system",
+        help="Cuando se ejecuto por ultima vez la copia. Sirve para ver que el mecanismo sigue "
+             "vivo: si esta viejo, no esta corriendo.",
+    )
+    meli_produccion_last_result = fields.Char(
+        string="Resultado de la ultima copia",
+        size=256,
+        readonly=True,
+        groups="base.group_system",
+        help="Resultado legible del ultimo intento (copiado / sin cambio / el error). Existe "
+             "para que este mecanismo NO pueda fallar en silencio.",
+    )
+    # 26.390 (seguridad): lado PRODUCCION de la copia de token. Default apagado: el
+    # /status no entrega el access_token de MercadoLibre salvo que esta cuenta lo
+    # permita Y el pedido lo pida (token_copy=True) Y el Nivel de seguridad lo admita.
+    meli_token_copy_allowed = fields.Boolean(
+        string="Permitir copiar el token a test",
+        default=False,
+        groups="base.group_system",
+        help="Sólo en PRODUCCION. Con esto tildado, una instancia de test configurada con "
+             "'Traer token de Produccion' puede leer el Access Token vigente de esta cuenta por "
+             "OCAPI. Apagado (default): el estado de la cuenta por OCAPI informa sólo si hay "
+             "token y cuándo vence, nunca su valor.",
+    )
+
     meli_login_id = fields.Char( string="Meli Login Id", help="https://compania.odoo.com/meli_login/{Meli Login Id}  Por ejemplo, si el Redirect Uri es: https://compania.odoo.com/meli_login/micanaluno el Meli Login Id es: micanaluno", index=True, required=True)
     redirect_uri = fields.Char( string='Redirect Uri', help='Redirect uri (https://myodoodomain.com/meli_login/[meli_login_id])',size=1024, index=True, required=True)
+    # [un caso fase 3] La URL de la API es UNA por compañía (res.company.meli_api_url, validada y con
+    # registro de uso si no es la oficial). La cuenta la muestra y la edita (related); el viejo
+    # http_proxy por cuenta queda como alias sin almacenar y la migración 26.210 lo pasa a la compañía.
+    meli_api_url = fields.Char(related='company_id.meli_api_url', readonly=False,
+                               string='URL de la API de Mercado Libre (compañía)')
     http_proxy = fields.Char(
-        string='Host API ML (rescate)',
-        help='Reemplaza api.mercadolibre.com por un reverse proxy externo para esta cuenta. '
-             'Tiene prioridad sobre el campo de empresa. '
-             'Formato: http://proxy.example.com',
-        size=512,
+        string='Host API ML (rescate) [obsoleto]',
+        compute='_compute_http_proxy_alias', inverse='_inverse_http_proxy_alias',
+        help='Obsoleto: alias de "URL de la API de Mercado Libre" de la compañía (vacío = la oficial).',
     )
+
+    @api.depends('company_id.meli_api_url')
+    def _compute_http_proxy_alias(self):
+        for acc in self:
+            company = acc.company_id
+            acc.http_proxy = company and company.mercadolibre_http_proxy or False
+
+    def _inverse_http_proxy_alias(self):
+        for acc in self:
+            company = acc.company_id or self.env.company
+            company.mercadolibre_http_proxy = acc.http_proxy
     cron_refresh = fields.Boolean(string="Cron Refresh", index=True)
     code = fields.Char( string="Code", index=True)
     official_store_id = fields.Char(string="Official Store Id",related="configuration.mercadolibre_official_store_id")
@@ -1183,6 +1318,15 @@ class MercadoLibreConnectionAccount(models.Model):
         'account_id',
         string='Depósitos ML (stock_location)',
         help='Depósitos/stores de ML con tag stock_location, sincronizados desde la API.',
+    )
+    # 26.363 (caso-K10): stock por depósito ML desde el mapeo «Depósitos ML» (opt-in, apagado por defecto).
+    meli_stock_by_location_mapping = fields.Boolean(
+        string='Publicar stock por depósito (según mapeo)',
+        default=False,
+        help='Cuentas multi-depósito (seller_warehouse): cada depósito de Mercado Libre recibe el stock de la '
+             'ubicación Odoo que tiene asignada en «Depósitos ML». Un depósito sin ubicación asignada no se '
+             'modifica (conserva la cantidad que tiene en Mercado Libre). Apagado: se publica el total y se '
+             'reparte en proporción a lo que cada depósito ya tenía.',
     )
 
     meli_additional_seller_ids = fields.Char(
@@ -1402,7 +1546,7 @@ class MercadoLibreConnectionAccount(models.Model):
     meli_user_ratings_neutral = fields.Float(string="Calificaciones neutrales %", readonly=True)
     meli_user_last_sync = fields.Datetime(string="Última sincronización", readonly=True)
     meli_user_raw_json = fields.Text(string="JSON completo", readonly=True)
-    connection_monitor = fields.Boolean(string="Monitoreo", help="Monitoreo remoto de status de conexión", default=True)
+    # connection_monitor ("Monitoreo"): definido en odoo_connector_api, con la ayuda del Nivel de seguridad.
     show_meli_user_raw_json = fields.Boolean(
         string="Mostrar JSON",
         default=False,
@@ -1888,6 +2032,7 @@ class MercadoLibreConnectionAccount(models.Model):
         self.ensure_one()
         company = self.company_id or self.env.user.company_id
         meli = self.env['meli.util'].get_new_instance(company, self)
+        _meli_http = meli_instance_session(meli)  # sesión del host de meli_api_url
 
         if meli.need_login():
             return {
@@ -1921,11 +2066,11 @@ class MercadoLibreConnectionAccount(models.Model):
 
         # 2. Consultar stores con tag stock_location y sincronizar registros
         seller_id = self.seller_id
-        stores_full_url = "https://api.mercadolibre.com/users/%s/stores/search?tags=stock_location" % str(seller_id)
+        stores_full_url = meli_instance_url(meli, "users/%s/stores/search?tags=stock_location" % str(seller_id))
         stores_count = 0
         stores_names = []
         try:
-            stores_resp = requests.get(stores_full_url, headers={'Authorization': 'Bearer %s' % meli.access_token}, timeout=15)
+            stores_resp = _meli_http.get(stores_full_url, headers={'Authorization': 'Bearer %s' % meli.access_token}, timeout=15)
             stores_json = stores_resp.json() if stores_resp else {}
             stores_results = stores_json.get('results', [])
             stores_count = len(stores_results)
@@ -2004,7 +2149,7 @@ class MercadoLibreConnectionAccount(models.Model):
         """Refresh the post-sale UNREAD buyer-message count on this account's
         orders from GET /messages/unread (role=seller, tag=post_sale). Returns
         (total, touched). Scoped to the account so it never touches another
-        seller's orders. [#499 Deco/KPI]"""
+        seller's orders. [caso de un cliente]"""
         self.ensure_one()
         company = self.company_id or self.env.user.company_id
         meli = self.env['meli.util'].get_new_instance(company, self)
@@ -2028,7 +2173,7 @@ class MercadoLibreConnectionAccount(models.Model):
         return (total, touched)
 
     def action_refresh_unread_messages(self):
-        """Botón manual: refresca los mensajes sin leer de esta cuenta. [#499]"""
+        """Botón manual: refresca los mensajes sin leer de esta cuenta. [un caso]"""
         grand_total = 0
         for acc in self:
             total, _touched = acc._refresh_unread_messages()
@@ -2047,7 +2192,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
     @api.model
     def cron_meli_refresh_unread(self):
-        """Cron: refresca los mensajes sin leer de todas las cuentas ML. [#499]"""
+        """Cron: refresca los mensajes sin leer de todas las cuentas ML. [un caso]"""
         accounts = self.search([])
         for acc in accounts:
             try:
@@ -2066,6 +2211,7 @@ class MercadoLibreConnectionAccount(models.Model):
         self.ensure_one()
         company = self.company_id or self.env.user.company_id
         meli = self.env['meli.util'].get_new_instance(company, self)
+        _meli_http = meli_instance_session(meli)  # sesión del host de meli_api_url
 
         if meli.need_login():
             return {
@@ -2197,12 +2343,12 @@ class MercadoLibreConnectionAccount(models.Model):
 
         # --- TEST 3: /users/{seller_id}/stores/search?tags=stock_location ---
         seller_id = self.seller_id
-        stores_full_url = "https://api.mercadolibre.com/users/%s/stores/search?tags=stock_location" % str(seller_id)
+        stores_full_url = meli_instance_url(meli, "users/%s/stores/search?tags=stock_location" % str(seller_id))
         lines.append("[3] GET /users/%s/stores/search?tags=stock_location" % str(seller_id))
         lines.append("    (Authorization: Bearer token)")
         t0 = _time.time()
         try:
-            stores_resp = requests.get(stores_full_url, headers={'Authorization': 'Bearer %s' % meli.access_token}, timeout=15)
+            stores_resp = _meli_http.get(stores_full_url, headers={'Authorization': 'Bearer %s' % meli.access_token}, timeout=15)
             stores_json = stores_resp.json() if stores_resp else {}
             elapsed = _time.time() - t0
 
@@ -2291,15 +2437,15 @@ class MercadoLibreConnectionAccount(models.Model):
             }
 
             # 4a) GET /user-products/{id}/stock (general)
-            stock_url = "https://api.mercadolibre.com/user-products/%s/stock" % str(up_id)
+            stock_url = meli_instance_url(meli, "user-products/%s/stock" % str(up_id))
             t0 = _time.time()
-            # A3 fix (ticket #425): initialize before the request so the non-200
+            # A3 fix (ticket un caso): initialize before the request so the non-200
             # (no-exception) branch below cannot leave these unbound -> the later
             # 4b/4c sections reference found_types/found_all_locs unconditionally.
             found_types = {}      # type -> {qty, store_id, network_node_id}
             found_all_locs = []   # all root locations with their data
             try:
-                stock_resp = requests.get(stock_url, headers=auth_headers, timeout=15)
+                stock_resp = _meli_http.get(stock_url, headers=auth_headers, timeout=15)
                 stock_json = stock_resp.json() if stock_resp.status_code == 200 else {}
                 elapsed = _time.time() - t0
                 x_version = stock_resp.headers.get('x-version') or stock_resp.headers.get('X-Version')
@@ -2390,10 +2536,10 @@ class MercadoLibreConnectionAccount(models.Model):
                 lines.append("  [4b] TEST /user-products/%s/stock/type/%s" % (up_id, loc_type))
 
                 # GET específico por tipo
-                type_url = "https://api.mercadolibre.com/user-products/%s/stock/type/%s" % (str(up_id), loc_type)
+                type_url = meli_instance_url(meli, "user-products/%s/stock/type/%s" % (str(up_id), loc_type))
                 t0 = _time.time()
                 try:
-                    type_resp = requests.get(type_url, headers=auth_headers, timeout=15)
+                    type_resp = _meli_http.get(type_url, headers=auth_headers, timeout=15)
                     elapsed = _time.time() - t0
                     type_json = type_resp.json() if type_resp.text else {}
 
@@ -2465,7 +2611,7 @@ class MercadoLibreConnectionAccount(models.Model):
                 else:
                     put_body = {"quantity": current_qty}
 
-                put_url = "https://api.mercadolibre.com/user-products/%s/stock/type/%s" % (str(up_id), loc_type)
+                put_url = meli_instance_url(meli, "user-products/%s/stock/type/%s" % (str(up_id), loc_type))
                 put_hdrs = dict(put_headers_base)
                 if type_xver:
                     put_hdrs['X-Version'] = str(type_xver)
@@ -2477,7 +2623,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
                 t0 = _time.time()
                 try:
-                    put_resp = requests.put(put_url, headers=put_hdrs, data=_json.dumps(put_body), timeout=15)
+                    put_resp = _meli_http.put(put_url, headers=put_hdrs, data=_json.dumps(put_body), timeout=15)
                     elapsed = _time.time() - t0
                     put_json = put_resp.json() if put_resp.text else {}
 
@@ -2516,7 +2662,7 @@ class MercadoLibreConnectionAccount(models.Model):
                 put_body_direct = None
 
             if put_body_direct:
-                direct_url = "https://api.mercadolibre.com/user-products/%s/stock" % str(up_id)
+                direct_url = meli_instance_url(meli, "user-products/%s/stock" % str(up_id))
                 put_hdrs_d = dict(auth_headers)
                 put_hdrs_d['Content-Type'] = 'application/json'
                 if x_version:
@@ -2525,7 +2671,7 @@ class MercadoLibreConnectionAccount(models.Model):
                 lines.append("    X-Version: %s" % (str(x_version) if x_version else "(sin header)"))
                 t0 = _time.time()
                 try:
-                    put_d_resp = requests.put(direct_url, headers=put_hdrs_d, data=_json.dumps(put_body_direct), timeout=15)
+                    put_d_resp = _meli_http.put(direct_url, headers=put_hdrs_d, data=_json.dumps(put_body_direct), timeout=15)
                     elapsed = _time.time() - t0
                     put_d_json = put_d_resp.json() if put_d_resp.text else {}
                     if put_d_resp.status_code >= 400:
@@ -2547,24 +2693,37 @@ class MercadoLibreConnectionAccount(models.Model):
             lines.append("")
             lines.append("  [4d] PUT /items/%s (legacy available_quantity)" % meli_id)
             # Obtener stock actual del item
-            item_url = "https://api.mercadolibre.com/items/%s" % str(meli_id)
+            item_url = meli_instance_url(meli, "items/%s" % str(meli_id))
             t0 = _time.time()
             try:
-                item_resp = requests.get(item_url, headers=auth_headers, timeout=15)
+                item_resp = _meli_http.get(item_url, headers=auth_headers, timeout=15)
                 item_json = item_resp.json() if item_resp.status_code == 200 else {}
                 current_avail = item_json.get('available_quantity', 0)
                 item_status = item_json.get('status', '?')
                 lines.append("    item status: %s | available_quantity actual: %s" % (item_status, current_avail))
 
-                # PUT con misma cantidad (safe)
-                legacy_put_url = "https://api.mercadolibre.com/items/%s" % str(meli_id)
-                legacy_body = {"available_quantity": int(current_avail)}
+                # 26.87 (F6) — el test publicaba EL MISMO valor que el item ya tenia
+                # y concluia "PUT legacy FUNCIONA ✓" con solo mirar el HTTP 200.
+                # Un 200 sobre un no-cambio NO demuestra que un cambio se aplique:
+                # justamente el modo de falla que perseguimos (ML acepta y no aplica)
+                # pasaba este test. Ahora: publicamos un valor DISTINTO, RELEEMOS el
+                # item para ver que quedo, y RESTAURAMOS el valor original.
+                legacy_put_url = meli_instance_url(meli, "items/%s" % str(meli_id))
                 legacy_hdrs = dict(auth_headers)
                 legacy_hdrs['Content-Type'] = 'application/json'
 
-                lines.append("    body: %s" % str(legacy_body))
+                try:
+                    _orig_avail = int(current_avail)
+                except (TypeError, ValueError):
+                    _orig_avail = 0
+                # +1 es seguro: sube el stock un instante, nunca vende de menos.
+                # Bajarlo podria pausar la publicacion durante la prueba.
+                _probe_avail = _orig_avail + 1
+                legacy_body = {"available_quantity": _probe_avail}
+
+                lines.append("    body: %s  (valor de prueba, se restaura a %s)" % (str(legacy_body), _orig_avail))
                 t0 = _time.time()
-                legacy_resp = requests.put(legacy_put_url, headers=legacy_hdrs, data=_json.dumps(legacy_body), timeout=15)
+                legacy_resp = _meli_http.put(legacy_put_url, headers=legacy_hdrs, data=_json.dumps(legacy_body), timeout=15)
                 elapsed = _time.time() - t0
                 legacy_json = legacy_resp.json() if legacy_resp.text else {}
 
@@ -2577,12 +2736,43 @@ class MercadoLibreConnectionAccount(models.Model):
                         causes = legacy_json.get('cause', legacy_json.get('causes', []))
                         if causes:
                             lines.append("    causes: %s" % str(causes)[:300])
-                    lines.append("    → PUT legacy /items NO funciona")
+                    lines.append("    → PUT legacy /items NO funciona (rechazado)")
                 else:
-                    new_avail = legacy_json.get('available_quantity', '?') if isinstance(legacy_json, dict) else '?'
-                    lines.append("    RESULTADO: OK HTTP %s (%.2fs) ✓" % (legacy_resp.status_code, elapsed))
-                    lines.append("    → PUT legacy /items FUNCIONA ✓")
-                    lines.append("    available_quantity resultante: %s" % new_avail)
+                    lines.append("    RESULTADO: HTTP %s (%.2fs)" % (legacy_resp.status_code, elapsed))
+                    # RELECTURA: la unica prueba real de que el cambio se aplico.
+                    _reread = None
+                    try:
+                        _rr = _meli_http.get(item_url, headers=auth_headers, timeout=15)
+                        if _rr.status_code == 200:
+                            _reread = (_rr.json() or {}).get('available_quantity')
+                    except Exception as _rr_err:
+                        lines.append("    (no se pudo releer el item: %s)" % str(_rr_err)[:80])
+
+                    lines.append("    available_quantity en la respuesta del PUT: %s" % (
+                        legacy_json.get('available_quantity', '?') if isinstance(legacy_json, dict) else '?'))
+                    lines.append("    available_quantity releido de ML: %s" % (
+                        _reread if _reread is not None else 'no se pudo releer'))
+
+                    if _reread is None:
+                        lines.append("    → PUT legacy /items: HTTP OK pero NO VERIFICADO "
+                                     "(no se pudo releer el item)")
+                    elif int(_reread) == _probe_avail:
+                        lines.append("    → PUT legacy /items FUNCIONA ✓ (valor aplicado y verificado)")
+                    else:
+                        lines.append("    → ⚠ PUT legacy /items ACEPTADO PERO NO APLICADO: "
+                                     "se publico %s y ML quedo en %s. El stock de esta "
+                                     "publicacion NO se puede actualizar por esta via."
+                                     % (_probe_avail, _reread))
+
+                    # RESTAURAR el valor original (el test no debe dejar rastro).
+                    try:
+                        _restore = _meli_http.put(
+                            legacy_put_url, headers=legacy_hdrs,
+                            data=_json.dumps({"available_quantity": _orig_avail}), timeout=15)
+                        lines.append("    restauracion a %s: HTTP %s" % (_orig_avail, _restore.status_code))
+                    except Exception as _rst_err:
+                        lines.append("    ⚠ NO se pudo restaurar el valor original (%s): %s"
+                                     % (_orig_avail, str(_rst_err)[:80]))
             except Exception as E:
                 lines.append("    EXCEPTION: %s" % str(E)[:150])
 
@@ -2602,13 +2792,13 @@ class MercadoLibreConnectionAccount(models.Model):
             else:
                 items_stock_body = {"available_quantity": int(current_avail) if 'current_avail' in dir() else 0}
 
-            items_stock_url = "https://api.mercadolibre.com/items/%s/stock" % str(meli_id)
+            items_stock_url = meli_instance_url(meli, "items/%s/stock" % str(meli_id))
             items_stock_hdrs = dict(auth_headers)
             items_stock_hdrs['Content-Type'] = 'application/json'
             lines.append("    body: %s" % str(items_stock_body))
             t0 = _time.time()
             try:
-                is_resp = requests.put(items_stock_url, headers=items_stock_hdrs, data=_json.dumps(items_stock_body), timeout=15)
+                is_resp = _meli_http.put(items_stock_url, headers=items_stock_hdrs, data=_json.dumps(items_stock_body), timeout=15)
                 elapsed = _time.time() - t0
                 is_json = is_resp.json() if is_resp.text else {}
                 if is_resp.status_code >= 400:
@@ -2630,7 +2820,7 @@ class MercadoLibreConnectionAccount(models.Model):
             lines.append("")
             lines.append("  [4d] TEST PUT /user-products/%s/stock (sin tipo) — múltiples formatos" % up_id)
 
-            put_d_url = "https://api.mercadolibre.com/user-products/%s/stock" % str(up_id)
+            put_d_url = meli_instance_url(meli, "user-products/%s/stock" % str(up_id))
             put_d_hdrs_base = dict(auth_headers)
             put_d_hdrs_base['Content-Type'] = 'application/json'
 
@@ -2691,7 +2881,7 @@ class MercadoLibreConnectionAccount(models.Model):
                     lines.append("    body: %s" % str(_put_d_body))
                     t0 = _time.time()
                     try:
-                        put_d_resp = requests.put(put_d_url, headers=put_d_hdrs,
+                        put_d_resp = _meli_http.put(put_d_url, headers=put_d_hdrs,
                                                   data=_json.dumps(_put_d_body), timeout=15)
                         elapsed = _time.time() - t0
                         put_d_json = put_d_resp.json() if put_d_resp.text else {}
@@ -3055,7 +3245,19 @@ class MercadoLibreConnectionAccount(models.Model):
         for acc in self:
             if (acc.type == "mercadolibre"):
                 fields_credentials+= [ 'redirect_uri','meli_login_id','official_store_id','brand']
-                fields_credentials+= [ 'client_id', 'secret_key', 'seller_id','access_token', 'refresh_token']
+                # [un caso] /status nunca devuelve secret_key ni refresh_token (nadie los consume: el OFF
+                # usa status/connector_version/access_token, y la copia prod→test descarta el refresh).
+                # 26.390: el access_token tampoco (ni en Predeterminado): sólo presencia + vencimiento.
+                fields_credentials+= [ 'client_id', 'seller_id']
+                # 26.390: el access_token NO va en la lista de campos: el valor sólo sale por
+                # _status_token_copy_value() (copia prod->test explícita). Ver fetch_status.
+                # access_token_expires_at es IMPRESCINDIBLE, no un extra: quien copia el
+                # token a una instancia de test y NO se lleva el vencimiento deja la cuenta
+                # con el vencimiento viejo, o sea "Desconectado" igual que antes -- el estado
+                # se computa contra ese campo, no consultando a ML. Es exactamente el
+                # callejon en el que caen los clientes que pegan el token a mano: el campo
+                # no es editable desde la pantalla y sin el la copia no sirve de nada.
+                fields_credentials+= [ 'access_token_expires_at']
                 fields_credentials+= [ 'cron_refresh']
 
         return fields_credentials
@@ -3071,6 +3273,22 @@ class MercadoLibreConnectionAccount(models.Model):
             ]+fields_credentials
 
         return fields_status
+
+    def _status_token_copy_value(self, **post):
+        """Access token para la copia prod->test, o False. Tres llaves, las tres explícitas:
+        el pedido trae token_copy=True, la cuenta de PRODUCCION tiene meli_token_copy_allowed
+        y el Nivel de seguridad de la compañía permite token_copy. Nunca el refresh_token."""
+        self.ensure_one()
+        if str(post.get('token_copy')).lower() not in ('1', 'true'):
+            return False
+        acc = self.sudo()
+        if not acc.meli_token_copy_allowed or not acc.access_token:
+            return False
+        if not (acc.company_id or acc.env.company).sudo()._ocapi_security_allows('token_copy'):
+            return False
+        _logger.info("fetch_status: cuenta %s entrega el token para copia a test (md5=%s)", acc.name,
+                     hashlib.md5(acc.access_token.encode('utf-8')).hexdigest()[:12])
+        return acc.access_token
 
     def fetch_status( self, **post ):
         _logger.info("mercadolibre.account > fetch_status")
@@ -3094,11 +3312,19 @@ class MercadoLibreConnectionAccount(models.Model):
 
             raw_data = acc and acc.read(fields_status)
 
-            _logger.info("mercadolibre.account > fetch_status raw_data: "+str(raw_data))
+            _logger.info("mercadolibre.account > fetch_status raw_data: "+str(_meli_redact_post(raw_data)))
 
             if raw_data and raw_data[0]:
                 json_status = json.loads( json.dumps( raw_data[0], default=json_default) )
                 json_status["status"] = (acc.access_token and "connected") or "disconnected"
+                # 26.390 (seguridad): NUNCA valores de secretos en el /status, aunque otro
+                # módulo los agregue a get_fields_credentials. Sólo presencia y vencimiento.
+                for k in [k for k in json_status if k.endswith(_STATUS_SECRET_SUFFIXES)]:
+                    json_status.pop(k, None)
+                json_status["access_token_present"] = bool(acc.access_token)
+                token = acc._status_token_copy_value(**post)
+                if token:
+                    json_status["access_token"] = token
                 #PERF: contar con search_count, no con len() de un one2many —
                 #len() materializa TODO el recordset (decenas de miles de bindings).
                 json_status["mercadolibre_product_template_bindings"] = self.env['mercadolibre.product_template'].search_count([('connection_account', '=', acc.id)])
@@ -3111,7 +3337,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
             result.append(json_status)
 
-        _logger.info(result)
+        _logger.info(_meli_redact_post(result))
         return result
 
     def _mercadolibre_brands( self ):
@@ -3125,6 +3351,11 @@ class MercadoLibreConnectionAccount(models.Model):
             if br and br.id:
                 brands.append(br)
                 continue;
+
+            # Cuenta sin conectar (form de cuenta nueva o sin token): get_new_instance no puede refrescar sin
+            # access_token, sólo dejaba "Need login for <nombre>" + un /sites 403 en el log por cada lectura del form.
+            if not ac.access_token or not seller_id:
+                continue
 
             meli = self.env['meli.util'].get_new_instance( company, ac )
             #ac.mercadolibre_brands = [(5)]
@@ -3222,6 +3453,207 @@ class MercadoLibreConnectionAccount(models.Model):
         self.access_token = access_token
 
         return access_token
+
+    def meli_product_invoice_policy_fields(self):
+        """Campos extra de invoice_policy para el create() de productos del conector.
+
+        Manda la configuracion de la cuenta; si esta vacia se cae a la compania.
+        Devuelve {} cuando ninguna define politica, para que prod_fields quede
+        EXACTAMENTE igual que antes (cero regresion en instalaciones existentes).
+        """
+        self.ensure_one()
+        policy = self.configuration.mercadolibre_product_invoice_policy
+        if not policy and self.company_id:
+            policy = self.company_id.mercadolibre_product_invoice_policy
+        return {'invoice_policy': policy} if policy else {}
+
+    # ------------------------------------------------------------------
+    # Copia del access_token desde la instancia de PRODUCCION (via OCAPI)
+    # ------------------------------------------------------------------
+    def _produccion_status_url(self):
+        """URL del endpoint que SI devuelve credenciales.
+
+        OJO, y esto costo una vuelta entera de diagnostico: la ruta base
+        /ocapi/<connector>/status devuelve el literal "connected" y el codigo que
+        armaba los tokens esta comentado. La que sirve es la de <channel>.
+        """
+        self.ensure_one()
+        base = (self.meli_produccion_uri or "").strip().rstrip("/")
+        channel = (self.meli_produccion_channel or "").strip().strip("/")
+        connector = (self.meli_produccion_connector or "mercadolibre").strip().strip("/")
+        if not base or not channel:
+            return False
+        # <channel> lo exige la ruta pero el handler NO lo usa (status() llama a
+        # fetch_status(**post) sin pasarlo). <connector> en cambio SI se valida contra
+        # el name/type de la cuenta OCAPI: si no coincide, devuelve {} igual que si el
+        # token estuviera mal.
+        return "%s/ocapi/%s/%s/status" % (base, connector, channel)
+
+    def pull_token_from_produccion(self, force=False):
+        """Trae el access_token vigente de PRODUCCION y lo escribe en esta cuenta.
+
+        Devuelve un string legible con lo que paso (el mismo que queda en
+        meli_produccion_last_result). Nunca levanta: un fallo acá no puede tumbar
+        el cron de estado del resto de las cuentas.
+
+        ⛔ REGLAS DURAS, y ninguna es decorativa:
+
+        1. NO se copia el refresh_token. La respuesta OCAPI LO TRAE, así que no
+           alcanza con "no usarlo": se descarta explícitamente más abajo. Si test
+           tuviera refresh_token y renovara, le invalidaría el token a PRODUCCION
+           y cae la operación real del cliente.
+        2. El disparador es el HECHO (el token de prod cambió), no el reloj. Test
+           hereda el vencimiento VIEJO de prod, así que al rotar le quedan ~12 min:
+           un loop de 15 min llega tarde. Medido el 24-ago-2026, el margen real fue
+           de 61 segundos.
+        3. Los secretos no van al log. Se loguea el md5, nunca el token.
+        4. Dirección única: esta cuenta LEE de produccion. Nunca al revés.
+        """
+        self.ensure_one()
+
+        def _finish(msg):
+            # sudo: los campos de bitácora son de sistema y el cron corre como OdooBot
+            self.sudo().write({
+                'meli_produccion_last_sync': fields.Datetime.now(),
+                'meli_produccion_last_result': msg[:256],
+            })
+            return msg
+
+        if not self.meli_produccion_enabled:
+            return "apagado"
+
+        company = self.company_id or self.env.company
+        if not company.sudo()._ocapi_security_allows('token_copy'):
+            return _finish("apagado por el Nivel de seguridad de la compañía")
+
+        url = self._produccion_status_url()
+        if not url:
+            return _finish("ERROR: falta meli_produccion_uri o meli_produccion_channel")
+        if not (self.meli_produccion_client_id and self.meli_produccion_secret_key):
+            return _finish("ERROR: faltan client_id / secret_key de produccion")
+
+        # Guard de dirección: apuntarse a la propia instancia copiaría el token
+        # sobre sí mismo y, peor, haría creer que el mecanismo está andando.
+        own_base = (self.env['ir.config_parameter'].sudo().get_param('web.base.url') or '').strip().rstrip('/')
+        if own_base and own_base == (self.meli_produccion_uri or '').strip().rstrip('/'):
+            return _finish("ERROR: meli_produccion_uri apunta a ESTA misma instancia")
+
+        try:
+            resp = requests.post(
+                url,
+                # ENVOLTORIO OBLIGATORIO: route_typejson == "json" (models/versions.py:10),
+                # o sea un controller JSON de Odoo. El body va DENTRO de params. Mandado
+                # plano, Odoo no lo mapea a los kwargs y el endpoint contesta como si no
+                # hubieran llegado credenciales. Es el mismo envoltorio que usa el OFF en
+                # connection_account_kpis.py para consultar la produccion de un cliente.
+                json={
+                    'jsonrpc': '2.0',
+                    'method': 'call',
+                    'params': {
+                        'client_id': self.meli_produccion_client_id,
+                        'secret_key': self.meli_produccion_secret_key,
+                        # 26.390: produccion sólo entrega el token si se pide explícito
+                        # y su cuenta tiene tildado "Permitir copiar el token a test".
+                        'token_copy': True,
+                    },
+                    'id': 1,
+                },
+                timeout=30,
+            )
+        except Exception as e:
+            return _finish("ERROR de red: %s" % (str(e)[:180],))
+
+        if resp.status_code != 200:
+            return _finish("ERROR HTTP %s" % (resp.status_code,))
+
+        try:
+            data = resp.json()
+        except Exception:
+            return _finish("ERROR: la respuesta no es JSON")
+
+        # El controller de Odoo puede envolver en result/ y el de OCAPI puede
+        # devolver el dict pelado. Se aceptan las dos formas y, si no aparece el
+        # token, se dice — no se asume una estructura.
+        payload = data.get('result', data) if isinstance(data, dict) else {}
+        # El endpoint /ocapi/<connector>/<channel>/status devuelve una LISTA de cuentas
+        # ([{...}]), no un dict. Sin esto payload queda siendo una list, el isinstance de
+        # mas abajo da False y remote_token sale None => el mecanismo fallaba SIEMPRE, con
+        # cualquier configuracion, y el error culpaba a las credenciales. Medido el
+        # 23-sep-2026 en un cliente: el log de produccion mostraba la respuesta 200 CON el
+        # access_token en el mismo segundo en que test reportaba "respuesta vacia".
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if isinstance(payload, dict) and 'status' in payload and isinstance(payload.get('status'), dict):
+            payload = payload['status']
+
+        remote_token = payload.get('access_token') if isinstance(payload, dict) else None
+        if not remote_token:
+            # El endpoint devuelve {} cuando la autenticacion falla, sin distinguir el motivo.
+            # Se enumeran las tres causas reales para no dejar al operador adivinando.
+            return _finish(
+                "ERROR: respuesta vacia o sin access_token. Causas posibles: en PRODUCCION la "
+                "cuenta no tiene tildado 'Permitir copiar el token a test' (o su version es "
+                "anterior a 26.390), el client_id / "
+                "secret_key no corresponden a ninguna cuenta de MercadoLibre en produccion, el "
+                "connector no coincide con el type de esa cuenta, o esa instancia todavia no "
+                "tiene la version del modulo que acepta credenciales en /status. "
+                "Verificar contra el LOG de la instancia de produccion: si alli figura un "
+                "POST /ocapi/.../status 200 con el token, el problema esta de este lado."
+            )
+
+        # ⛔ REGLA 1, explícita: el refresh_token viene en la respuesta y se DESCARTA.
+        # Escribirlo en test le rompe el token a produccion.
+        payload.pop('refresh_token', None)
+
+        # Sin el vencimiento la copia NO alcanza: el estado se computa contra ese campo.
+        # Si la instancia de produccion no lo expone (le falta esta version del modulo),
+        # se dice fuerte y claro en el resultado en vez de dejar un exito aparente que en
+        # la pantalla se va a seguir viendo "Desconectado".
+        remote_expires = payload.get('access_token_expires_at') or False
+
+        # ⛔ REGLA 2: disparar por el hecho, no por el reloj.
+        if not force and remote_token == self.sudo().access_token:
+            return _finish("sin cambio: produccion aun no roto el token")
+
+        vals = {'access_token': remote_token}
+        if remote_expires:
+            vals['access_token_expires_at'] = remote_expires
+        self.sudo().write(vals)
+
+        if not remote_expires:
+            _logger.warning(
+                "pull_token_from_produccion: %s copio el token pero produccion NO devolvio "
+                "access_token_expires_at; la cuenta va a seguir figurando Desconectada.",
+                self.name,
+            )
+            return _finish(
+                "PARCIAL: token copiado SIN vencimiento -- produccion no expone "
+                "access_token_expires_at (le falta esta version del modulo). La cuenta "
+                "va a seguir figurando Desconectada."
+            )
+
+        _logger.info(
+            "pull_token_from_produccion: cuenta %s actualizada desde %s (token md5=%s, vence %s)",
+            self.name, self.meli_produccion_uri,
+            hashlib.md5(remote_token.encode('utf-8')).hexdigest()[:12],
+            remote_expires or 'sin dato',
+        )
+        return _finish("copiado (vence %s)" % (remote_expires or 'sin dato',))
+
+    def action_pull_token_from_produccion(self):
+        """Boton del form: fuerza la copia y muestra el resultado."""
+        self.ensure_one()
+        msg = self.pull_token_from_produccion(force=True)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Token desde Produccion"),
+                'message': msg,
+                'sticky': False,
+                'type': 'warning' if msg.startswith('ERROR') else 'success',
+            },
+        }
 
     def get_connector_state(self):
 
@@ -3478,7 +3910,7 @@ class MercadoLibreConnectionAccount(models.Model):
         cron_types = [
             'orders', 'stock', 'stock_rt', 'products_post',
             'products_get', 'price', 'internal_jobs', 'questions', 'process',
-            'batch_update', 'stock_diagnostic',
+            'batch_update', 'stock_diagnostic', 'shipments_label',
         ]
         # sudo: bookkeeping de sistema (modelo manager-only); create() de cuentas puede
         # correr en contexto no-manager → sin sudo da AccessError al leer/crear cron.status.
@@ -3614,6 +4046,72 @@ class MercadoLibreConnectionAccount(models.Model):
             'context': {'default_connection_account': self.id},
         }
 
+    # ------------------------------------------------------------------
+    # 26.248 (#caso-K29 cliente M): lock de los CRONs para "Ejecutar ahora".
+    # Semántica de ir.cron.method_direct_trigger(): si el cron ya está
+    # corriendo, se avisa y NO se duplica. Pero el lock se toma en un cursor
+    # APARTE y se sostiene toda la corrida: en 16/17/18 method_direct_trigger
+    # lo toma en el cursor del request y el cr.commit() de los wrappers
+    # (res.company.cron_meli_process_*) lo suelta, así que el cron programado
+    # podía entrar a mitad de la corrida manual y tomar los mismos registros.
+    # El scheduler pide la fila con FOR NO KEY UPDATE SKIP LOCKED: mientras
+    # corre el manual, el automático no la toma.
+    # ------------------------------------------------------------------
+    def _meli_ir_crons_for(self, cron_type):
+        """(todos, efectivo): los ir.cron que pueden correr `cron_type` para
+        estas cuentas (el global y, si hay, el clon Individual) y el que
+        efectivamente usa la cuenta (para registrar lastcall)."""
+        CronStatus = self.env['mercadolibre.cron.status'].sudo()
+        crons = self.env['ir.cron'].sudo().browse()
+        glob = CronStatus._resolve_global_ir_cron(cron_type)
+        if glob:
+            crons |= glob
+        efectivo = glob
+        for acc in self.sudo():
+            st = acc.cron_status_ids.filtered(lambda c: c.cron_type == cron_type)[:1]
+            if st and st.individual_cron_id:
+                crons |= st.individual_cron_id
+                if st.cron_mode == 'individual':
+                    efectivo = st.individual_cron_id
+        return crons, efectivo
+
+    @contextmanager
+    def _meli_cron_lock(self, cron_type, label=None):
+        """Sostiene un lock de fila sobre los ir.cron de `cron_type` mientras
+        dura el bloque. El lock vive en una conexión PROPIA (sql_db), que sólo
+        lockea y nunca commitea: no lo suelta el commit del llamador ni su
+        rollback afecta lo que el llamador escribió. Si el bloque termina bien,
+        registra lastcall como method_direct_trigger."""
+        from odoo import sql_db
+        label = label or cron_type
+        crons, efectivo = self._meli_ir_crons_for(cron_type)
+        if not crons:
+            raise UserError(_("No se encontró la tarea programada de '%s'.") % label)
+        lock_cr = sql_db.db_connect(self.env.cr.dbname).cursor()
+        try:
+            try:
+                lock_cr.execute(
+                    'SELECT id FROM ir_cron WHERE id IN %s FOR NO KEY UPDATE NOWAIT',
+                    [tuple(crons.ids)], log_exceptions=False)
+            except psycopg2.OperationalError:
+                raise UserError(_(
+                    "'%s' ya se está ejecutando (tarea automática u otro usuario), "
+                    "así que no se lanzó otra vez. Probá de nuevo en unos minutos.") % label)
+            _logger.info("Ejecutar ahora [%s]: lock tomado sobre ir.cron %s", label, crons.ids)
+            yield crons
+        finally:
+            lock_cr.rollback()
+            lock_cr.close()
+        if efectivo:
+            # Fuera del lock y sin esperar: si el scheduler ya tomó la fila,
+            # se omite (él mismo actualiza lastcall al terminar).
+            self.env.cr.execute("""
+                UPDATE ir_cron SET lastcall = %s
+                 WHERE id IN (SELECT id FROM ir_cron WHERE id = %s
+                              FOR NO KEY UPDATE SKIP LOCKED)""",
+                [fields.Datetime.now(), efectivo.id])
+            efectivo.invalidate_recordset(['lastcall']) if hasattr(efectivo, 'invalidate_recordset') else efectivo.invalidate_cache(['lastcall'])
+
     def meli_refresh_token(self):
         _logger.info("meli_refresh_token: "+str(self and self.name))
         self.ensure_one()
@@ -3675,7 +4173,9 @@ class MercadoLibreConnectionAccount(models.Model):
             try:
                 if (config.mercadolibre_cron_post_update_stock):
                     #_logger.info("config.mercadolibre_cron_post_update_stock True "+str(config.name))
-                    connacc.meli_update_remote_stock_injobs( meli=apistate )
+                    # [un caso, 26.217] desde el cron (que ya commitea su propio tracking) el consumidor
+                    # puede hacer COMMIT REAL por tramo: ver meli_update_remote_stock_injobs.
+                    connacc.with_context(meli_injobs_real_commit=True).meli_update_remote_stock_injobs( meli=apistate )
                     connacc.meli_process_component_stock_updates( meli=apistate )
 
                 # Price batch: check if we should start or continue a price batch
@@ -3686,6 +4186,43 @@ class MercadoLibreConnectionAccount(models.Model):
                 connacc._end_cron_execution(execution, state='error', error_message=str(e))
                 raise
 
+
+    _MELI_INJOBS_ALERT_MARK = "meli-injobs-alert"
+
+    def _meli_injobs_alert(self, reason):
+        """[un caso, 26.217] Hace VISIBLE que los jobs diferidos de stock no avanzan: aviso en el
+        chatter de la cuenta ML (uno por dia) + warning en el log. Nunca levanta."""
+        try:
+            for acc in self:
+                today = fields.Date.context_today(acc)
+                already = self.env['mail.message'].sudo().search_count([
+                    ('model', '=', acc._name), ('res_id', '=', acc.id),
+                    ('body', 'ilike', self._MELI_INJOBS_ALERT_MARK),
+                    ('date', '>=', fields.Datetime.to_string(fields.Datetime.to_datetime(today))),
+                ])
+                _logger.warning("MELI injobs [%s]: %s", acc.name, reason)
+                if not already and hasattr(acc, 'message_post'):
+                    with self.env.cr.savepoint():
+                        acc.message_post(body=Markup("<p>%s</p><!-- %s -->") % (
+                            "Stock de Mercado Libre: " + reason, self._MELI_INJOBS_ALERT_MARK))
+        except Exception as e:
+            _logger.warning("MELI injobs: no se pudo dejar la alerta: %s", e)
+
+    def _meli_injobs_check_stuck(self, notifs):
+        """Alerta si hay jobs de stock pendientes viejos sin ningun producto procesado
+        (el cron corre pero no avanza: p.ej. lo mata el limite de tiempo)."""
+        try:
+            from datetime import timedelta
+            limit = fields.Datetime.now() - timedelta(hours=6)
+            stuck = notifs.filtered(lambda n: n.create_date and n.create_date < limit
+                                    and not (n.model_ids_count_processed or 0))
+            if stuck:
+                self._meli_injobs_alert(
+                    "hay %s actualizacion(es) de stock pendiente(s) de mas de 6 horas sin avance "
+                    "(la mas vieja: %s). Revisar el cron 'Meli Internal Jobs' y su registro de ejecuciones."
+                    % (len(stuck), min(stuck.mapped('create_date'))))
+        except Exception as e:
+            _logger.warning("MELI injobs: chequeo de jobs trabados fallo: %s", e)
 
     def meli_process_component_stock_updates(self, meli=None):
         """
@@ -3759,6 +4296,18 @@ class MercadoLibreConnectionAccount(models.Model):
                     errors_unproc = unproc_result.get('failed', 0) if isinstance(unproc_result, dict) else 0
                     times_unproc = unproc_result.get('times', []) if isinstance(unproc_result, dict) else []
 
+                    # 2b. 26.389 (caso-K77): ordenes de esta cuenta que quedaron SIN items. El paso 2 solo
+                    # trae las que no existen en Odoo; estas no las miraba nadie. Pocas por corrida y
+                    # con tope de intentos; si falla, no corta el cron.
+                    try:
+                        connacc.env['mercadolibre.orders']._meli_retry_orders_without_items(
+                            meli=apistate, config=config, account=connacc)
+                    except Exception as e_retry:
+                        if connacc.env.cr.closed:
+                            raise
+                        _logger.error("cron_meli_orders [%s]: reintento de ordenes sin items fallo: %s",
+                                      connacc.name, e_retry, exc_info=True)
+
                     # 3. Original order query as additional safety layer
                     query_result = connacc.meli_query_orders()
                     orders_query = len(query_result) if isinstance(query_result, list) else 0
@@ -3801,6 +4350,51 @@ class MercadoLibreConnectionAccount(models.Model):
             #    #_logger.info("account config mercadolibre_cron_get_questions")
             #    connacc.meli_query_get_questions()
 
+    @api.model
+    def _pick_notification_orders(self, notifications_by_order, limit):
+        """Elige que ordenes (resource) procesar en esta corrida.
+
+        notifications_by_order: {resource: [notis ordenadas received desc]}.
+        Cupo: la mitad (techo) a las mas nuevas, el resto a las mas viejas, para
+        que ninguna notificacion quede postergada indefinidamente.
+          - nuevas: por `received` desc (comportamiento historico).
+          - viejas: mitad RECEIVED nunca intentadas por `received` asc, mitad
+            FAILED rotando por `write_date` asc (la menos recientemente
+            intentada primero), para que un FAILED permanente no ocupe siempre
+            el mismo lugar ni tape a las RECEIVED.
+        Si no hay suficientes viejas, el cupo vuelve a las nuevas.
+        """
+        limit = max(int(limit or 0), 0)
+        if not limit or not notifications_by_order:
+            return []
+        _min = datetime.min
+
+        def _latest(r):
+            return notifications_by_order[r][0]
+
+        newest_first = sorted(notifications_by_order.keys(),
+                              key=lambda r: _latest(r).received or _min, reverse=True)
+        n_old = limit // 2
+        n_new = limit - n_old
+        picked = newest_first[:n_new]
+        taken = set(picked)
+        rest = [r for r in notifications_by_order if r not in taken]
+        received_old = sorted([r for r in rest if _latest(r).state == 'RECEIVED'],
+                              key=lambda r: _latest(r).received or _min)
+        failed_old = sorted([r for r in rest if _latest(r).state != 'RECEIVED'],
+                            key=lambda r: _latest(r).write_date or _min)
+        # cupo de viejas: mitad RECEIVED (techo) y mitad FAILED; lo que no se llene
+        # de un tipo lo ocupa el otro, y al final lo que sobre vuelve a las nuevas.
+        n_old_received = n_old - n_old // 2
+        picked += received_old[:n_old_received]
+        picked += failed_old[:n_old - n_old_received]
+        for r in received_old[n_old_received:] + failed_old[n_old - n_old_received:] + newest_first:
+            if len(picked) >= limit:
+                break
+            if r not in picked:
+                picked.append(r)
+        return picked
+
     def cron_process_order_notifications(self, meli=None, limit=10):
         """
         Process pending order notifications (orders_v2) that were registered but not processed.
@@ -3821,10 +4415,19 @@ class MercadoLibreConnectionAccount(models.Model):
 
         # Find all pending order notifications for this account
         # Order by received DESC to get the most recent first
+        # [caso-K15 cliente E] una notificacion FAILED se reintentaba cada 5 min PARA SIEMPRE (attempts
+        # no se contaba): en cliente E una orden trabada 8 dias, miles de reprocesos con fetch a ML
+        # y escrituras en res_partner. Tope de MELI_ORDER_NOTI_MAX_ATTEMPTS (~2 h a 5 min);
+        # las ventas pagas sin SO recientes las sigue rescatando CRON_UNPROCESSED_ORDERS.
+        # OJO: attempts NACE con los intentos de entrega que informa ML (values['attempts'],
+        # normalmente 1) y _process_notification_order le suma 1 por cada procesamiento.
+        MELI_ORDER_NOTI_MAX_ATTEMPTS = 24
         notif_domain = [
             ('connection_account', '=', account.id),
             ('topic', '=', 'orders_v2'),
-            ('state', 'in', ['RECEIVED', 'FAILED']),
+            '|',
+            ('state', '=', 'RECEIVED'),
+            '&', ('state', '=', 'FAILED'), ('attempts', '<', MELI_ORDER_NOTI_MAX_ATTEMPTS),
         ]
         all_notifications = self.env['mercadolibre.notification'].search(notif_domain, order='received desc')
         _logger.info("CRON_ORDER_NOTIFICATIONS: cuenta %s — búsqueda local domain=%s, limit_órdenes=%s → encontradas=%d.",
@@ -3843,13 +4446,10 @@ class MercadoLibreConnectionAccount(models.Model):
                 notifications_by_order[resource] = []
             notifications_by_order[resource].append(noti)
 
-        # Get the N most recent unique orders (by their latest notification)
-        # Sort orders by their most recent notification
-        unique_orders = sorted(
-            notifications_by_order.keys(),
-            key=lambda r: notifications_by_order[r][0].received,
-            reverse=True
-        )[:limit]
+        # #caso-K07: cupo repartido entre las mas NUEVAS y las mas VIEJAS. Antes eran
+        # solo las `limit` mas nuevas: con trafico alto las viejas (p.ej. una
+        # cancelacion) nunca salian de la cola y la orden quedaba con dato atrasado.
+        unique_orders = self._pick_notification_orders(notifications_by_order, limit)
 
         _logger.info("CRON_ORDER_NOTIFICATIONS: Found %d unique orders from %d notifications, processing %d for account %s",
                     len(notifications_by_order), len(all_notifications), len(unique_orders), account.name)
@@ -3866,7 +4466,8 @@ class MercadoLibreConnectionAccount(models.Model):
             older_notis = notis_for_order[1:]  # Older notifications (duplicates)
 
             sp_name = 'sp_noti_%d' % latest_noti.id
-            self.env.cr.execute('SAVEPOINT "%s"' % sp_name)
+            # sp_name = "sp_noti_%d" % id entero: identificador generado por el codigo (F8b 20.0)
+            self.env.cr.execute('SAVEPOINT "%s"' % sp_name)  # pylint: disable=sql-injection
             try:
                 # Intentar bloquear la fila exclusivamente; si otro worker la tiene, saltamos
                 self.env.cr.execute(
@@ -3882,25 +4483,27 @@ class MercadoLibreConnectionAccount(models.Model):
                 order_times.append(_time.time() - _t0)
                 processed_count += 1
 
-                # _process_notification_order() puede hacer cr.commit() internamente
-                # (crear partner, validar factura, etc.). Un commit libera TODOS los
-                # savepoints de la transaccion, asi que nuestro RELEASE puede fallar
-                # con "savepoint does not exist". Importante: una query fallida deja
-                # la transaccion PG en estado 'aborted' — el try/except atrapa la
-                # excepcion Python pero NO recupera PG. Hay que hacer cr.rollback()
-                # explicito para poder seguir ejecutando queries (incluyendo el flush
-                # del ORM en el proximo commit). Pasamos log_exceptions=False para
-                # no ensuciar el log con un ERROR "bad query: RELEASE SAVEPOINT..."
-                # que es esperado cuando el commit interno ya consumio el savepoint.
+                # 26.327 (caso-K02): el savepoint puede no existir si algo ADENTRO hizo un cr.commit()
+                # o cr.rollback() real (MeliCommit es flush_all y desde 26.327 el reintento usa
+                # savepoint, pero no todo el camino de la orden es nuestro). Antes, si el RELEASE
+                # fallaba, se hacia cr.rollback() suponiendo que "lo anterior ya estaba commiteado":
+                # era FALSO y descartaba la venta recien creada. Ahora el RELEASE corre detras de un
+                # savepoint de control creado AHORA (existe siempre): si falla, ROLLBACK TO ese
+                # control deja la transaccion sana SIN perder nada. Si sp_noti_N existe, el RELEASE
+                # libera tambien el de control (es posterior). log_exceptions=False: el fallo es
+                # esperable y no es un ERROR.
+                _sp_chk = sp_name + '_chk'
+                # sp_name = "sp_noti_%d" % id entero: identificador generado por el codigo (F8b 20.0)
+                self.env.cr.execute('SAVEPOINT "%s"' % _sp_chk)  # pylint: disable=sql-injection
                 try:
-                    self.env.cr.execute(
+                    self.env.cr.execute(  # pylint: disable=sql-injection
                         'RELEASE SAVEPOINT "%s"' % sp_name,
                         log_exceptions=False,
                     )
                 except Exception:
-                    # Savepoint consumido por commit interno; limpiar estado aborted.
-                    # El trabajo hecho antes del commit interno ya esta persistido.
-                    self.env.cr.rollback()
+                    _logger.info("CRON_ORDER_NOTIFICATIONS: savepoint %s ya consumido; se recupera sin perder el trabajo", sp_name)
+                    self.env.cr.execute('ROLLBACK TO SAVEPOINT "%s"' % _sp_chk)  # pylint: disable=sql-injection
+                    self.env.cr.execute('RELEASE SAVEPOINT "%s"' % _sp_chk)  # pylint: disable=sql-injection
 
                 # Mark older notifications as SUCCESS (processed via latest).
                 # Aplicamos DESPUES del cleanup del savepoint para que las escrituras
@@ -3928,7 +4531,8 @@ class MercadoLibreConnectionAccount(models.Model):
             except Exception as e:
                 import psycopg2
                 try:
-                    self.env.cr.execute('ROLLBACK TO SAVEPOINT "%s"' % sp_name)
+                    # sp_name = "sp_noti_%d" % id entero: identificador generado por el codigo (F8b 20.0)
+                    self.env.cr.execute('ROLLBACK TO SAVEPOINT "%s"' % sp_name)  # pylint: disable=sql-injection
                 except Exception:
                     self.env.cr.rollback()
                 if isinstance(e, (psycopg2.errors.SerializationFailure,
@@ -3993,10 +4597,17 @@ class MercadoLibreConnectionAccount(models.Model):
         ml_total = 0          # total que reporta ML en la ventana (status=paid + date_closed)
         existing_count = 0    # ya tienen registro mercadolibre.orders en Odoo (el cron las saltea)
 
+        # 26.289 (#caso-K10): las MAS VIEJAS primero (date_asc). Con date_desc + limit el cron tomaba
+        # siempre las `limit` mas nuevas sin registro: si entran >= `limit` ventas por corrida, una
+        # orden que no entro en su primera pasada (excepcion, cursor cerrado por un reinicio del
+        # server, etc.) quedaba detras de cada tanda nueva hasta salir de la ventana de `days` dias
+        # y no se reintentaba NUNCA por esta via (medido en Test caso-K10: 760 ventas/24 h, 10 por
+        # corrida, 4 ordenes abortadas el 22-oct quedaron afuera). Con date_asc la que fallo es la
+        # primera de la corrida siguiente. Las nuevas igual entran rapido por las notificaciones.
         while len(orders_to_process) < limit:
             orders_query = (
                 "/orders/search?seller=" + meli.seller_id +
-                "&sort=date_desc&order.status=paid" +
+                "&sort=date_asc&order.status=paid" +
                 "&order.date_closed.from=" + from_str +
                 "&order.date_closed.to=" + to_str +
                 ("&offset=" + str(offset) if offset else "")
@@ -4013,6 +4624,15 @@ class MercadoLibreConnectionAccount(models.Model):
             except Exception as e:
                 _logger.error("CRON_UNPROCESSED_ORDERS: API error: %s", str(e))
                 break
+
+            if meli_is_auth_error(orders_json):
+                # [caso-K11] (19-oct-2026) Token rechazado (401 sin clave "error"): antes caia como
+                # `results` vacio y se logueaba "nuevas=0" cada corrida, con las ventas sin entrar.
+                # Ahora es un ERROR visible y cuenta como fallo en la ejecucion del cron.
+                _logger.error("CRON_UNPROCESSED_ORDERS: cuenta %s — ML RECHAZO EL TOKEN (%s): "
+                              "las ordenes NO se consultaron. Hay que refrescar/reconectar la cuenta.",
+                              account.name, orders_json.get("code") or orders_json.get("error") or orders_json.get("status"))
+                return {'processed': 0, 'failed': 1, 'times': [], 'auth_error': True}
 
             if isinstance(orders_json, dict) and "error" in orders_json:
                 _logger.error("CRON_UNPROCESSED_ORDERS: API error: %s", orders_json.get("error"))
@@ -4087,7 +4707,10 @@ class MercadoLibreConnectionAccount(models.Model):
                 )
                 _elapsed = _time.time() - _t0
 
-                if ret and "error" in ret:
+                if ret and "error" in ret and 'MELI_IMPORT_PARALLEL' in str(ret["error"]):
+                    # #caso-K13: la importó (o la está importando) el cron de notificaciones: no es un fallo.
+                    _logger.info("CRON_UNPROCESSED_ORDERS: order %s skipped: %s", order_id, ret["error"])
+                elif ret and "error" in ret:
                     _logger.error("CRON_UNPROCESSED_ORDERS: Error importing order %s: %s",
                                 order_id, ret["error"])
                     failed_count += 1
@@ -4097,9 +4720,29 @@ class MercadoLibreConnectionAccount(models.Model):
                     self.env.cr.commit()
 
             except Exception as e:
+                failed_count += 1
+                if self.env.cr.closed:
+                    # 26.289 (#caso-K10): el cursor lo cerro el server (reinicio / parada por ocio del
+                    # build): las ordenes que quedan fallarian TODAS con el mismo error. Se corta el
+                    # lote; no quedo nada a medias commiteado y la corrida siguiente las vuelve a
+                    # traer (date_asc). Se propaga para que la ejecucion quede en error.
+                    _logger.error("CRON_UNPROCESSED_ORDERS: cuenta %s — cursor CERRADO importando la orden %s (%s): "
+                                  "se corta el lote; quedan %d orden(es) sin intentar para la corrida siguiente.",
+                                  account.name, order_id, str(e),
+                                  len(orders_to_process) - orders_to_process.index(order_json) - 1)
+                    raise
                 _logger.error("CRON_UNPROCESSED_ORDERS: Exception importing order %s: %s",
                             order_id, str(e))
-                failed_count += 1
+                # 26.289 (#caso-K10): descartar lo que esta orden dejo a medias. Sin esto (a) una excepcion
+                # de PG dejaba la transaccion abortada y fallaban todas las siguientes del lote, y (b)
+                # un mercadolibre.orders creado a medias se commiteaba con la orden SIGUIENTE: la orden
+                # pasaba a "ya existia" y este cron no la reintentaba nunca mas. Cada orden importada
+                # bien ya hizo su commit, asi que el rollback solo afecta a la que fallo.
+                try:
+                    self.env.cr.rollback()
+                except Exception as e_rb:
+                    _logger.error("CRON_UNPROCESSED_ORDERS: rollback tras la orden %s fallo: %s", order_id, e_rb)
+                    raise e
 
         _logger.info("CRON_UNPROCESSED_ORDERS: Imported %d, failed %d for account %s",
                     processed_count, failed_count, account.name)
@@ -4186,6 +4829,72 @@ class MercadoLibreConnectionAccount(models.Model):
 
         return {'fixed': fixed_count}
 
+    def fix_inconsistent_stock_status_batch(self, limit=20):
+        """[caso de un cliente] Version ACOTADA de fix_inconsistent_stock_status.
+
+        Pasa a 'update' a lo sumo `limit` (1..1000) bindings de esta cuenta en estado sano
+        (updated / updated_with_warning / revision_unmoved / revision) cuya fecha de movimiento
+        es posterior al ultimo envio de stock (o que nunca se enviaron), los MAS VIEJOS primero.
+        Solo los que la cola de stock puede consumir: producto activo y meli_id/conn_id no vacio; y
+        con los mismos filtros de salud que _meli_requeue_stamped_bindings / el caso 9 de
+        _batch_update_stock_status (publicacion activa o pausada, sin error, no multiwarehouse).
+        Sin llamadas a ML; solo cambia meli_stock_status. FOR UPDATE SKIP LOCKED: convive con otro
+        worker. Lo corre el cron dedicado de stock antes de publicar (cron_meli_process_post_stock);
+        el cron general sigue con la version completa. Misma firma y resultado que el parche local
+        de un cliente (usuarios del cliente), para que puedan dejar el suyo."""
+        self.ensure_one()
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 20
+        limit = max(1, min(limit, 1000))
+        statuses = ('updated', 'updated_with_warning', 'revision_unmoved', 'revision')
+        where = """
+                  pp.active IS TRUE
+              AND mp.connection_account = %s
+              AND COALESCE(NULLIF(mp.meli_id, ''), NULLIF(mp.conn_id, '')) IS NOT NULL
+              AND mp.meli_stock_moves_update IS NOT NULL
+              AND (mp.stock_update IS NULL OR mp.meli_stock_moves_update > mp.stock_update)
+              AND mp.meli_stock_status IN %s
+              AND (mp.meli_last_status IS NULL OR mp.meli_last_status IN ('active', 'paused'))
+              AND (mp.stock_error IS NULL OR mp.stock_error = '' OR mp.stock_error LIKE '%%Ok%%')
+              AND (mp.stock_error IS NULL OR mp.stock_error NOT LIKE '%%multiwarehouse%%')
+        """
+        # `where` es un literal del codigo; los valores van como parametro (F8b 20.0)
+        # 26.309: el disable va FUERA del string (adentro llegaba a Postgres => syntax error at "#")
+        self.env.cr.execute(  # pylint: disable=sql-injection
+            """
+            WITH candidates AS (
+                SELECT mp.id
+                  FROM mercadolibre_product mp
+                  JOIN product_product pp ON pp.id = mp.product_id
+                 WHERE """ + where + """
+                 ORDER BY COALESCE(mp.stock_update, '1970-01-01'::timestamp) ASC, mp.id ASC
+                 LIMIT %s
+                 FOR UPDATE OF mp SKIP LOCKED
+            )
+            UPDATE mercadolibre_product mp
+               SET meli_stock_status = 'update'
+              FROM candidates c
+             WHERE mp.id = c.id
+            RETURNING mp.id
+        """, (self.id, statuses, limit))
+        fixed_ids = [r[0] for r in self.env.cr.fetchall()]
+        if fixed_ids:
+            self.env['mercadolibre.product'].invalidate_model(['meli_stock_status'])
+        # `where` es un literal del codigo; los valores van como parametro (F8b 20.0)
+        # 26.309: el disable va FUERA del string (adentro llegaba a Postgres => syntax error at "#")
+        self.env.cr.execute(  # pylint: disable=sql-injection
+            """
+            SELECT COUNT(*) FROM mercadolibre_product mp
+              JOIN product_product pp ON pp.id = mp.product_id
+             WHERE """ + where, (self.id, statuses))
+        remaining = self.env.cr.fetchone()[0]
+        if fixed_ids or remaining:
+            _logger.info("FIX_STOCK_STATUS_BATCH: account=%s fixed=%d remaining=%d limit=%d ids=%s",
+                         self.name, len(fixed_ids), remaining, limit, fixed_ids[:20])
+        return {'fixed': len(fixed_ids), 'fixed_ids': fixed_ids, 'remaining': remaining, 'limit': limit}
+
     def _cron_recompute_masters(self):
         """Recalcula is_master sobre toda la maestra de la cuenta (FASE 1 → IMPORT).
 
@@ -4247,7 +4956,7 @@ class MercadoLibreConnectionAccount(models.Model):
     def _cron_import_write_retry(self, vals, retries=2):
         """Write de progreso del batch import — recovery de 40001 por PROPAGACION.
 
-        REGRESION QUE ARREGLA (RPM Motos #532): el cron de import se solapa con los
+        REGRESION QUE ARREGLA (un cliente): el cron de import se solapa con los
         otros ~9 crones meli que escriben la MISMA fila de mercadolibre.account (el
         JSON cache de ~640KB + el offset), disparando serialization failures 40001.
         La version previa envolvia el write en `with cr.savepoint()` + reintentos EN
@@ -4303,7 +5012,9 @@ class MercadoLibreConnectionAccount(models.Model):
                        recalcula los masters (is_it_master via calculate_variations),
                        resetea el offset y deja listo para IMPORT (no auto-crea).
           - 'import' : la lista a procesar = solo masters (fetch_list_meli_ids_maestro)
-                       y los crea via _process_meli_item_direct(force_dont_create=False).
+                       y los procesa via _process_meli_item_direct: VINCULA por SKU/barcode
+                       y CREA lo que no matchea salvo que la config tenga
+                       mercadolibre_cron_get_new_products_force_dont_create=True (solo vincula).
 
         Cada ejecucion procesa N publicaciones (batch_size desde config).
         Mantiene offset persistente en self.cron_import_offset.
@@ -4468,7 +5179,7 @@ class MercadoLibreConnectionAccount(models.Model):
                 # B) Pre-carga en RAM: bindings, SKUs y barcodes de Odoo en dicts locales
                 # C) Commit cada 50 items en lugar de cada 1
                 # Resultado: de ~3-5 días → ~2-4 horas para 200k publicaciones
-                # Ver .roots/refatodo/debug/fixes-log.md
+                # Ver documentación interna
 
                 # Contexto base para product_meli_get_products
                 custom_context = {
@@ -4492,16 +5203,27 @@ class MercadoLibreConnectionAccount(models.Model):
                 COMMIT_EVERY = 50
 
                 # --- PRE-CARGA EN RAM: bindings existentes de esta cuenta ---
-                _logger.info("REFATODO cron_batch_import: pre-cargando bindings en RAM...")
+                _logger.info("BATCH cron_batch_import: pre-cargando bindings en RAM...")
                 t_preload = _time.time()
 
-                # Cargar todos los conn_id ya vinculados a esta cuenta en un set
+                # Cargar todos los conn_id ya vinculados a esta cuenta en un set.
+                # SOLO bindings ACTIVOS: lo que este set contiene se marca 'synced'
+                # sin bindear (synced_ram). Un binding inactivo (producto archivado,
+                # p.ej. los que deja el procesamiento de ordenes) no cuenta como
+                # vinculo: mercadolibre_bind_to crea uno nuevo activo. `active` de
+                # ambos bindings es related NO stored (product_id.active /
+                # product_tmpl_id.active) => no hay columna: se filtra por JOIN, que
+                # es lo mismo que hace el ORM con active_test (list_meli_ids).
                 self.env.cr.execute("""
-                    SELECT conn_id FROM mercadolibre_product
-                    WHERE connection_account = %s AND conn_id IS NOT NULL AND conn_id != ''
+                    SELECT mp.conn_id FROM mercadolibre_product mp
+                    JOIN product_product pp ON pp.id = mp.product_id
+                    WHERE mp.connection_account = %s AND mp.conn_id IS NOT NULL AND mp.conn_id != ''
+                    AND pp.active = TRUE
                     UNION
-                    SELECT conn_id FROM mercadolibre_product_template
-                    WHERE connection_account = %s AND conn_id IS NOT NULL AND conn_id != ''
+                    SELECT mpt.conn_id FROM mercadolibre_product_template mpt
+                    JOIN product_template pt ON pt.id = mpt.product_tmpl_id
+                    WHERE mpt.connection_account = %s AND mpt.conn_id IS NOT NULL AND mpt.conn_id != ''
+                    AND pt.active = TRUE
                 """, (account.id, account.id))
                 existing_bindings = set(r[0] for r in self.env.cr.fetchall())
 
@@ -4539,7 +5261,7 @@ class MercadoLibreConnectionAccount(models.Model):
                     }
 
                 _logger.info(
-                    "REFATODO cron_batch_import: pre-carga completada en %.1fs — "
+                    "BATCH cron_batch_import: pre-carga completada en %.1fs — "
                     "%d bindings, %d SKUs, %d barcodes, %d maestros en RAM",
                     _time.time() - t_preload,
                     len(existing_bindings), len(sku_to_product), len(barcode_to_product),
@@ -4554,7 +5276,7 @@ class MercadoLibreConnectionAccount(models.Model):
                     try:
                         return account.fetch_meli_products_multiget(ids=ids_batch, meli=meli)
                     except Exception as e:
-                        _logger.warning("REFATODO multiget batch error: %s", str(e))
+                        _logger.warning("BATCH multiget batch error: %s", str(e))
                         return {}
 
                 # Pre-cargar cache multiget para el batch completo en paralelo
@@ -4566,7 +5288,7 @@ class MercadoLibreConnectionAccount(models.Model):
                             for i in range(0, len(all_meli_ids), MULTIGET_SIZE)]
 
                 _logger.info(
-                    "REFATODO cron_batch_import: %d items → %d sublotes × %d paralelos",
+                    "BATCH cron_batch_import: %d items → %d sublotes × %d paralelos",
                     len(all_meli_ids), len(sublotes), PARALLEL_THREADS
                 )
 
@@ -4577,10 +5299,10 @@ class MercadoLibreConnectionAccount(models.Model):
                             result = future.result(timeout=30)
                             multiget_cache.update(result)
                         except Exception as e:
-                            _logger.warning("REFATODO parallel future error: %s", str(e))
+                            _logger.warning("BATCH parallel future error: %s", str(e))
 
                 _logger.info(
-                    "REFATODO cron_batch_import: multiget completado — %d/%d items en cache",
+                    "BATCH cron_batch_import: multiget completado — %d/%d items en cache",
                     len(multiget_cache), len(all_meli_ids)
                 )
 
@@ -4620,10 +5342,27 @@ class MercadoLibreConnectionAccount(models.Model):
                                 items_success += 1
                             _t1 = _time.time()
                             if items_processed <= 10 or items_processed % 50 == 0:
-                                _logger.debug("REFATODO PROFILING(fetch) item %d (%s): maestro=%.3fs",
+                                _logger.debug("BATCH PROFILING(fetch) item %d (%s): maestro=%.3fs",
                                               items_processed, meli_id, _t1 - _t_before)
                         else:
                             # --- FASE 2: crear producto desde master ---
+                            # post_state: la lista de masters sale de la MAESTRA, que no
+                            # filtra por estado de la publicacion. Se filtra aca con el
+                            # status FRESCO del multiget ('status' esta en
+                            # MULTIGET_ATTRIBUTES). 'all' = sin filtro; si el multiget no
+                            # trajo status, no se filtra (el item sigue su camino normal).
+                            _ml_status = rjson.get('status') if isinstance(rjson, dict) else None
+                            if post_state in ('active', 'paused') and _ml_status and _ml_status != post_state:
+                                item['import_status'] = 'skipped'
+                                items_skipped += 1
+                                items_processed += 1
+                                items_since_commit += 1
+                                log_lines.append("%s: status_filtered (%s != %s)" % (meli_id, _ml_status, post_state))
+                                if items_since_commit >= COMMIT_EVERY:
+                                    MeliCommit(self)
+                                    items_since_commit = 0
+                                continue
+
                             # Si el binding ya existe en RAM, marcar synced sin queries.
                             if meli_id in existing_bindings:
                                 item['import_status'] = 'synced'
@@ -4636,9 +5375,16 @@ class MercadoLibreConnectionAccount(models.Model):
                                     items_since_commit = 0
                                 continue
 
-                            # REFATODO: usar _process_meli_item_direct para evitar
+                            # BATCH: usar _process_meli_item_direct para evitar
                             # el commit automático de product_meli_get_products por item.
-                            # force_dont_create=False: estos SON masters → crear el producto.
+                            # force_dont_create sale de la CONFIG (mismo valor que ya se
+                            # pasa en custom_context más arriba), no hardcodeado: con True
+                            # esta fase sólo VINCULA (bind_only) y saltea lo que no matchea.
+                            # Antes estaba fijo en False "porque estos SON masters", y eso
+                            # dejaba sin forma de correr el import en modo sólo-bindear:
+                            # cada master sin match por SKU creaba un producto vacío.
+                            # (un cliente, 4-ago-2026: 123 kits creados con stock 0; un cliente,
+                            # 24-sep-2026: el primer lote IMPORT creó productos con el flag en True.)
                             _t_before = _time.time()
                             status = account._process_meli_item_direct(
                                 meli_id=meli_id,
@@ -4646,11 +5392,11 @@ class MercadoLibreConnectionAccount(models.Model):
                                 meli=meli,
                                 sku_to_product=sku_to_product,
                                 barcode_to_product=barcode_to_product,
-                                force_dont_create=False,
+                                force_dont_create=bool(config.mercadolibre_cron_get_new_products_force_dont_create),
                             )
                             _t1 = _time.time()
                             if items_processed <= 10 or items_processed % 50 == 0:
-                                _logger.info("REFATODO PROFILING(import) item %d (%s): direct=%.3fs total=%.3fs",
+                                _logger.info("BATCH PROFILING(import) item %d (%s): direct=%.3fs total=%.3fs",
                                              items_processed, meli_id,
                                              _t1 - _t_before,
                                              _t1 - item_start)
@@ -4822,6 +5568,50 @@ class MercadoLibreConnectionAccount(models.Model):
     #  "value_struct": null,
     #  "values": []
     #}
+    # ------------------------------------------------------------------
+    # 26.101 (19-ago-2026, un cliente) — IDENTIDAD DEL TOKEN
+    #
+    # Varios caminos del modulo reciben una instancia `meli` ya resuelta y la
+    # reusan sin preguntarse DE QUE CUENTA es. En una instalacion multi-cuenta
+    # eso significa preguntarle a ML por una publicacion de la cuenta A con el
+    # token de la cuenta B: ML contesta 403 y la publicacion queda marcada
+    # `revision_forbidden` SIN llegar a publicarse el stock.
+    #
+    # Caso medido: el asistente masivo de VARIANTES resolvia UNA sola instancia
+    # con `get_new_instance(company)` (sin cuenta) y la empujaba a todos los
+    # bindings; el fallback multi-cuenta elige la ultima compania conectada del
+    # usuario, asi que ganaba siempre la misma cuenta. De a UNO funcionaba
+    # porque ahi no se pasa `meli` y cada binding resuelve el suyo.
+    # ------------------------------------------------------------------
+    def _meli_instance_is_mine(self, meli=None):
+        """True si la instancia/token `meli` pertenece a ESTA cuenta.
+
+        Se compara por `seller_id` (el dueno real de la publicacion en ML) y,
+        si alguno de los dos no lo tiene cargado, por `client_id` (la app).
+        Ante la duda devuelve False: preferimos gastar una resolucion de token
+        de mas antes que preguntarle a ML con credenciales ajenas."""
+        self.ensure_one()
+        if not meli:
+            return False
+        meli_seller = str(getattr(meli, 'seller_id', '') or '').strip()
+        acc_seller = str(self.seller_id or '').strip()
+        if meli_seller and acc_seller:
+            return meli_seller == acc_seller
+        meli_client = str(getattr(meli, 'client_id', '') or '').strip()
+        acc_client = str(self.client_id or '').strip()
+        return bool(meli_client) and meli_client == acc_client
+
+    def _meli_instance_or_mine(self, meli=None):
+        """Devuelve una instancia de la API que seguro es de ESTA cuenta.
+
+        Si `meli` es de otra cuenta se descarta y se resuelve la propia. Si ya
+        es la correcta se reusa tal cual (no se pierde el ahorro de reusar la
+        instancia, que es lo que buscaban los llamadores al pasarla)."""
+        self.ensure_one()
+        if self._meli_instance_is_mine(meli):
+            return meli
+        return self.env['meli.util'].get_new_instance(self.company_id, self)
+
     def fetch_meli_product( self, meli_id, meli=None ):
 
         rjson = {}
@@ -4830,8 +5620,18 @@ class MercadoLibreConnectionAccount(models.Model):
 
         #_logger.info("Fetch Meli Product: "+str(meli_id)+" account: "+str(account))
 
+        # 26.101: el `meli` recibido puede ser de OTRA cuenta (ver
+        # _meli_instance_or_mine). Preguntar /items con token ajeno = 403.
+        # 26.1xx: varios llamadores entran como `self.env["mercadolibre.account"]`,
+        # o sea recordset VACIO (product.py x_match_variation_id, _product_post_*).
+        # `_meli_instance_or_mine` arranca con ensure_one() => "Expected singleton:
+        # mercadolibre.account()" y se cae todo el x_product_post_stock. Sin cuenta
+        # no hay contra que comparar el token: se usa el `meli` tal cual, que es lo
+        # que hacia esta funcion antes de que se agregara la comparacion.
         if not meli:
             meli = self.env['meli.util'].get_new_instance( account.company_id, account )
+        elif len(account) == 1:
+            meli = account._meli_instance_or_mine( meli )
 
         if not meli_id or not meli:
             return None
@@ -4931,7 +5731,7 @@ class MercadoLibreConnectionAccount(models.Model):
         y lo asigna a rjson['variations'][i]['seller_sku'].
 
         Parámetros:
-            meli_id (str): ID de la publicación ML (ej: "MLA2034726558")
+            meli_id (str): ID de la publicación ML (ej: "MLA<id>")
             meli_id_variation (str|int): ID de variación específica (opcional).
                 Si se pasa, retorna solo el SKU de esa variación.
                 Si no se pasa, retorna todos los SKUs.
@@ -4975,7 +5775,10 @@ class MercadoLibreConnectionAccount(models.Model):
 
         # Helper para extraer SKU de un dict (variación o producto principal)
         def _extract_sku(data):
-            """Extrae SKU de un dict, buscando en orden de prioridad."""
+            """Extrae SKU de un dict, buscando en orden de prioridad (26.363: normalizado, ver meli_norm_sku)."""
+            return meli_norm_sku(_extract_sku_raw(data))
+
+        def _extract_sku_raw(data):
             if not data:
                 return None
             # 1. seller_sku (ya procesado por fetch_meli_product)
@@ -5026,7 +5829,7 @@ class MercadoLibreConnectionAccount(models.Model):
         rjson['variations'][i]['barcode'].
 
         Parámetros:
-            meli_id (str): ID de la publicación ML (ej: "MLA2034726558")
+            meli_id (str): ID de la publicación ML (ej: "MLA<id>")
             meli_id_variation (str|int): ID de variación específica (opcional).
                 Si se pasa, retorna solo el barcode de esa variación.
                 Si no se pasa, retorna todos los barcodes.
@@ -5218,7 +6021,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
                         sku = bind.product_id.default_code
                         bcode = bind.product_id.barcode
-                        if (sku and not sku in rjson["seller_sku"]):
+                        if (sku and not meli_norm_sku(sku) in (meli_norm_sku(rjson["seller_sku"]) or "")):
                             search_status["conflict"] = "Rebinding: sku not matching!"
                             ml_bind_product_id = False
                             break;
@@ -5256,6 +6059,8 @@ class MercadoLibreConnectionAccount(models.Model):
                             return _co
                     return prods
                 seller_sku = seller_sku or self.fetch_meli_sku(meli_id=meli_id, meli_id_variation = meli_id_variation, meli=meli, rjson=rjson)
+                # 26.363 (caso-K10): el SKU que pasa el llamador tambien puede traer U+00A0 (ver meli_norm_sku).
+                seller_sku = meli_norm_sku(seller_sku)
                 if seller_sku:
                     search_status["seller_sku"] = seller_sku
                     if type(seller_sku) in (tuple, list):                        
@@ -5300,6 +6105,14 @@ class MercadoLibreConnectionAccount(models.Model):
                     _logger.info("search_meli_product > NO seller_sku (warning!!!! must define a seller sku in ML, or activate mercadolibre_import_search_sku)")
 
                 #_logger.info("Deep search of the product! : fetch barcode: ")
+                # 26.389 (caso-K77): respaldo por el MISMO GTIN con otro ancho ('07502300970043' en ML,
+                # '7502300970043' en Odoo), despues del exacto. Unico o nada (meli_oerp/models/gtin.py).
+                def _gtin_db(code):
+                    _dom = (['|', ('company_id', '=', False), ('company_id', '=', _acc_company.id)] if _acc_company else [])
+                    return self.env['product.product']._meli_search_by_barcode_gtin(code, _dom)
+                def _gtin_ram(code):
+                    _pids = {_barcode_to_product.get(k.lower()) for k in meli_gtin_keys(code)} - {None, False}
+                    return _pids.pop() if len(_pids) == 1 else None
                 barcode = barcode or self.fetch_meli_barcode(meli_id=meli_id, meli_id_variation = meli_id_variation, meli=meli, rjson=rjson)
                 if barcode:
                     search_status["barcode"] = barcode
@@ -5308,10 +6121,10 @@ class MercadoLibreConnectionAccount(models.Model):
                         for bcode in barcode:
                             # MULTIGET: Lookup en RAM si está disponible
                             if _barcode_to_product is not None:
-                                pid = _barcode_to_product.get(bcode.lower()) or _barcode_to_product.get(bcode)
+                                pid = _barcode_to_product.get(bcode.lower()) or _barcode_to_product.get(bcode) or _gtin_ram(bcode)
                                 barcode_product_id = self.env['product.product'].browse(pid) if pid else self.env['product.product']
                             else:
-                                barcode_product_id = _company_dedup(self.env['product.product'].search([ ('barcode','=ilike',bcode) ]))
+                                barcode_product_id = _company_dedup(self.env['product.product'].search([ ('barcode','=ilike',bcode) ])) or _gtin_db(bcode)
                             if barcode_product_id:
                                 if not barcode_product_ids:
                                     barcode_product_ids = barcode_product_id
@@ -5327,12 +6140,12 @@ class MercadoLibreConnectionAccount(models.Model):
                     else:
                         # MULTIGET: Lookup en RAM si está disponible
                         if _barcode_to_product is not None:
-                            pid = _barcode_to_product.get(barcode.lower()) or _barcode_to_product.get(barcode)
+                            pid = _barcode_to_product.get(barcode.lower()) or _barcode_to_product.get(barcode) or _gtin_ram(barcode)
                             barcode_product_id = self.env['product.product'].browse(pid) if pid else self.env['product.product']
                             if pid:
                                 barcode_product_ids = barcode_product_id
                         else:
-                            barcode_product_id = _company_dedup(self.env['product.product'].search([ ('barcode','=ilike',barcode) ]))
+                            barcode_product_id = _company_dedup(self.env['product.product'].search([ ('barcode','=ilike',barcode) ])) or _gtin_db(barcode)
                             if barcode_product_id:
                                 if not barcode_product_ids:
                                     barcode_product_ids = barcode_product_id
@@ -5445,7 +6258,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
             rjson_has_variations = "variations" in rjson and len(rjson["variations"])
 
-            # RPM #532: si el item trae variaciones, el SKU vive a nivel VARIACIÓN
+            # un caso: si el item trae variaciones, el SKU vive a nivel VARIACIÓN
             # (variations[].attributes SELLER_SKU o variations[].seller_custom_field),
             # NO a nivel item. Delegar en el path variation-aware que bindea/crea
             # producto por cada variación. El path item-level de abajo se conserva
@@ -5522,7 +6335,7 @@ class MercadoLibreConnectionAccount(models.Model):
                                       sku_to_product, barcode_to_product,
                                       force_dont_create=False):
         """
-        MULTIGET variation-aware (RPM #532): procesa un item ML CON variaciones.
+        MULTIGET variation-aware (un caso): procesa un item ML CON variaciones.
         Cada variación puede tener su propio SKU (variations[].attributes SELLER_SKU
         o variations[].seller_custom_field) y su propio barcode (GTIN). Por cada
         variación:
@@ -5594,6 +6407,8 @@ class MercadoLibreConnectionAccount(models.Model):
                     if isinstance(var_barcode, str) and var_barcode:
                         prod_fields['barcode'] = var_barcode
                     prod_fields.update(ProductType())
+                    # Vacio devuelve {} => prod_fields queda igual que siempre.
+                    prod_fields.update(account.meli_product_invoice_policy_fields())
                     product = self.env['product.product'].create(prod_fields)
                     if product:
                         product_template = product.product_tmpl_id
@@ -5662,6 +6477,8 @@ class MercadoLibreConnectionAccount(models.Model):
                 'meli_pub': True,
             }
             prod_fields.update(ProductType())
+            # Vacio devuelve {} => prod_fields queda igual que siempre.
+            prod_fields.update(account.meli_product_invoice_policy_fields())
             #prod_fields['default_code'] = rjson3['id']
             productcreated = self.env['product.product'].create((prod_fields))
             if (productcreated):
@@ -5851,7 +6668,7 @@ class MercadoLibreConnectionAccount(models.Model):
                 }
                 #_logger.info("item_params:"+str(item_params))
                 responseItem = meli.get("/items"+str('?ids='+str(ids)+'&attributes='+str('id,official_store_id')), {'access_token':meli.access_token } )
-                #[ { "code": 200, "body": { "id": "MLM863472529", "official_store_id": 3476 } },
+                #[ { "code": 200, "body": { "id": "MLM<id>", "official_store_id": 3476 } },
                 #_logger.info("responseItem:"+str(responseItem and responseItem.json()))
                 if responseItem.json():
                     for rr in responseItem.json():
@@ -5877,8 +6694,8 @@ class MercadoLibreConnectionAccount(models.Model):
     # Para items con variaciones, rjson incluye el array "variations" completo.
     # El caller (product_meli_get_products) usa este cache y solo hace GET individual
     # cuando necesita datos que el multiget no devuelve (fetch_meli_product fallback).
-    # Ver .roots/refatodo/debug/errors-log.md → ERROR-001 y ERROR-002
-    # Ver .roots/refatodo/design/decisions.md → ADR-001 y ADR-003
+    # Ver documentación interna → ERROR-001 y ERROR-002
+    # Ver documentación interna → ADR-001 y ADR-003
     MULTIGET_BATCH_SIZE = 20  # Límite oficial de la API de MercadoLibre
     MULTIGET_ATTRIBUTES = (
         "id,title,price,available_quantity,status,"
@@ -5905,8 +6722,14 @@ class MercadoLibreConnectionAccount(models.Model):
         account = self
         company = account.company_id or self.env.user.company_id
 
+        # 26.101: idem fetch_meli_product — un `meli` de otra cuenta devuelve 403
+        # para TODO el lote y deja N publicaciones marcadas por error ajeno.
+        # misma guarda que fetch_meli_product: sin cuenta resuelta, ensure_one()
+        # revienta y se pierde el lote entero.
         if not meli:
             meli = self.env['meli.util'].get_new_instance(company, account)
+        elif len(account) == 1:
+            meli = account._meli_instance_or_mine(meli)
 
         if not ids:
             return {}
@@ -5917,11 +6740,11 @@ class MercadoLibreConnectionAccount(models.Model):
 
         result = {}
         try:
-            # RPM #532: include_attributes=all es OBLIGATORIO para que la API
+            # un caso: include_attributes=all es OBLIGATORIO para que la API
             # devuelva los SELLER_SKU/GTIN a nivel VARIACIÓN (variations[].attributes).
             # Sin él, variations[].attributes SELLER_SKU vuelve None y las
             # publicaciones con variaciones se saltean por "sin SKU". Verificado
-            # contra la cuenta 532: sin el flag los SKU de variación vienen vacíos.
+            # contra la una cuenta: sin el flag los SKU de variación vienen vacíos.
             url = '/items?ids=%s&attributes=%s&include_attributes=all' % (ids_str, account.MULTIGET_ATTRIBUTES)
             response = meli.get(url, {'access_token': meli.access_token})
             items = response.json()
@@ -5950,7 +6773,7 @@ class MercadoLibreConnectionAccount(models.Model):
                                 body['barcode'] = att.get('value_name')
                     if not body.get('seller_sku') and body.get('seller_custom_field'):
                         body['seller_sku'] = body['seller_custom_field']
-                    # RPM #532: pre-procesar el SKU/barcode de CADA variación igual
+                    # un caso: pre-procesar el SKU/barcode de CADA variación igual
                     # que el nivel item. Con include_attributes=all la API trae
                     # variations[].attributes SELLER_SKU/GTIN; los volcamos a
                     # variations[].seller_sku / variations[].barcode para que
@@ -6414,6 +7237,8 @@ class MercadoLibreConnectionAccount(models.Model):
 
         post_state = context and context.get("post_state")
         meli_id = context and context.get("meli_id")
+        # 26.329 (caso-K11, bus 2026-09-24T18:15:24Z): `meli_id` se pisa mas abajo (for meli_id in meli_ids).
+        _single_meli_id = meli_id
         force_create_variants = context and context.get("force_create_variants")
         force_dont_create = context and context.get("force_dont_create")
         force_meli_pub =  context and context.get("force_meli_pub")
@@ -6531,7 +7356,11 @@ class MercadoLibreConnectionAccount(models.Model):
         #search for meli_ids not imported yet
         # MULTIGET: cuando batch_processing_unit>0 este resultado nunca se usa
         # (la condición de abajo requiere batch_processing_unit==0), así que lo saltamos
-        if not batch_processing_unit or batch_processing_unit == 0:
+        # 26.329 (caso-K11): con context meli_id=X, list_meli_ids(filter_ids=[X]) devuelve TODAS las vinculadas
+        # MENOS X y reemplazaba results: se recorrian las otras (429 en caso-K11) y X no se procesaba nunca.
+        if _single_meli_id:
+            binding_meli_ids = []
+        elif not batch_processing_unit or batch_processing_unit == 0:
             binding_meli_ids = account.list_meli_ids(filter_ids=results)
         else:
             binding_meli_ids = []
@@ -6562,7 +7391,7 @@ class MercadoLibreConnectionAccount(models.Model):
             try:
                 # MULTIGET (TASK-001): Pre-cargar datos en lotes de 20 con Multiget.
                 # 100k items = 100,000 requests → 5,000 requests (~20x más rápido).
-                # Ver .roots/refatodo/debug/errors-log.md → ERROR-001 y ERROR-002
+                # Ver documentación interna → ERROR-001 y ERROR-002
                 multiget_cache = {}
 
                 def _fill_multiget_cache(start_index):
@@ -7346,7 +8175,8 @@ class MercadoLibreConnectionAccount(models.Model):
                 sql = f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {idx_name} ON {table} ({columns})"
                 _logger.info("  Creating: %s", sql)
                 # Need to use a separate transaction for CONCURRENTLY
-                self.env.cr.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({columns})")
+                # idx_name/table/columns salen de la lista fija indexes_to_create del codigo (F8b 20.0)
+                self.env.cr.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({columns})")  # pylint: disable=sql-injection
                 created.append(idx_name)
                 _logger.info("  ✅ Created: %s", idx_name)
             except Exception as e:
@@ -7541,38 +8371,558 @@ class MercadoLibreConnectionAccount(models.Model):
             except Exception:
                 pass
 
-            _sp = "meli_stock_diag_%d" % int(_time_diag.time())
             _diag_state = 'success'
             _diag_error = None
+            _diag_res = {}
+
+            # (A) un cliente, 19-ago-2026 — CON QUE CUENTA SE PREGUNTA.
+            # Antes: `company.meli_stock_diagnostic()`, SIN meli=. El diagnostico caia
+            # entonces a `get_new_instance(company)` y en multi-cuenta esa funcion DESCARTA
+            # la company cuando no recibe `account`: recorre env.user.company_ids y se queda
+            # con la ULTIMA conectada (el bucle no tiene break). Resultado: los items de ESTA
+            # cuenta se consultaban con el token de OTRA -> 403 'Item belongs to different
+            # seller' en todas sus publicaciones, y la corrida terminaba success con 0 items.
+            # Medido en un cliente (una cuenta, 3 companias en la misma base): las 134
+            # publicaciones de un cliente se consultaban SIEMPRE con el token de 'un cliente ML',
+            # incluso para usuarios cuya compania por defecto es un cliente.
+            _diag_meli = None
             try:
-                self.env.cr.execute("SAVEPOINT %s" % _sp)
-                company.meli_stock_diagnostic()
+                _diag_meli = self.env['meli.util'].get_new_instance(account.company_id or company, account)
+            except Exception as _mk_err:
+                _logger.warning("cron_meli_stock_diagnostic: no se pudo crear la instancia ML de %s: %s",
+                                account.name, _mk_err)
+
+            if not _diag_meli or not getattr(_diag_meli, 'access_token', ''):
+                # Sin sesion propia NO se corre con la de otra cuenta: se reporta y se sigue.
+                _no_token = ("La cuenta '%s' no tiene una sesion valida con MercadoLibre (estado: %s). "
+                             "El diagnostico NO se ejecuto: correrlo con la sesion de otra cuenta "
+                             "devuelve 403 en todas las publicaciones.") % (
+                                 account.name, account.status or 'sin estado')
+                _logger.warning("cron_meli_stock_diagnostic: %s", _no_token)
+                try:
+                    account._end_cron_execution(execution, state='warning', error_message=_no_token)
+                except Exception as _track_err:
+                    _logger.warning("cron_meli_stock_diagnostic: tracking _end_cron_execution failed for %s: %s",
+                                    account.name, _track_err)
+                continue
+
+            # 26.341 (26.190 re-portado, #caso-K59): el diagnostico COMMITEA por lote
+            # (commit_batches) y tiene presupuesto de items/segundos con cursor. Antes iba entero
+            # dentro de un SAVEPOINT de esta transaccion, con un GET por item: con 129 candidatos
+            # superaba el limite del worker, el proceso moria, se perdia todo y Odoo termino
+            # desactivando el cron. Un commit destruye el SAVEPOINT, asi que el aislamiento pasa a
+            # ser commit/rollback explicitos: lo ya commiteado por lotes queda; un error solo
+            # descarta el lote en curso. En tests (sin auto-commit) se mantiene el SAVEPOINT.
+            from odoo.modules import module as _odoo_module
+            _diag_autocommit = not (getattr(threading.current_thread(), 'testing', False)
+                                    or getattr(_odoo_module, 'current_test', False))
+            _sp = "meli_stock_diag_%d" % int(_time_diag.time())
+            try:
+                if not _diag_autocommit:
+                    self.env.cr.execute("SAVEPOINT %s" % _sp)
+                _diag_res = company.meli_stock_diagnostic(meli=_diag_meli, reactivate=('mercadolibre_stock_diag_reactivate' in config._fields and config.mercadolibre_stock_diag_reactivate) or None, commit_batches=True) or {}
                 try:
                     self.env.cr.execute("SELECT 1")
-                    self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
+                    if _diag_autocommit:
+                        self.env.cr.commit()
+                    else:
+                        self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
                 except Exception:
-                    self.env.cr.execute("ROLLBACK TO SAVEPOINT %s" % _sp)
-                    self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
+                    if _diag_autocommit:
+                        self.env.cr.rollback()
+                    else:
+                        self.env.cr.execute("ROLLBACK TO SAVEPOINT %s" % _sp)
+                        self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
                     _diag_state = 'warning'
                     _diag_error = 'tx aborted during diagnostic — rolled back'
                     _logger.warning("cron_meli_stock_diagnostic: tx aborted during diagnostic for %s — rolled back", account.name)
             except Exception as _e:
                 try:
-                    self.env.cr.execute("ROLLBACK TO SAVEPOINT %s" % _sp)
-                    self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
+                    if _diag_autocommit:
+                        self.env.cr.rollback()
+                    else:
+                        self.env.cr.execute("ROLLBACK TO SAVEPOINT %s" % _sp)
+                        self.env.cr.execute("RELEASE SAVEPOINT %s" % _sp)
                 except Exception:
                     pass
                 _diag_state = 'error'
                 _diag_error = str(_e)[:500]
                 _logger.warning("cron_meli_stock_diagnostic: error for %s: %s", account.name, _e)
 
+            # (A) un cliente — UN 0 TIENE QUE DECIR POR QUE ES 0.
+            # Antes se cerraba SIEMPRE con items_processed=0 y state='success': la pagina de
+            # CRONs de la cuenta mostraba un tilde verde aunque ML hubiera rechazado todo.
+            # Ahora el resultado del diagnostico viaja al registro de la ejecucion.
+            _items_total = int(_diag_res.get('items_to_check') or 0)
+            _items_ok = int(_diag_res.get('items_checked_ok') or 0)
+            _items_err = int(_diag_res.get('api_errors') or 0)
+            if _diag_state == 'success' and _diag_res.get('diag_state') == 'warning':
+                _diag_state = 'warning'
+                _diag_error = _diag_res.get('diag_message') or _diag_error
+            _diag_summary = ("Cuenta: %s | publicaciones a revisar: %d | consultadas OK: %d | "
+                             "rechazadas por ML: %d | acciones: %d | pendientes proxima corrida: %d | %.1fs") % (
+                                 account.name, _items_total, _items_ok, _items_err,
+                                 int(_diag_res.get('actions_taken') or 0),
+                                 int(_diag_res.get('items_deferred') or 0),
+                                 float(_diag_res.get('elapsed_seconds') or 0.0))
             try:
-                account._end_cron_execution(execution, state=_diag_state, error_message=_diag_error)
+                account._end_cron_execution(execution, state=_diag_state, error_message=_diag_error,
+                                            items_processed=_items_total, items_success=_items_ok,
+                                            items_error=_items_err, log_summary=_diag_summary)
             except Exception as _track_err:
                 _logger.warning("cron_meli_stock_diagnostic: tracking _end_cron_execution failed for %s: %s",
                                 account.name, _track_err)
 
-    # ── N1 fix (ticket #425): auto re-queue of stranded RECOVERABLE stock bindings ──
+    # ── Fix un caso: re-consulta de envios que quedaron sin etiqueta ────────────────
+    #
+    # El conector consulta el envio de una orden UNA sola vez: al importarla
+    # (orders.py orders_update_order_json -> fetch_shipment) y al confirmar la venta
+    # (el hook de autoimpresion en sale.py). Si en ese instante Mercado Libre todavia
+    # no publico la etiqueta, no hay NADA que vuelva a mirar esa orden:
+    #   - cron_meli_orders solo repasa las `mercadolibre_cron_orders_limit` mas nuevas
+    #     (default 10) -> con volumen son ~3 h de ventana;
+    #   - cron_process_unprocessed_orders saltea las ordenes que ya existen en Odoo;
+    #   - la app ML no esta suscripta al topic `shipments` (notification.py solo
+    #     entiende questions/orders_v2/items/payments).
+    # En ME2/colecta ML publica la etiqueta entre 8 y 50 h despues de la venta, asi que
+    # la orden ya salio de la ventana: la etiqueta queda sin bajar hasta que alguien
+    # actualiza la orden a mano.
+    #
+    # Medido en produccion de un cliente sobre dos ventanas independientes: cuando ML
+    # ya tenia la etiqueta al importar se bajo sola en 2.353/2.441 y 611/618; cuando la
+    # publico DESPUES se bajo sola en 0/154 y 0/43. La dicotomia es perfecta: no es que
+    # falle la descarga, es que no existe el reintento.
+    #
+    # Este cron es ese reintento, y no inventa mecanismo: corre el mismo par
+    # update() + shipment_print() que ya usan el hook de autoimpresion y el boton
+    # manual. Gateado por 'Imprimir etiquetas' (mercadolibre_shipment_print_guide):
+    # si la cuenta no pidio que bajemos las etiquetas, no hace nada.
+    #
+    # Estados finales: un envio entregado/cancelado ya no va a publicar etiqueta.
+    #
+    # 'shipped' tambien es final PARA LA ETIQUETA: el paquete ya
+    # salio, no hay nada que imprimir y ML responde 400 NOT_PRINTABLE_STATUS.
+    _LABEL_RETRY_FINAL_STATUSES = ('cancelled', 'delivered', 'not_delivered', 'shipped')
+
+    # techo de la ventana del reintento. La etiqueta sirve horas (en cross_docking
+    # ML la libera de noche y el envio sale despachado esa misma noche): mirar envios de
+    # semanas atras solo gasta llamadas a ML. Si la configuracion pide mas dias, se usa
+    # este techo.
+    _LABEL_RETRY_MAX_DAYS = 7
+
+    # Choques transitorios de transaccion (otro cron toco el mismo registro). NO son un
+    # intento de descarga: no se le pregunto nada a ML y el envio se reintenta bien en la
+    # corrida siguiente. Por eso NO consumen cupo de reintentos.
+    #
+    # Si lo consumieran, un envio que choca seguido volveria a agotar el tope en 6 h 40 m
+    # -- exactamente el modo de falla que este cron corrige. Medido en produccion el
+    # 19-ago-2026: 3 envios en 'pending' (nada que bajar) habian acumulado 11 reintentos
+    # en 15 h, todos por 'could not serialize access due to concurrent update'.
+    #
+    # Un error de verdad SI consume cupo: es lo que hace falta para que retry_max frene
+    # un envio que es imprimible y aun asi falla siempre (p.ej. el pedido cuyo metodo de
+    # envio pertenece a otra compania, que rebota en _check_company en cada pasada).
+    _LABEL_RETRY_TRANSIENT_SQLSTATES = (
+        '40001',  # serialization_failure
+        '40P01',  # deadlock_detected
+        '25P02',  # in_failed_sql_transaction (arrastre de uno de los anteriores)
+    )
+
+    def _label_retry_is_transient(self, exc):
+        """True si la excepcion es un choque de transaccion, no un fallo real."""
+        # Solo se sigue __cause__ (encadenado explicito), NO __context__: el contexto
+        # implicito puede apuntar a una excepcion anterior sin relacion y haria pasar
+        # por transitorio un fallo real.
+        seen = set()
+        while exc is not None and id(exc) not in seen:
+            seen.add(id(exc))
+            if getattr(exc, 'pgcode', None) in self._LABEL_RETRY_TRANSIENT_SQLSTATES:
+                return True
+            exc = getattr(exc, '__cause__', None)
+        return False
+
+    # substatus de 'ready_to_ship' en los que ML todavia NO entrega
+    # la etiqueta. Ahi se espera sin gastar cupo. Cualquier OTRO substatus de
+    # 'ready_to_ship' es un intento real: el envio ya es imprimible.
+    #
+    # Antes solo se intentaba con ready_to_print|printed. En cross_docking ML pasa el
+    # envio a in_packing_list / ready_for_pickup / in_hub apenas registra la impresion,
+    # asi que un PDF que se perdia (ver abajo) dejaba al envio FUERA del filtro para
+    # siempre: 30 envios sin etiqueta en dos noches en produccion, todos con la etiqueta
+    # todavia disponible en ML (GET /shipment_labels -> 200 application/pdf).
+    _LABEL_RETRY_NOT_YET_SUBSTATUSES = (
+        'buffered', 'pending', 'creating_route',
+        'invoice_pending', 'waiting_for_label_generation',
+    )
+
+    def _label_retry_is_terminal(self, exc):
+        """True si ML dice que la etiqueta YA NO se va a poder bajar nunca.
+
+        Caso medido en produccion (14-oct-2026): envio que en Odoo sigue
+        'ready_to_ship' pero en ML ya esta 'shipped' -> /shipment_labels responde
+        400 {"error": "SHPLAB0200", "message": "NOT_PRINTABLE_STATUS ... status is
+        shipped", "retry": false}. Reintentarlo es gastar llamadas para siempre.
+        """
+        resp = getattr(exc, 'response', None)
+        if resp is None:
+            return False
+        try:
+            code = resp.status_code
+        except Exception:
+            return False
+        if code is None or code < 400 or code >= 500 or code in (401, 403, 429):
+            # 401/403: token/cuenta (se arregla reconectando). 429: rate limit. 5xx: ML.
+            return False
+        body = None
+        try:
+            body = resp.json()
+        except Exception:
+            body = None
+        text = ''
+        try:
+            text = (resp.text or '')[:2000]
+        except Exception:
+            text = ''
+        if isinstance(body, dict) and body.get('retry') is False:
+            return True
+        return 'NOT_PRINTABLE_STATUS' in text
+
+    def _label_retry_close(self, shipment, retry_max):
+        """Saca el envio del filtro del reintento (estado terminal para la etiqueta).
+
+        Usa el mismo mecanismo que ya excluye un envio del dominio (contador == tope):
+        no hace falta campo nuevo ni migracion.
+        """
+        try:
+            with self._label_retry_tx():
+                shipment.meli_label_retry_count = max(retry_max, shipment.meli_label_retry_count or 0)
+        except Exception as e:
+            _logger.warning("cron_meli_shipment_label_retry: no se pudo cerrar el envio %s: %s",
+                            shipment.id, e)
+
+    # Choques de escritura del PDF: se reintenta SOLO la escritura (los bytes ya estan en
+    # memoria; no se vuelve a llamar a ML).
+    _LABEL_RETRY_WRITE_ATTEMPTS = 3
+
+    def _label_retry_can_commit(self):
+        """En tests no se puede commitear: ahi cada paso va en un savepoint."""
+        return not (getattr(threading.current_thread(), 'testing', False)
+                    or self.env.context.get('meli_label_retry_no_commit'))
+
+    @contextmanager
+    def _label_retry_tx(self):
+        """Transaccion CORTA para un paso de un envio.
+
+        En produccion: commit al salir bien, rollback al fallar. Asi el cron deja de ser
+        una sola transaccion larga (la de agosto duraba toda la corrida) y lo que ya se
+        logro -- sobre todo un PDF bajado -- no se pierde por un choque posterior.
+        En tests: savepoint (mismo aislamiento por paso, sin commit).
+        """
+        if self._label_retry_can_commit():
+            try:
+                yield
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                raise
+        else:
+            with self.env.cr.savepoint():
+                yield
+
+    def _label_retry_consume(self, shipment):
+        """Gasta un reintento en su propia transaccion (error REAL, no choque)."""
+        try:
+            with self._label_retry_tx():
+                shipment.meli_label_retry_count = (shipment.meli_label_retry_count or 0) + 1
+        except Exception as e:
+            _logger.warning("cron_meli_shipment_label_retry: no se pudo registrar el "
+                            "reintento del envio %s: %s", shipment.id, e)
+
+    # #caso-K02 (16-oct-2026): margen para considerar "vencida" la fecha de liberacion de un
+    # envio buffered. Medido en produccion: ML libero la etiqueta de 48 envios
+    # cross_docking a las 22:09-22:22Z con estimated_buffering_date = 00:00Z del dia
+    # siguiente (casi 2 h ANTES de la fecha anunciada).
+    _LABEL_RETRY_BUFFERING_LEAD_HOURS = 6
+
+    def _label_retry_window_domain(self, Shipment, since):
+        """Ventana de 'days' del reintento: cuenta desde la creacion del envio O desde
+        su liberacion de ML (estimated_buffering_date), lo que sea mas reciente.
+
+        #caso-K02 (19-oct-2026): con la ventana solo por create_date, un envio que estuvo en
+        buffering mas dias que 'days' quedaba fuera del dominio justo cuando ML lo
+        liberaba: CORFAM, 41 cross_docking creados 14/15-oct con buffering 19-oct 00:00
+        (finde largo) -> 0 intentos reales toda la noche con days=3. Se aplica a los tres
+        grupos de _label_retry_candidates: si solo se abriera el grupo 2, el envio que
+        este cron refresca a ready_to_ship se caeria del grupo 1 en la corrida siguiente.
+        """
+        field = Shipment._fields.get('estimated_buffering_date')
+        if not field:
+            return [('create_date', '>=', since)]
+        buffering_since = since.date() if field.type == 'date' else since
+        return ['|', ('create_date', '>=', since),
+                ('estimated_buffering_date', '>=', buffering_since)]
+
+    def _label_retry_candidates(self, Shipment, base_domain, limit):
+        """Envios a revisar en esta corrida, respetando limit. Tres grupos, en orden:
+
+        1. Los que en la base YA estan 'ready_to_ship' sin PDF (imprimibles, incluidos
+           los que se perdieron despues de imprimir), los mas recientes primero.
+        2. Los que todavia figuran en espera (p.ej. pending/buffered) pero cuya fecha de
+           liberacion de ML (estimated_buffering_date) ya llego o llega dentro de
+           _LABEL_RETRY_BUFFERING_LEAD_HOURS: son los que ML libera ESTA noche. Los de
+           fecha mas temprana primero.
+        3. El resto, ROTANDO: el que hace mas tiempo no se refresca (write_date) primero.
+
+        #caso-K02 (16-oct-2026) -- regresion de 26.224: el grupo 2/3 iba por create_date DESC.
+        El estado de un envio buffered en la base SOLO lo refresca este cron (el topic
+        'shipments' de las notificaciones no se procesa), asi que el envio liberado sigue
+        'pending/buffered' en la base y nunca entra al grupo 1. Con mas envios en el
+        dominio que 'limit' (108 contra 50, medido), DESC miraba siempre los 50 MAS NUEVOS
+        -- los que ML todavia no libera -- y los viejos que ML liberaba esa noche quedaban
+        afuera: 0 etiquetas bajadas por el cron dos noches seguidas (25 y 48 envios
+        CORFAM bajados a mano). La rotacion del grupo 3 garantiza ademas que todo envio
+        del dominio se refresca cada ceil(N / limit) corridas, haya o no fecha de ML.
+        """
+        ready = Shipment.search(base_domain + [('status', '=', 'ready_to_ship')],
+                                order='create_date desc, id desc', limit=limit)
+        due = Shipment.browse()
+        if len(ready) < limit and 'estimated_buffering_date' in Shipment._fields:
+            horizon = fields.Datetime.now() + timedelta(hours=self._LABEL_RETRY_BUFFERING_LEAD_HOURS)
+            due = Shipment.search(base_domain + [
+                ('status', '!=', 'ready_to_ship'),
+                ('estimated_buffering_date', '!=', False),
+                ('estimated_buffering_date', '<=', horizon),
+            ], order='estimated_buffering_date asc, create_date asc, id asc',
+                limit=limit - len(ready))
+        rest = Shipment.browse()
+        taken = len(ready) + len(due)
+        if taken < limit:
+            rest = Shipment.search(base_domain + [
+                ('status', '!=', 'ready_to_ship'),
+                ('id', 'not in', due.ids),
+            ], order='write_date asc, id asc', limit=limit - taken)
+        return ready | due | rest
+
+    def cron_meli_shipment_label_retry(self, account_id=None):
+        """Re-consulta los envios sin etiqueta y la baja apenas ML la publica.
+
+        Por cuenta y por envio en transacciones CORTAS: refrescar estado
+        (commit), bajar la etiqueta sin nada pendiente de escribir, y escribir el PDF
+        en su propia transaccion. Un fallo de un envio no aborta la corrida ni afecta a
+        las demas cuentas; un PDF bajado no se pierde por un choque con otro cron.
+        Cada cuenta se registra como una ejecucion 'shipments_label' para que se vea en
+        su pagina de CRONs.
+        """
+        from datetime import timedelta
+
+        domain_acc = [('id', '=', account_id)] if account_id else []
+        for account in self.env['mercadolibre.account'].sudo().search(domain_acc):
+            company = account.company_id or self.env.user.company_id
+            config = account.configuration or company
+
+            # Gate 1: la cuenta pidio que bajemos etiquetas.
+            if not ("mercadolibre_shipment_print_guide" in config._fields
+                    and config.mercadolibre_shipment_print_guide):
+                continue
+            # Gate 2: el reintento esta habilitado para esta configuracion.
+            if not ("mercadolibre_cron_shipment_label_retry" in config._fields
+                    and config.mercadolibre_cron_shipment_label_retry):
+                continue
+
+            days = config.mercadolibre_cron_shipment_label_retry_days or 3
+            days = min(days, self._LABEL_RETRY_MAX_DAYS)
+            limit = config.mercadolibre_cron_shipment_label_retry_limit or 50
+            retry_max = config.mercadolibre_cron_shipment_label_retry_max or 20
+            since = fields.Datetime.now() - timedelta(days=days)
+
+            # El cron corre como OdooBot, cuya compania activa NO es la de la cuenta:
+            # sin esto, tocar el envio dispara "Empresas incompatibles con los
+            # registros" (check_company) y no se baja ni una etiqueta. Mismo criterio
+            # que cron_meli_orders (company.py): operar SIEMPRE en la compania de la
+            # cuenta, no en la del usuario del cron.
+            Shipment = self.env['mercadolibre.shipment'].sudo().with_company(company)
+
+            # pdf_file es Binary(attachment=True): NO se puede filtrar en el dominio
+            # (vive en ir.attachment). pdf_filename es el proxy fiable — shipment_print
+            # lo escribe junto con el binario; verificado en produccion sobre 5.054
+            # envios sin un solo desacuerdo. Igual se re-chequea pdf_file en Python.
+            base_domain = [
+                ('order.connection_account', '=', account.id),
+                ('pdf_filename', '=', False),
+                ('status', 'not in', list(self._LABEL_RETRY_FINAL_STATUSES)),
+                ('meli_label_retry_count', '<', retry_max),
+            ]
+            if 'logistic_type' in Shipment._fields:
+                # Full: la etiqueta la imprime ML, nunca hay nada que bajar.
+                base_domain.append(('logistic_type', '!=', 'fulfillment'))
+            base_domain += self._label_retry_window_domain(Shipment, since)
+            shipments = self._label_retry_candidates(Shipment, base_domain, limit)
+
+            if not shipments:
+                continue
+
+            execution = account._start_cron_execution('shipments_label')
+
+            # La instancia de meli se crea UNA vez y FUERA de los savepoints: el
+            # refresh de token escribe, y si esa escritura cae dentro de un savepoint
+            # que despues se revierte, se pierde el token renovado.
+            try:
+                meli = self.env['meli.util'].get_new_instance(company, account)
+            except Exception as e:
+                _logger.warning("cron_meli_shipment_label_retry: no se pudo conectar a ML "
+                                "para %s: %s", account.name, e)
+                try:
+                    account._end_cron_execution(execution, state='error',
+                                                error_message=str(e)[:500])
+                except Exception:
+                    pass
+                continue
+            # lo hecho hasta aca (registro de ejecucion, token renovado) se cierra
+            # antes de empezar con los envios; desde aca cada envio va en tx propias.
+            if self._label_retry_can_commit():
+                self.env.cr.commit()
+
+            print_mode = Shipment._meli_label_print_mode(config)
+
+            checked = attempted = waiting = downloaded = errors = transient = closed = 0
+            for shipment in shipments:
+                # -- Paso 1: refrescar estado desde ML (red + escritura), tx corta. --
+                try:
+                    with self._label_retry_tx():
+                        shipment.update(meli=meli, config=config)
+                except Exception as e:
+                    if self._label_retry_is_transient(e):
+                        # Choque con otro cron (p.ej. Cron Meli Orders tocando el mismo
+                        # envio). No es un intento: se sigue con el estado que ya hay en
+                        # la base, que ese otro cron acaba de refrescar.
+                        transient += 1
+                        _logger.info("cron_meli_shipment_label_retry: envio %s (%s): "
+                                     "choque al refrescar, sigo con el estado en base: %s",
+                                     shipment.id, shipment.shipping_id, e)
+                    else:
+                        errors += 1
+                        _logger.warning("cron_meli_shipment_label_retry: envio %s (%s): %s",
+                                        shipment.id, shipment.shipping_id, e)
+                        self._label_retry_consume(shipment)
+                        continue
+
+                try:
+                    printable = (shipment.status == 'ready_to_ship'
+                                 and (shipment.substatus or '') not in self._LABEL_RETRY_NOT_YET_SUBSTATUSES
+                                 and not shipment.pdf_filename
+                                 and not shipment.pdf_file)
+                except Exception as e:
+                    errors += 1
+                    _logger.warning("cron_meli_shipment_label_retry: envio %s: no se pudo "
+                                    "leer su estado: %s", shipment.id, e)
+                    if not self._label_retry_can_commit():
+                        raise
+                    self.env.cr.rollback()
+                    continue
+                checked += 1
+                if not printable:
+                    # Todavia no hay etiqueta que bajar (o ya la tiene): se lo vuelve a
+                    # mirar en la proxima corrida, sin costo de cupo.
+                    #
+                    # Una pasada que unicamente constata que el envio sigue 'pending' NO
+                    # gasta reintentos (26.49/26.50): quien acota el reintento en el
+                    # tiempo es la ventana 'days' del dominio; el contador solo frena un
+                    # envio que si es imprimible y aun asi falla una y otra vez.
+                    waiting += 1
+                    continue
+
+                # -- Paso 2: INTENTO REAL. Bajar la etiqueta FUERA de toda transaccion
+                # con escrituras pendientes: no se escribe nada hasta tener los bytes. --
+                attempted += 1
+                download_url = shipment._meli_label_url(print_mode, meli=meli)
+                try:
+                    vals = shipment._meli_label_fetch_vals(meli.access_token, print_mode,
+                                                           download_url, meli=meli)
+                except Exception as e:
+                    if self._label_retry_is_terminal(e):
+                        # ML dice que no hay ni va a haber etiqueta (p.ej. ya despachado:
+                        # NOT_PRINTABLE_STATUS, retry:false). No es un fallo a reintentar:
+                        # se cierra y sale del filtro.
+                        closed += 1
+                        _logger.info("cron_meli_shipment_label_retry: envio %s (%s) %s/%s: "
+                                     "ML ya no entrega la etiqueta, se deja de reintentar: %s",
+                                     shipment.id, shipment.shipping_id, shipment.status,
+                                     shipment.substatus, e)
+                        self._label_retry_close(shipment, retry_max)
+                        continue
+                    # ML no la entrego: esto SI es un intento fallido y consume cupo.
+                    errors += 1
+                    _logger.warning("cron_meli_shipment_label_retry: envio %s (%s) %s/%s: "
+                                    "ML no entrego la etiqueta: %s", shipment.id,
+                                    shipment.shipping_id, shipment.status,
+                                    shipment.substatus, e)
+                    self._label_retry_consume(shipment)
+                    continue
+                if not vals:
+                    waiting += 1
+                    continue
+                vals['pdf_link'] = download_url
+
+                # -- Paso 3: escribir el PDF en tx corta. Un choque reintenta SOLO la
+                # escritura (sin volver a llamar a ML) y NO consume cupo. --
+                # Lo abierto desde el paso 1 es SOLO lectura (el paso 1 ya commiteo y el
+                # paso 2 no escribe). Se descarta para que la escritura arranque con un
+                # snapshot NUEVO: con el snapshot tomado antes de la descarga, cualquier
+                # update de otro cron commiteado durante la llamada a ML hace chocar
+                # la escritura (REPEATABLE READ) -- exactamente lo medido en produccion.
+                if self._label_retry_can_commit():
+                    self.env.cr.rollback()
+                written = False
+                last_exc = None
+                for n in range(self._LABEL_RETRY_WRITE_ATTEMPTS):
+                    try:
+                        with self._label_retry_tx():
+                            shipment.write(vals)
+                        written = True
+                        break
+                    except Exception as e:
+                        last_exc = e
+                        if not self._label_retry_is_transient(e):
+                            break
+                        transient += 1
+                        _meli_time.sleep(0.5 * (n + 1))
+                if written:
+                    downloaded += 1
+                    continue
+                errors += 1
+                if last_exc is not None and self._label_retry_is_transient(last_exc):
+                    # Choque persistente: la etiqueta existe y se baja en la corrida
+                    # siguiente (el envio sigue en el filtro: ready_to_ship sin PDF).
+                    _logger.warning("cron_meli_shipment_label_retry: envio %s (%s): PDF "
+                                    "bajado pero la escritura choco %d veces [choque "
+                                    "transitorio: no consume reintento]: %s", shipment.id,
+                                    shipment.shipping_id, self._LABEL_RETRY_WRITE_ATTEMPTS,
+                                    last_exc)
+                else:
+                    _logger.warning("cron_meli_shipment_label_retry: envio %s (%s): no se "
+                                    "pudo guardar el PDF: %s", shipment.id,
+                                    shipment.shipping_id, last_exc)
+                    self._label_retry_consume(shipment)
+
+            _logger.info("cron_meli_shipment_label_retry: %s -> %d revisados, "
+                         "%d con etiqueta disponible (intento real), %d todavia sin "
+                         "etiqueta publicada, %d etiquetas bajadas, %d errores, "
+                         "%d choques transitorios (no consumen reintento), %d cerrados "
+                         "(ML ya no entrega la etiqueta)",
+                         account.name, checked, attempted, waiting, downloaded, errors,
+                         transient, closed)
+            try:
+                account._end_cron_execution(
+                    execution,
+                    state=('error' if errors and not checked else
+                           'warning' if errors else 'success'),
+                    items_processed=downloaded,
+                    error_message=("%d envios fallaron" % errors) if errors else None)
+            except Exception as _track_err:
+                _logger.warning("cron_meli_shipment_label_retry: tracking fallo para %s: %s",
+                                account.name, _track_err)
+
+    # ── N1 fix (ticket un caso): auto re-queue of stranded RECOVERABLE stock bindings ──
     #
     # The stock cron (meli_update_remote_stock) only ever processes bindings whose
     # meli_stock_status is in ('update','update_rt', NULL). A binding that hit an error
@@ -7594,11 +8944,61 @@ class MercadoLibreConnectionAccount(models.Model):
     # "Item belongs to different seller", "archived", "not_found", "duplicados"), so we
     # additionally exclude those by stock_error text. A bounded retry counter
     # (meli_stock_retry_count) stops us from cycling forever on genuinely-broken items.
-    _MELI_STOCK_RECOVERABLE_STATUS = ('revision_error', 'revision_not_modifiable', 'multiwarehouse')
+    # 26.87 (F7): 'revision_not_applied' (ML contesto 200 y NO aplico la cantidad)
+    # entra como RECOVERABLE: un reintento puede aplicarla. Si ML la ignora de forma
+    # sistematica, el tope MELI_STOCK_MAX_REQUEUE_RETRIES corta el ciclo y el binding
+    # queda visible en ese estado para que lo mire una persona — que es justo lo que
+    # antes no pasaba nunca, porque el fallo era invisible.
+    # (B4) un cliente, 19-ago-2026: 'revision_variation_not_found' pasa a RECUPERABLE.
+    # Era terminal porque la re-vinculacion de la variante solo sabia matchear por SKU o
+    # barcode exactos: si ML no los devolvia, reintentar no podia servir de nada y la
+    # publicacion quedaba varada PARA SIEMPRE (medido en un cliente: 55 publicaciones con
+    # stock movido en Odoo despues del ultimo push). Con los fallbacks nuevos de
+    # x_match_variation_id (combinacion de atributos, e item de una sola variacion) el
+    # reintento SI puede arreglarla, asi que vuelve a la cola. El tope
+    # MELI_STOCK_MAX_REQUEUE_RETRIES (8) sigue acotando el ciclo para las que no tienen
+    # arreglo posible, y esas quedan visibles en su estado para que las mire una persona.
+    _MELI_STOCK_RECOVERABLE_STATUS = ('revision_error', 'revision_not_modifiable',
+                                      'revision_not_applied', 'multiwarehouse',
+                                      'revision_variation_not_found',
+                                      # 26.341 (26.190, #caso-K59): la revision de ML es
+                                      # transitoria, pero el binding quedaba en ese estado PARA
+                                      # SIEMPRE (medido uno varado desde el 11-may). Acotado por
+                                      # MELI_STOCK_MAX_REQUEUE_RETRIES.
+                                      'revision_under_review')
     MELI_STOCK_MAX_REQUEUE_RETRIES = 8
 
+    def _meli_stock_resync_days_value(self):
+        """26.87 (F1d): ventana de resincronizacion por antiguedad, en dias.
+        0 desactiva. Se lee de la configuracion de la cuenta; si el campo todavia
+        no existe (base sin el -u de 26.87) se usa el default del binding."""
+        self.ensure_one()
+        default = self.env['mercadolibre.product'].MELI_STOCK_RESYNC_DAYS_DEFAULT
+        config = self.configuration
+        if config and "mercadolibre_stock_resync_days" in config._fields:
+            value = config.mercadolibre_stock_resync_days
+            if value is not None and value is not False:
+                return value
+        return default
+
+    #caso-K51 (26.337): una fila del cron de stock que fallo no vuelve a la cola antes de estas horas.
+    MELI_STOCK_ERROR_RETRY_HOURS = 6
+
+    def _meli_stock_mark_row_error(self, bind, e):
+        """131 (26.337, port de 13.0.26.336): la fila que fallo en el cron de stock queda en revision_error con
+        stock_update=ahora. El savepoint de la fila ya deshizo su trabajo; antes quedaba NULL/update y encabezaba
+        la cola en cada ciclo. Vuelve sola por el re-queue N1, no antes de MELI_STOCK_ERROR_RETRY_HOURS."""
+        msg = ("Error cron stock: " + (str(e).split("\n")[0] or e.__class__.__name__))[:500]
+        try:
+            with self.env.cr.savepoint():
+                bind.write({ 'stock_error': msg, 'stock_update': fields.Datetime.now(),
+                             'meli_stock_status': 'revision_error' })
+        except Exception as e2:
+            _logger.warning("cron stock: no se pudo marcar la fila %s: %s", bind.id, e2)
+        return msg
+
     def _meli_requeue_stranded_stock(self):
-        """Re-queue stranded RECOVERABLE bindings for this account (N1, ticket #425).
+        """Re-queue stranded RECOVERABLE bindings for this account (N1, ticket un caso).
 
         Runs once per stock cron cycle (called from meli_update_remote_stock, before the
         UNION query, so re-queued items are picked up the same cycle). Staleness uses the
@@ -7607,6 +9007,7 @@ class MercadoLibreConnectionAccount(models.Model):
         counter caps how many times an item is auto re-queued.
         """
         account = self
+        _resync_days = self._meli_stock_resync_days_value() or 0
         self.env.cr.execute("""
             UPDATE mercadolibre_product mp
             SET meli_stock_status = 'update',
@@ -7617,19 +9018,46 @@ class MercadoLibreConnectionAccount(models.Model):
               AND mp.connection_account = %s
               AND mp.meli_id IS NOT NULL AND mp.meli_id != ''
               AND mp.meli_stock_status IN %s
-              AND (mp.meli_last_status IS NULL OR mp.meli_last_status IN ('active', 'paused'))
-              AND mp.meli_stock_moves_update IS NOT NULL
-              AND (mp.stock_update IS NULL OR mp.meli_stock_moves_update > mp.stock_update)
+              AND (mp.meli_last_status IS NULL OR mp.meli_last_status IN ('active', 'paused')
+                   -- 26.341 (26.190): meli_last_status solo se refresca al pushear; un binding en
+                   -- revision_under_review lo tiene congelado en 'under_review' y sin esto nunca
+                   -- volveria a la cola (acotado por el tope de reintentos).
+                   OR (mp.meli_stock_status = 'revision_under_review' AND mp.meli_last_status = 'under_review'))
+              -- 26.87 (F1d): "stale" tambien por ANTIGUEDAD del ultimo push, no solo
+              -- por el sello de movimientos. El sello podia congelarse (bug F1) y
+              -- dejaba varados para siempre a los bindings recuperables.
+              AND (
+                    (mp.meli_stock_moves_update IS NOT NULL
+                     AND (mp.stock_update IS NULL OR mp.meli_stock_moves_update > mp.stock_update))
+                 OR (%s > 0 AND (
+                        mp.stock_update IS NULL
+                     OR mp.stock_update < (NOW() AT TIME ZONE 'UTC') - (%s * INTERVAL '1 day')
+                    ))
+              )
               AND COALESCE(mp.meli_stock_retry_count, 0) < %s
+              -- 131 (26.337): una fila que fallo hace menos de N horas no vuelve todavia (reintento acotado)
+              AND NOT (mp.meli_stock_status = 'revision_error' AND mp.stock_update IS NOT NULL
+                       AND mp.stock_update > (NOW() AT TIME ZONE 'UTC') - (%s * INTERVAL '1 hour'))
               AND (mp.stock_error IS NULL OR (
                        mp.stock_error NOT ILIKE '%%different seller%%'
                    AND mp.stock_error NOT ILIKE '%%forbidden%%'
                    AND mp.stock_error NOT ILIKE '%%archived%%'
-                   AND mp.stock_error NOT ILIKE '%%not_found%%'
-                   AND mp.stock_error NOT ILIKE '%%not found%%'
                    AND mp.stock_error NOT ILIKE '%%duplicad%%'
+                   -- (B4) un cliente, 19-ago-2026: "not found" es TERMINAL cuando el que no
+                   -- existe en ML es el ITEM (404), pero NO cuando lo que no se encontro es la
+                   -- VARIACION: eso ahora se re-vincula solo (x_match_variation_id matchea
+                   -- tambien por combinacion de atributos). SIN esta excepcion, sumar
+                   -- 'revision_variation_not_found' a _MELI_STOCK_RECOVERABLE_STATUS habria
+                   -- sido un NO-OP silencioso: el texto "Variation id not found" cae de lleno
+                   -- en los dos filtros de abajo y la publicacion nunca habria vuelto a la cola.
+                   AND (mp.meli_stock_status = 'revision_variation_not_found' OR (
+                            mp.stock_error NOT ILIKE '%%not_found%%'
+                        AND mp.stock_error NOT ILIKE '%%not found%%'
+                   ))
               ))
-        """, (account.id, self._MELI_STOCK_RECOVERABLE_STATUS, self.MELI_STOCK_MAX_REQUEUE_RETRIES))
+        """, (account.id, self._MELI_STOCK_RECOVERABLE_STATUS,
+              _resync_days, _resync_days, self.MELI_STOCK_MAX_REQUEUE_RETRIES,
+              self.MELI_STOCK_ERROR_RETRY_HOURS))
         n = self.env.cr.rowcount
         if n:
             self.env['mercadolibre.product'].invalidate_model(['meli_stock_status', 'meli_stock_retry_count'])
@@ -7680,7 +9108,7 @@ class MercadoLibreConnectionAccount(models.Model):
 
         auto_commit = not getattr(threading.current_thread(), 'testing', False)
 
-        # N1 fix (ticket #425): re-queue stranded RECOVERABLE bindings before building the
+        # N1 fix (ticket un caso): re-queue stranded RECOVERABLE bindings before building the
         # queue, so a transient failure no longer strands an item forever. Bounded by a
         # retry counter; terminal statuses/errors are excluded. Never break the cron.
         try:
@@ -7874,7 +9302,7 @@ class MercadoLibreConnectionAccount(models.Model):
         processed_count = 0
         error_count = 0
         slow_abort = False  # Flag to track if we aborted due to slow POST
-        slow_skips = 0  # ticket #425: slow items skipped (a slow item no longer aborts the run)
+        slow_skips = 0  # ticket un caso: slow items skipped (a slow item no longer aborts the run)
         slow_abort_item = None
         slow_abort_duration = 0
         # Use configurable timeout from account settings (default: 10 seconds)
@@ -7916,7 +9344,8 @@ class MercadoLibreConnectionAccount(models.Model):
                                  current_ss, current_ls)
 
                     try:
-                        resjson = obj.product_post_stock(meli=meli)
+                        with self.env.cr.savepoint():  # un caso P6: un ítem que falla no deshace a los demás
+                            resjson = obj.product_post_stock(meli=meli)
                         item_duration = (datetime.now() - item_start).total_seconds()
                         avail_qty = obj.meli_available_quantity
                         _logger.info("CRON [stock] ITEM [%d/%d] <<< COMPLETED: %s in %.2fs", icount, will_process, current_sku, item_duration)
@@ -7926,7 +9355,7 @@ class MercadoLibreConnectionAccount(models.Model):
                             errors_list.append(f"{current_sku} {current_meli_id} >> {resjson}")
                             error_count += 1
 
-                        # Slow-abort fix (ticket #425): a single slow POST no longer aborts
+                        # Slow-abort fix (ticket un caso): a single slow POST no longer aborts
                         # the whole run. The item already succeeded here, so persist progress
                         # (commit-every-5 honoured by committing now) and skip to the next one.
                         if item_duration > post_timeout_threshold:
@@ -7955,11 +9384,14 @@ class MercadoLibreConnectionAccount(models.Model):
                                 self.env.invalidate_all()
 
                     except Exception as e:
+                        if getattr(e, 'pgcode', '') in ('40001', '40P01'):
+                            raise  # serialización/deadlock: que lo maneje el reintento del cron
                         item_duration = (datetime.now() - item_start).total_seconds()
                         logs_list.append(f"{current_sku} {current_meli_id}: ERROR ({item_duration:.2f}s)")
                         errors_list.append(f"{current_sku} {current_meli_id} >> {e}")
                         error_count += 1
-                        # Slow-abort fix (ticket #425): a slow errored POST no longer aborts
+                        account._meli_stock_mark_row_error(obj, e)  # caso-K51 (26.337): fuera de la cabeza de la cola
+                        # Slow-abort fix (ticket un caso): a slow errored POST no longer aborts
                         # the whole run. Roll back this item's partial work (recovering the
                         # cursor if the error aborted the tx) and skip to the next one.
                         if item_duration > post_timeout_threshold:
@@ -7969,11 +9401,11 @@ class MercadoLibreConnectionAccount(models.Model):
                             slow_abort_meli_id = current_meli_id
                             slow_abort_duration = item_duration
                             if auto_commit:
-                                self.env.cr.rollback()
+                                # un caso P6: el savepoint del ítem ya deshizo SÓLO este ítem; los anteriores quedan registrados
                                 self.env.invalidate_all()
                             continue
                         if auto_commit:
-                            self.env.cr.rollback()
+                            # un caso P6: el savepoint del ítem ya deshizo SÓLO este ítem; los anteriores quedan registrados
                             self.env.invalidate_all()  # Invalidate after rollback too
 
             if notilog and noti:
@@ -7992,7 +9424,7 @@ class MercadoLibreConnectionAccount(models.Model):
         duration = (ended_at - started_at).total_seconds()
         _logger.info('CRON account.meli_update_remote_stock() ENDED '+str(account.name) + " FROM "+str( started_at ) + " TO " +str( ended_at ) + " TOPCOMMIT: " +str(topcommits) + (" ABORTED:SLOW" if slow_abort else "") )
 
-        # Log to chatter - informational note if some items were slow-skipped (ticket #425:
+        # Log to chatter - informational note if some items were slow-skipped (ticket un caso:
         # a slow item no longer aborts the run; it is skipped and the run continues).
         if slow_skips and chatter_log:
             slow_msg = f"""
@@ -8274,7 +9706,8 @@ class MercadoLibreConnectionAccount(models.Model):
                                  current_ss, current_ls)
 
                     try:
-                        resjson = obj.product_post_stock(meli=meli)
+                        with self.env.cr.savepoint():  # un caso P6: un ítem que falla no deshace a los demás
+                            resjson = obj.product_post_stock(meli=meli)
                         item_duration = (datetime.now() - item_start).total_seconds()
                         avail_qty = obj.meli_available_quantity
                         _logger.info("CRON [stock_rt] ITEM [%d/%d] <<< COMPLETED: %s in %.2fs", icount, will_process, current_sku, item_duration)
@@ -8306,10 +9739,13 @@ class MercadoLibreConnectionAccount(models.Model):
                                 self.env.invalidate_all()
 
                     except Exception as e:
+                        if getattr(e, 'pgcode', '') in ('40001', '40P01'):
+                            raise  # serialización/deadlock: que lo maneje el reintento del cron
                         item_duration = (datetime.now() - item_start).total_seconds()
                         logs_list.append(f"{current_sku} {current_meli_id}: ERROR ({item_duration:.2f}s)")
                         errors_list.append(f"{current_sku} {current_meli_id} >> {e}")
                         error_count += 1
+                        account._meli_stock_mark_row_error(obj, e)  # caso-K51 (26.337): fuera de la cabeza de la cola
                         # CHECK: If exception took too long, also abort
                         if item_duration > post_timeout_threshold:
                             _logger.warning("CRON RT SLOW POST (with error) DETECTED: %s took %.2fs. Aborting.", current_sku, item_duration)
@@ -8319,7 +9755,7 @@ class MercadoLibreConnectionAccount(models.Model):
                             slow_abort_duration = item_duration
                             break
                         if auto_commit:
-                            self.env.cr.rollback()
+                            # un caso P6: el savepoint del ítem ya deshizo SÓLO este ítem; los anteriores quedan registrados
                             self.env.invalidate_all()
 
             if notilog and noti:
@@ -8481,8 +9917,30 @@ class MercadoLibreConnectionAccount(models.Model):
                 #_logger.info("meli_update_remote_stock_injobs > internal_job meli_update_remote_stock: NO stock internal_job.")
                 return {}
 
-            max_ustocks = 100
+            # [caso de un cliente] Antes: max_ustocks=100 fijo y MeliCommit (= flush_all, NO commit).
+            # Con ~1-12 s por PUT a ML, un ciclo pasaba limit_time_real (120 s), el server mataba el
+            # worker y se revertia TODO (incluido model_ids_processed): el job no avanzaba nunca y se
+            # re-mandaban los mismos PUT cada 5 min (10102 ejecuciones interrumpidas, 64 jobs con 0).
+            # Ahora: tope por ciclo y presupuesto de tiempo configurables (ir.config_parameter) y,
+            # llamado desde el cron, COMMIT REAL en cada punto de control (fuera de cualquier
+            # savepoint): lo procesado queda firme aunque el ciclo siguiente muera.
+            _icp = self.env['ir.config_parameter'].sudo()
+            def _icp_int(key, default):
+                try:
+                    return max(1, int(_icp.get_param(key, default)))
+                except Exception:
+                    return default
+            max_ustocks = _icp_int('meli_oerp_multiple.injobs_max_ustocks', 25)
+            time_budget = _icp_int('meli_oerp_multiple.injobs_time_budget', 60)
+            real_commit = auto_commit and bool(self.env.context.get('meli_injobs_real_commit'))
+            commit_step = 5 if real_commit else 40
+            _t0 = _meli_time.time()
             actual_ustock = 0
+            self._meli_injobs_check_stuck(notifs)
+            if real_commit:
+                # la alerta tiene que quedar aunque este ciclo muera despues
+                self.env.flush_all()
+                self.env.cr.commit()
             full_pids = []
             for noti in notifs:
 
@@ -8528,7 +9986,8 @@ class MercadoLibreConnectionAccount(models.Model):
                             actual_ustock+= 1
                             try:
                                 #_logger.info( "Update Stock: #" + str(icount) +'/'+str(maxcommits)+ ' meli_id:'+str(obj.meli_id)  )
-                                resjson = obj.product_post_stock(meli=meli)
+                                with self.env.cr.savepoint():  # un caso P6: un ítem que falla no deshace a los demás
+                                    resjson = obj.product_post_stock(meli=meli)
                                 logs+= str(obj.sku)+" "+str(obj.meli_id)+": "+str(obj.meli_available_quantity)+"\n"
                                 if resjson and "error" in resjson:
                                     errors+= str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(resjson)+"\n"
@@ -8542,7 +10001,8 @@ class MercadoLibreConnectionAccount(models.Model):
                                     #_logger.info("product_ids_processed: #"+str(len(product_ids_processed)))
                                 pid = obj.product_id.id
 
-                                if ( (actual_ustock>=max_ustocks) or (icommit==40 or (icount==maxcommits) or (icount==noti.model_ids_step))  and 1==1):
+                                _over_time = (_meli_time.time() - _t0) >= time_budget
+                                if ( (actual_ustock>=max_ustocks) or _over_time or (icommit>=commit_step or (icount==maxcommits) or (icount==noti.model_ids_step))  and 1==1):
                                     noti.processing_errors = errors
                                     noti.processing_logs = logs
                                     noti.model_ids_processed = str(product_ids_processed)
@@ -8550,10 +10010,17 @@ class MercadoLibreConnectionAccount(models.Model):
                                     noti.resource = "meli_update_remote_stock #"+str(icount) +'/'+str(maxcommits)
                                     #_logger.info("meli_update_remote_stock_injobs commiting")
                                     icommit=0
-                                    if auto_commit:
+                                    if real_commit:
+                                        self.env.flush_all()
+                                        self.env.cr.commit()
+                                    elif auto_commit:
                                         MeliCommit( self )
+                                    if _over_time and icount<maxcommits:
+                                        _logger.info("meli_update_remote_stock_injobs: presupuesto de %ss agotado (%s/%s del job %s); sigue el proximo ciclo.",
+                                                     time_budget, icount, maxcommits, noti.id)
+                                        return {}
                                     #max steps by iteration reached
-                                    if (icount>=noti.model_ids_step and icount<maxcommits):
+                                    if self._meli_injobs_step_reached(icount, noti.model_ids_step, maxcommits):
                                         return {}
                                     #max updates on cron iteration reached:
                                     if (actual_ustock>=max_ustocks):
@@ -8562,27 +10029,96 @@ class MercadoLibreConnectionAccount(models.Model):
 
 
                             except Exception as e:
+                                if getattr(e, 'pgcode', '') in ('40001', '40P01'):
+                                    raise  # serialización/deadlock: que lo maneje el reintento del cron
                                 #_logger.info("meli_update_remote_stock > Exception founded!")
                                 #_logger.info(e, exc_info=True)
                                 logs+= str(obj.sku)+" "+str(obj.meli_id)+": "+str(obj.meli_available_quantity)+", "
                                 #errors+= str(obj.default_code)+" "+str(obj.meli_id)+" >> "+str(e.args[0])+str(", ")
                                 errors+= str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(e)+"\n"
-                                if auto_commit:
-                                    self.env.cr.rollback()
+                                account._meli_stock_mark_row_error(obj, e)  # caso-K51 (26.337): fuera de la cabeza de la cola
+                                # un caso P6: el savepoint del ítem ya deshizo SÓLO este ítem; los anteriores quedan registrados
 
                     noti.resource = "meli_update_remote_stock_injobs #"+str(icount) +'/'+str(maxcommits)
                     noti.stop_internal_notification(errors=errors,logs=logs)
 
                 except Exception as e:
-                    #_logger.info("meli_update_remote_stock_injobs > Exception founded!")
-                    #_logger.info(e, exc_info=True)
-                    if auto_commit:
-                        self.env.cr.rollback()
-                    noti.stop_internal_notification( errors=errors , logs=logs )
-                    if auto_commit:
-                        MeliCommit( self )
+                    # [#caso-K30, 26.280] Antes: rollback + stop_internal_notification => el job
+                    # quedaba SUCCESS aunque se hubiera caido con items sin publicar (40001 contra el
+                    # cron de stock: OV/IN/05802, 112 productos, SUCCESS con 0/112, sin errores).
+                    # Ahora: si quedan productos pendientes el job vuelve a RECEIVED (o FAILED al
+                    # agotar reintentos) y el error queda registrado en el job.
+                    self._meli_injobs_job_failed(noti, e, errors=errors, logs=logs,
+                                                 auto_commit=auto_commit, real_commit=real_commit)
+                    # el ciclo termina aca: el proximo lo retoma (no insistir contra el mismo bloqueo)
+                    return {}
 
         return {}
+
+    def _meli_injobs_step_reached(self, icount, step, maxcommits):
+        """Tope por paso del job diferido. model_ids_step 0/vacio = sin tope por paso.
+
+        [#caso-K30, 26.280] Antes se comparaba `icount >= model_ids_step` con el campo vacio (0):
+        siempre verdadero, el ciclo cortaba en el primer punto de control (5 vinculaciones por
+        ciclo de 5 min) y una entrada grande tardaba horas aunque hubiera presupuesto de tiempo.
+        """
+        return bool(step) and icount >= step and icount < maxcommits
+
+    def _meli_injobs_job_failed(self, noti, exc, errors="", logs="", auto_commit=True, real_commit=False):
+        """Cierre de un job diferido de stock que se cayo a mitad de camino.
+
+        Lee de la base (tras el rollback) que productos quedaron FIRMES como procesados:
+        - ninguno pendiente  -> SUCCESS (como antes);
+        - quedan pendientes   -> RECEIVED con el error anotado, para que el proximo ciclo lo
+          retome; al superar `meli_oerp_multiple.injobs_max_retries` (def 10) -> FAILED.
+        Nunca SUCCESS con productos sin publicar. Devuelve el estado final.
+        """
+        if auto_commit:
+            self.env.cr.rollback()
+        self.env.invalidate_all()
+        noti = noti.exists()
+        if not noti:
+            return False
+        try:
+            total = json.loads(noti.model_ids or "[]") or []
+        except Exception:
+            total = []
+        try:
+            done = json.loads(noti.model_ids_processed or "[]") or []
+        except Exception:
+            done = []
+        pending = [p for p in total if p not in done]
+        code = getattr(exc, 'pgcode', '') or ''
+        try:
+            max_retries = max(0, int(self.env['ir.config_parameter'].sudo().get_param(
+                'meli_oerp_multiple.injobs_max_retries', 10)))
+        except Exception:
+            max_retries = 10
+        if not pending:
+            noti.stop_internal_notification(errors=errors, logs=logs)
+            state = 'SUCCESS'
+        else:
+            attempts = (noti.attempts or 0) + 1
+            state = 'FAILED' if attempts > max_retries + 1 else 'RECEIVED'
+            msg = "[injobs %s] intento %s: %s%s -- pendientes %s/%s" % (
+                fields.Datetime.now(), attempts, ("pgcode %s " % code) if code else "",
+                str(exc)[:300], len(pending), len(total))
+            vals = {
+                'state': state,
+                'attempts': attempts,
+                'processing_errors': ((noti.processing_errors or "") + msg + "\n"),
+            }
+            if state == 'FAILED':
+                vals['processing_ended'] = fields.Datetime.now()
+            noti.write(vals)
+            _logger.warning("meli_update_remote_stock_injobs: job %s cortado (%s); %s/%s productos pendientes -> %s",
+                            noti.id, code or type(exc).__name__, len(pending), len(total), state)
+        if real_commit:
+            self.env.flush_all()
+            self.env.cr.commit()
+        elif auto_commit:
+            MeliCommit(self)
+        return state
 
     def _check_price_batch(self, config=None, meli=None):
         """
@@ -8712,6 +10248,12 @@ Batch pre-actualización terminado automáticamente. El próximo batch iniciará
         if not meli:
             meli = self.env['meli.util'].get_new_instance( company, account )
 
+        # 26.248 (#caso-K29): contadores fuera del `if` para poder devolver el
+        # resumen aunque no corra (backport de 26.111 / #caso-K36 de 19.0).
+        icount = 0
+        processed_count = 0
+        error_count = 0
+
         if (config.mercadolibre_cron_post_update_price):
             auto_commit = not getattr(threading.current_thread(), 'testing', False)
             topcommits = ("meli_cron_price_top_commit" in account._fields and account.meli_cron_price_top_commit) or 80
@@ -8763,15 +10305,26 @@ Batch pre-actualización terminado automáticamente. El próximo batch iniciará
                         icommit+= 1
                         icount+= 1
                         try:
-                            resjson = obj.product_post_price(meli=meli)
+                            with self.env.cr.savepoint():  # un caso P6: un ítem que falla no deshace a los demás
+                                resjson = obj.product_post_price(meli=meli)
                             logs+= str(obj.sku)+" "+str(obj.meli_id)+": "+str(obj.meli_price)+"\n"
-                            if not resjson or (resjson and "error" in resjson):
+                            # 26.251 (#caso-K29): product_post_price devuelve {} cuando ML ACEPTO el
+                            # precio y un dict con 'error' cuando no. `not resjson` contaba cada
+                            # exito como error: la tarjeta daba "0 OK / 79 con error" en una corrida
+                            # con 62 publicadas bien y 17 rechazos reales de ML. None/False = no se
+                            # intento publicar (sigue siendo error).
+                            if resjson is None or resjson is False or (resjson and "error" in resjson):
                                 errors+= str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(resjson)+"\n"
                                 errors_list.append(str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(resjson))
                                 error_count += 1
-                                # In batch mode, mark errored items as attempted so batch can finish
-                                if account.meli_cron_price_batch_running:
-                                    obj.price_update = ml_datetime( str( datetime.now() ) )
+                                # 26.366 (caso-K34): marcar el INTENTO siempre, en lote y fuera de lote.
+                                # Antes sólo en lote: fuera de lote la rechazada seguía con
+                                # price_update vacío/viejo, volvía primera en la cola y, con >=80
+                                # rechazos permanentes (publicación cerrada/404/not_modifiable),
+                                # la cola quedaba trabada en las mismas y el resto no recibía precio.
+                                # El error queda en la notificación/chatter; un cambio de lista la
+                                # vuelve a encolar (price_update=False).
+                                obj.price_update = ml_datetime( str( datetime.now() ) )
                             else:
                                 obj.price_update = ml_datetime( str( datetime.now() ) )
                                 processed_count += 1
@@ -8786,20 +10339,26 @@ Batch pre-actualización terminado automáticamente. El próximo batch iniciará
                                     MeliCommit( self )
 
                         except Exception as e:
+                            if getattr(e, 'pgcode', '') in ('40001', '40P01'):
+                                raise  # serialización/deadlock: que lo maneje el reintento del cron
                             logs+= str(obj.sku)+" "+str(obj.meli_id)+": "+str(obj.meli_price)+", "
                             errors+= str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(e)+"\n"
                             errors_list.append(str(obj.sku)+" "+str(obj.meli_id)+" >> "+str(e))
                             error_count += 1
-                            if auto_commit:
-                                self.env.cr.rollback()
-                            # In batch mode, mark errored items as attempted so batch can finish
-                            if account.meli_cron_price_batch_running:
-                                try:
-                                    obj.price_update = ml_datetime( str( datetime.now() ) )
-                                    if auto_commit:
-                                        MeliCommit( self )
-                                except Exception:
-                                    pass
+                            # un caso P6: el savepoint del ítem ya deshizo SÓLO este ítem; los anteriores quedan registrados
+                            # 26.366 (caso-K34): marcar el intento siempre (antes sólo en lote), ver arriba.
+                            try:
+                                obj.price_update = ml_datetime( str( datetime.now() ) )
+                                if auto_commit:
+                                    MeliCommit( self )
+                            except Exception:
+                                pass
+
+                    elif obj and not obj.meli_id:
+                        # 26.366 (caso-K34): sin publicación (ni conn_id ni meli_id) no hay qué publicar; sin
+                        # marcarlo quedaba eterno al frente de `price_update = False` ocupando lugar en
+                        # la cola y el batch diario no llegaba nunca a remaining == 0.
+                        obj.price_update = ml_datetime( str( datetime.now() ) )
 
                 noti.resource = "meli_update_remote_price #"+str(icount) +'/'+str(maxcommits)
                 noti.stop_internal_notification(errors=errors,logs=logs)
@@ -8865,7 +10424,13 @@ Batch pre-actualización terminado automáticamente. El próximo batch iniciará
             if account.meli_cron_price_batch_running:
                 account.meli_cron_price_batch_processed += (processed_count + error_count)
 
-        return {}
+        # 26.248 (#caso-K29): resumen para _end_cron_execution — sin esto la tarjeta
+        # de precios del panel CRONs mostraba "0 items" en cada corrida.
+        return {
+            "items_processed": icount,
+            "items_success": processed_count,
+            "items_error": error_count,
+        }
 
 
 

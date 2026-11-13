@@ -47,21 +47,8 @@ class Invoice(models.Model):
 
     _inherit = acc_inv_model
 
-    #@api.multi
-    def __firmar_factura_electronica(self):
-        #_logger.info("meli_oerp: firmar_factura_electronica")
-        try:
-            for inv in self:
-                res = super( Invoice, inv ).firmar_factura_electronica()
-                origin = "origin" in inv._fields and inv.origin
-                origin = "invoice_origin" in inv._fields and inv.invoice_origin
-                sorder = self.env['sale.order'].search([('name','=',origin)], limit=1)
-                if sorder:
-                    if sorder and sorder.meli_orders:
-                        sorder.meli_orders[0].orders_post_invoice()
-
-        except Exception as e:
-            raise e;
+    # (F8b 20.0) borrado `__firmar_factura_electronica`: doble guion bajo => Python lo renombra a
+    # `_Invoice__firmar_factura_electronica` y nadie lo llamaba (codigo muerto).
 
     def wsfe_get_cae_request(self, client=None):
         """Override to use billing child's fiscal data for DocTipo/DocNro and CondicionIVAReceptorId.
@@ -409,7 +396,12 @@ class OrdersInvoice(models.Model):
                         self.invoice_xml = XMLbytes
                         self.invoice_xml_filename = XMLname
                 else:
-                    XMLname, XMLbytes, PDFName, PDFbytes = inv.crear_facturas()
+                    # config va SIEMPRE: sin el, crear_facturas ignora
+                    # mercadolibre_invoice_journal_report_id y cae al reporte estandar
+                    # (account.account_invoices), que no lleva datos fiscales. La rama de
+                    # arriba solo aplica a Colombia (estado_dian/l10n_co_cei), asi que el
+                    # resto de los paises pasaba siempre por aca. [26.388, 408 #caso-K79; 16.0 desde 26.45]
+                    XMLname, XMLbytes, PDFName, PDFbytes = inv.crear_facturas(config=config)
 
                     if PDFbytes:
                         self.invoice_pdf = PDFbytes
@@ -453,7 +445,7 @@ class OrdersInvoice(models.Model):
                         rjson = res.json()
                         respost += str(rjson)
                         #{'statusCode': 409, 'code': 'conflict', 'message': 'File Not allowed, the max amount of files already exist for the pack: 4433064137 and seller: 115266467', 'requestId': '557c88de-160f-4de9-a36d-2c01cb277ec6'}
-                        #{'error': 'conflict', 'status': 409, 'message': 'File Not allowed, a file already exists for the pack: 2000013946902833 and seller: 51743280 of the type: application/pdf', 'cause': ['[]']}
+                        #{'error': 'conflict', 'status': 409, 'message': 'File Not allowed, a file already exists for the pack: <order_id> and seller: 51743280 of the type: application/pdf', 'cause': ['[]']}
                         if 'error' in rjson:
                             # GUARD idempotente: ML devuelve 409 conflict "File Not allowed ... already exist(s)"
                             # cuando el documento fiscal YA fue subido a ese pack (reintento del cron). No es un
@@ -471,7 +463,8 @@ class OrdersInvoice(models.Model):
                                 self.invoice_posted = False
                                 self.invoice_fiscal_documents = respost
                                 return res
-                    self.invoice_posted = True
+                        # Sólo con respuesta de ML: sin respuesta no hay evidencia de que el documento subió (#caso-K44).
+                        self.invoice_posted = True
 
             self.invoice_fiscal_documents = respost
             self.invoice_type = ("boleta" in respost and "ticket") or ("factura" in respost and "invoice") or "unknown"
@@ -519,7 +512,15 @@ class OrdersInvoice(models.Model):
                     self.invoice_fiscal_documents = respost
                     return res
 
-            self.invoice_posted = True
+            # #caso-K44 (caso-K21 cliente F, 23-oct-2026): sólo cuenta como "enviada" si ML devuelve AL MENOS un documento.
+            # Con {"fiscal_documents": []} (o sin respuesta) marcar True hacía que orders_post_invoice
+            # salteara la venta como "ya enviada" y la factura no subía nunca a ML.
+            rjson = (res and res.json()) or {}
+            docs = rjson.get('fiscal_documents') if isinstance(rjson, dict) else rjson
+            self.invoice_posted = bool(docs)
+            if not docs:
+                _logger.info("orders_get_invoice: ML sin documentos fiscales para pack=%s order=%s",
+                             self.pack_id, self.order_id)
             self.invoice_fiscal_documents = respost
             self.invoice_type = ("boleta" in respost and "ticket") or ("factura" in respost and "invoice") or "unknown"
 

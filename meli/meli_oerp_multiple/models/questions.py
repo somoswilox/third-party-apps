@@ -6,15 +6,17 @@ import logging
 from . import versions
 from .versions import *
 import requests
+from odoo.addons.meli_oerp.models.meli_util import meli_instance_url, meli_instance_session
+from .config_account import meli_config_account, meli_config_company
 import json
 
 _logger = logging.getLogger(__name__)
-#https://api.mercadolibre.com/questions/search?item_id=MLA508223205
+#https://api.mercadolibre.com/questions/search?item_id=MLA<id>
 
 class mercadolibre_questions(models.Model):
     _inherit = "mercadolibre.questions"
 
-    product_template_binding = fields.Many2one("mercadolibre.product_template",string="Product Template Binding")
+    product_template_binding = fields.Many2one("mercadolibre.product_template",string="Product Template Binding", index='btree_not_null')
     account = fields.Many2one("mercadolibre.account", string="Account" )
     company = fields.Many2one("res.company", string="Company" )
     message_send = fields.Boolean("Mensaje enviado")
@@ -34,7 +36,7 @@ class mercadolibre_questions(models.Model):
 
     def prepare_question_fields( self, Question, meli=None, config=None ):
         #_logger.info("prepare_question_fields:"+str(Question)+" config:"+str(config))
-        account = config and config.accounts and config.accounts[0]
+        account = meli_config_account(config)
         company = account and account.company_id
         if not account or not company or not config:
             _logger.error("prepare_question_fields >> Error account or config missing")
@@ -49,7 +51,9 @@ class mercadolibre_questions(models.Model):
         if bindT:
             Question["product_template_binding"] = bindT.id
         else:
-            _logger.error( "Question not binded. No binding found for item: "+str(meli_id) )
+            # 26.329 (caso-K09, bus 2026-09-26T23:32:15Z): pregunta sobre una publicacion sin vincular = caso normal
+            # (publicaciones sin SKU); la pregunta se guarda igual. WARNING, no ERROR (disparaba alertas).
+            _logger.warning("Question not binded. No binding found for item: %s", meli_id)
         
         question_fields = {
             'product_template_binding': "product_template_binding" in Question and Question["product_template_binding"],
@@ -73,8 +77,8 @@ class mercadolibre_questions(models.Model):
         
         Question = None
         
-        company = config and config.company_id
-        account = config and config.accounts and config.accounts[0]
+        account = meli_config_account(config)
+        company = meli_config_company(config, account)
 
         if not meli:
             meli = self.env['meli.util'].get_new_instance( company, account )
@@ -102,7 +106,7 @@ class mercadolibre_questions(models.Model):
 
             meli = self.env['meli.util'].get_new_instance(self.company, self.account)
             if meli:
-                url = 'https://api.mercadolibre.com/answers'
+                url = meli_instance_url(meli, 'answers')  # host de meli_api_url
                 headers = {
                     "Accept": "application/json",
                     "Authorization": f'Bearer {meli.access_token}',
@@ -113,7 +117,7 @@ class mercadolibre_questions(models.Model):
                     'text': record.answer_text,
                 }
                 _logger.info("Datos enviados en QUESTION: %s " % json.dumps(j_son))
-                response = requests.post(url, headers=headers, json=j_son)
+                response = meli_instance_session(meli).post(url, headers=headers, json=j_son)
                 rjson = response.json()
                 _logger.info("Respuesta: %s " % rjson)
                 if 'error' in rjson:

@@ -11,6 +11,7 @@ _logger = logging.getLogger(__name__)
 from odoo.addons.odoo_connector_api.controllers.main import OcapiAuthorize
 from odoo.addons.odoo_connector_api.controllers.main import OcapiCatalog
 from ..models.versions import route_typejson
+from ..models.meli_util import _meli_mask, _meli_redact, _meli_redact_post
 
 from odoo.addons.meli_oerp.controllers.main import MercadoLibreLogin
 from odoo.addons.meli_oerp.controllers.main import MercadoLibre
@@ -62,24 +63,17 @@ class MercadoLibreAuthorize(OcapiAuthorize):
             connection_account = request.env['mercadolibre.account'].sudo().search([('client_id','=',client_id),('secret_key','=',secret_key)])
         access_tokens = []
         if not connection_account:
-            _logger.error("No response for: client_id:"+str(client_id)+" secret_key:" + str(secret_key) )
+            _logger.error("No response for: client_id:"+str(client_id))
         for a in connection_account:
             _logger.info("Trying")
             access_token = a.authorize_token( client_id, secret_key )
             access_tokens.append({ 'client_id': client_id, 'access_token': access_token  })
-        _logger.info(access_tokens)
+        _logger.info("mercadolibre auth: %s token(s) emitidos", len(access_tokens))
         return access_tokens
 
 class MercadoLibrePremium(MercadoLibre):
-    @http.route('/meli/', auth='public')
-    def index(self):
-        company = request.env.user.company_id
-        meli_util_model = request.env['meli.util']
-        meli = meli_util_model.get_new_instance(company)
-        if meli.need_login():
-            return "<a href='"+meli.auth_url()+"'>Login Please</a>"
 
-        return "MercadoLibre Publisher for Odoo - Copyright Moldeo Interactive 2021"
+    # [un caso] Fuera /meli/ (página informativa).
 
     # csrf=False is required because this endpoint is a webhook called
     # from MercadoLibre servers — they cannot provide an Odoo CSRF token.
@@ -90,7 +84,7 @@ class MercadoLibrePremium(MercadoLibre):
     # The /odoo/meli_notify aliases exist so the webhook works no matter
     # whether the ML app was configured with https://<host>/meli_notify/<id>
     # or https://<host>/odoo/meli_notify/<id> (Odoo 17+ backend prefix).
-    # In production at kelebcenter ML posts to /odoo/meli_notify/keleb.
+    # In production at un cliente ML posts to /odoo/meli_notify/un cliente.
     @http.route(
         [
             '/meli_notify',
@@ -106,7 +100,7 @@ class MercadoLibrePremium(MercadoLibre):
 
         Routes:
         - /meli_notify - Uses application_id from notification data
-        - /meli_notify/<meli_login_id> - Uses meli_login_id from URL (e.g., /meli_notify/scoremx)
+        - /meli_notify/<meli_login_id> - Uses meli_login_id from URL (e.g., /meli_notify/un cliente)
 
         Account resolution priority:
         1. Find by meli_login_id from URL (PRIMARY - must match)
@@ -322,7 +316,19 @@ class MercadoLibrePremium(MercadoLibre):
 
     def get_connection_account(self, connector,**post):
         if connector and connector=="mercadolibre":
-            return self.get_mercadolibre_connection(**post)
+            connection = self.get_mercadolibre_connection(**post)
+            if not connection:
+                # Fallback a client_id + secret_key, que es el protocolo que YA hablan los
+                # endpoints de KPIs de este mismo controller y el que usa el OFF para
+                # consultar la produccion de nuestros clientes.
+                #
+                # POR QUE HACE FALTA: get_mercadolibre_connection() autentica con el
+                # access_token DE LA PROPIA CUENTA DE ML, o sea que para preguntar por el
+                # token hay que tener el token. Es circular, y deja /status inutilizable
+                # justo para el caso que mas lo necesita: un ambiente de test que quiere
+                # traerse el token de produccion porque el suyo vencio.
+                connection = self.get_mercadolibre_connection_by_credentials(**post)
+            return connection
         else:
             return super(MercadoLibrePremium, self).get_connection_account(connector,**post)
 
@@ -365,7 +371,7 @@ class MercadoLibrePremium(MercadoLibre):
     @http.route('/ocapi/<string:connector>/<string:channel>/status', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
     def status_channel(self, connector, channel, **post):
         _logger.info("MELI status: connector:"+str(connector)+" channel:"+str(channel))
-        _logger.info(post)
+        _logger.info(_meli_redact_post(post))
         connection = self.get_connection_account(connector,**post)
 
         if not connection:
@@ -1100,8 +1106,13 @@ class MercadoLibrePremium(MercadoLibre):
 
 class MercadoLibreLoginMultiple(MercadoLibreLogin):
 
-    @http.route(['/meli_login/<string:meli_login_id>'], type='http', auth="user", methods=['GET'], website=True)
-    def index(self, meli_login_id, **codes ):
+    # [un caso] Las dos rutas: al redefinir `routes` en la subclase, el routing de Odoo (merge por MRO)
+    # REEMPLAZA las del padre, y con solo '/meli_login/<id>' el '/meli_login' pelado de meli_oerp
+    # daba 404 (lo arman meli_util sin meli_login_id y la accion url de la compania; con Nivel de
+    # seguridad Alto es una de las rutas que quedan). Sin id: 1a cuenta de la compania, o el login
+    # por compania de meli_oerp si no hay ninguna.
+    @http.route(['/meli_login', '/meli_login/<string:meli_login_id>'], type='http', auth="user", methods=['GET'], website=True)
+    def index(self, meli_login_id=None, **codes ):
 
         #_logger.info("Meli Login Multiple: "+str(meli_login_id))
 
@@ -1111,7 +1122,7 @@ class MercadoLibreLoginMultiple(MercadoLibreLogin):
             if meli_account:
                 meli_login_id = meli_account.meli_login_id
             if not meli_login_id:
-                return ""
+                return super().index(**codes)
 
         #_logger.info("User: "+str(request.env.user))
         #_logger.info("User Name: "+str(request.env.user.name))
@@ -1142,8 +1153,14 @@ class MercadoLibreLoginMultiple(MercadoLibreLogin):
                              'cron_refresh': True,
                              'status': 'connected' }
             meli_account.write( login_data )
-            meli_account.message_post(body=str("Login result: "+str(login_data)+str("\n"+"RESPONSE:") +str(resp) ), message_type="notification" )
-            
-            return 'LOGGED WITH CODE: %s <br>ACCESS_TOKEN: %s <br>REFRESH_TOKEN: %s <br>MercadoLibre Publisher for Odoo - Copyright Moldeo Interactive <br><a href="javascript:window.history.go(-2);">Volver a Odoo</a> <script>window.history.go(-2)</script>' % ( codes['code'], meli.access_token, meli.refresh_token )
+            # [26.392] Seller id desde la respuesta de ML (sólo si está vacío; nunca lo pisa).
+            meli_account._meli_fill_seller_id_from_login(resp, meli)
+            if company.sudo()._ocapi_security_allows('token_in_chatter'):
+                meli_account.message_post(body=str("Login result: "+str(_meli_redact(login_data))+str("\n"+"RESPONSE:") +str(_meli_redact(resp)) ), message_type="notification" )
+            else:
+                meli_account.message_post(body="Login result: conectado (detalle omitido por el Nivel de seguridad)", message_type="notification" )
+
+            # [un caso] La página de login nunca muestra el código ni los tokens.
+            return 'CONECTADO A MERCADOLIBRE <br>MercadoLibre Publisher for Odoo - Copyright Moldeo Interactive <br><a href="javascript:window.history.go(-2);">Volver a Odoo</a> <script>window.history.go(-2)</script>'
         else:
             return "<a href='"+meli.auth_url()+"'>Try to Login Again Please</a>"

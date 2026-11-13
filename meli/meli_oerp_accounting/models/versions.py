@@ -60,7 +60,8 @@ report_invoices_name = ""
 report_invoices_id = False
 #report_invoices_id = 1517
 posted_statuses = ['posted']
-cancel_statuses = ['cancel', 'cancelled']
+# 'canceled' (una ele) = estado de account.payment en Odoo 18/19; 'cancel'/'cancelled' en versiones previas.
+cancel_statuses = ['cancel', 'cancelled', 'canceled']
 draft_statuses = ['draft']
 valid_payment_status = ['paid']
 draft_payment_status = ['draft','in_process']
@@ -73,21 +74,52 @@ def order_create_invoices( sale_order, grouped=False, final=False, date=None ):
 	return sale_order._create_invoices(grouped=grouped, final=final, date=date)
 
 def payment_post( self ):
-    try:
-        #state in process
-        self.action_post()
-    except:
-        pass;
-    
-    try:
-        #state in paid
-        self.action_validate()
-    except:
-        pass;
+    """Validar un account.payment (action_post y, si existe, action_validate).
+
+    caso-K52 (31-oct-2026): antes cada paso iba en `except: pass` SIN savepoint. Un error de base de datos
+    (p.ej. IntegrityError account_move_unique_name al numerar el asiento con un talonario de recibos,
+    o un choque concurrente) se tragaba en silencio y dejaba la TRANSACCION ABORTADA: lo siguiente
+    fallaba con 'current transaction is aborted', el error raiz no quedaba en ningun lado y se perdia
+    la venta entera. Ahora cada paso va en savepoint: un error funcional (UserError) se registra y se
+    sigue como antes; un error de BASE DE DATOS se propaga para que quien llama (confirm_ml) revierta
+    el cobro entero y avise.
+    """
+    import psycopg2
+    for step in ('action_post', 'action_validate'):
+        if not hasattr(self, step):
+            continue
+        try:
+            with self.env.cr.savepoint():
+                getattr(self, step)()
+        except psycopg2.Error:
+            raise
+        except Exception as e:
+            _logger.info("payment_post: %s de %s no aplicado: %s", step, self, e)
     
 
 def payment_group_post( self ):
-    return self.post()
+    """
+    Validar un account.payment.group de forma compatible (mismo patron que
+    payment_group_cancel):
+    - account_payment_group (ingadhoc / odoo-argentina): post()
+    - account_payment_group_pro (un cliente 18.0) y similares: action_post() (NO tienen post())
+    Antes era self.post() fijo => "'account.payment.group' object has no attribute 'post'"
+    en cada pago / comision / envio ML (un cliente). post() va primero: sin cambio para
+    quien ya lo tenia.
+    """
+    if hasattr(self, 'post'):
+        return self.post()
+    if hasattr(self, 'action_post'):
+        return self.action_post()
+    from odoo.exceptions import UserError
+    raise UserError(
+        "No se pudo validar el grupo de pagos (%s): el modelo no tiene 'post' "
+        "ni 'action_post'. Revisar el modulo de grupos de pago instalado." % self._name)
+
+
+# Alias: payments.py post_payment / post_supplier_payment / post_supplier_payment_shipment
+# llaman payment_post_group(), que nunca existio (NameError latente).
+payment_post_group = payment_group_post
 
 
 def payment_cancel(payment):

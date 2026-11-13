@@ -43,6 +43,18 @@ from .versions import *
 _logger = logging.getLogger(__name__)
 
 
+
+def meli_claim_we_are_complainant(claim, seller_id):
+    """True si en `claim['players']` la cuenta (seller_id) figura como reclamante (complainant)."""
+    if not seller_id or not isinstance(claim, dict):
+        return False
+    for player in (claim.get('players') or []):
+        if not isinstance(player, dict):
+            continue
+        if str(player.get('user_id') or '') == str(seller_id) and str(player.get('role') or '').lower() == 'complainant':
+            return True
+    return False
+
 class mercadolibre_claim(models.Model):
     _name = "mercadolibre.claim"
     _description = "Reclamos / disputas post-venta en MercadoLibre"
@@ -55,11 +67,17 @@ class mercadolibre_claim(models.Model):
     # Vinculacion con la venta/orden ML
     resource = fields.Char(string="Resource", help="Tipo de recurso reclamado (order / purchase / shipment).")
     resource_id = fields.Char(string="Resource Id", index=True, help="Id del recurso (ej. order_id o pack_id).")
-    order_id = fields.Many2one("mercadolibre.orders", string="Orden ML")
+    order_id = fields.Many2one("mercadolibre.orders", string="Orden ML", index='btree_not_null')
 
     # Clasificacion del reclamo
     type = fields.Selection([
+        # [caso de un cliente] Valores REALES de /post-purchase/v1/claims (medidos sobre 67 reclamos
+        # de una cuenta MLM el 23-sep-2026): returns, mediations, cancel_purchase, cancel_sale.
+        # Los de mas abajo eran supuestos de la Fase 1; se dejan para no romper datos existentes.
+        ("returns", "Devolucion"),
         ("mediations", "Mediacion"),
+        ("cancel_purchase", "Cancelacion de compra"),
+        ("cancel_sale", "Cancelacion de venta"),
         ("cancellations", "Cancelacion"),
         ("return", "Devolucion"),
         ("fulfillment", "Fulfillment"),
@@ -93,11 +111,40 @@ class mercadolibre_claim(models.Model):
         ('unique_claim_id', 'claim_id', 'Claim id already exists!'),
     ])
 
+    site_id = fields.Char(string="Site", help="Sitio de MercadoLibre del reclamo (MLA, MLM, ...).")
+
+    def _meli_claim_ref(self):
+        """[#caso-K08 cliente B 26.259] Id de la conversacion de la venta en el panel del vendedor:
+        el PACK si la venta es un carrito, si no la ORDEN. Primero la orden vinculada; si no
+        esta vinculada, el recurso del reclamo cuando es una orden."""
+        self.ensure_one()
+        o = self.order_id
+        for ref in (o and o.pack_id, o and o.order_id,
+                    self.resource == 'order' and self.resource_id):
+            ref = str(ref or '').strip()
+            if ref and ref not in ('0', 'False', 'None'):
+                return ref
+        return False
+
     def compute_claim_link(self):
-        company = self.env.user.company_id
+        # [caso de un cliente] Dominio por el site del reclamo, sin API (get_ML_LINK_URL consultaba
+        # /sites por cada registro) y sin dejar el campo sin asignar cuando no hay claim_id.
+        # [#caso-K08 cliente B 26.259] Mediacion => la mediacion en el panel del vendedor:
+        #   https://vendedores.<dominio>/ventas/nueva/mensajeria/<pack|orden>/mediacion/<claim_id>
+        # (formato confirmado por la cliente sobre un reclamo type=mediations). Para los otros
+        # tipos (returns, cancel_*) el formato del panel NO esta confirmado: se deja el enlace
+        # anterior (www.<dominio>/reclamos/<claim_id>, que ML redirige a la venta).
         for c in self:
-            if c.claim_id:
-                c.claim_link = company.get_ML_LINK_URL() + "reclamos/" + str(c.claim_id)
+            if not c.claim_id:
+                c.claim_link = False
+                continue
+            domain = (c.company_id or self.env.company)._meli_site_domain(c.site_id)
+            ref = c.type == 'mediations' and c._meli_claim_ref()
+            if ref:
+                c.claim_link = "https://vendedores.%s/ventas/nueva/mensajeria/%s/mediacion/%s" % (
+                    domain, ref, c.claim_id)
+            else:
+                c.claim_link = "https://www.%s/reclamos/%s" % (domain, c.claim_id)
 
     claim_link = fields.Char(string="Claim Link", compute=compute_claim_link)
 
@@ -122,7 +169,18 @@ class mercadolibre_claim(models.Model):
             'players_json': _json.dumps(Claim.get("players")) if Claim.get("players") else False,
             'resolution_json': _json.dumps(Claim.get("resolution")) if Claim.get("resolution") else False,
             'raw_json': _json.dumps(Claim),
+            'site_id': Claim.get("site_id") or False,
         }
+        # [caso de un cliente] Un valor que ML agregue y el selection no conozca NO puede tirar el sync
+        # entero: antes 'returns' daba ValueError, el cron se lo tragaba por compania y la
+        # pantalla de reclamos quedaba VACIA sin un aviso. Se guarda vacio + WARNING; el valor
+        # original sigue en raw_json.
+        for fname in ('type', 'stage', 'status'):
+            val = claim_fields.get(fname)
+            if val and val not in dict(self._fields[fname].selection):
+                _logger.warning("mercadolibre.claim %s: valor '%s' no reconocido en '%s', se guarda vacio",
+                                claim_fields.get('claim_id'), val, fname)
+                claim_fields[fname] = False
         # Intentar vincular con la orden ML por resource_id (cuando resource=order)
         if resource_id and resource in ("order", "purchase", ""):
             order = self.env['mercadolibre.orders'].search(
@@ -187,9 +245,19 @@ class mercadolibre_claim(models.Model):
             return 0
         data = rjson.get("data") if isinstance(rjson, dict) else rjson
         count = 0
+        seller_id = str(getattr(meli, 'seller_id', '') or (
+            config and 'mercadolibre_seller_id' in config._fields and config.mercadolibre_seller_id) or '')
         for Claim in (data or []):
             cid = Claim.get("id")
             if not cid:
+                continue
+            # 26.329 (caso-K09 cliente C, bus 2026-09-25T11:30:34Z): /claims/search trae tambien los reclamos
+            # donde la cuenta es COMPRADORA (complainant). El GET del detalle da 403 y quedaba un ERROR
+            # por corrida + un reclamo ajeno en la base. Solo se sincronizan los que nos tienen de parte
+            # reclamada; sin seller_id conocido, comportamiento anterior.
+            if meli_claim_we_are_complainant(Claim, seller_id):
+                _logger.info("sync_claims: reclamo %s omitido: la cuenta %s es la parte reclamante (compradora)",
+                             cid, seller_id)
                 continue
             # El search a veces trae el detalle parcial; refrescar el completo
             full = self.fetch_claim(claim_id=cid, meli=meli, config=config) or Claim

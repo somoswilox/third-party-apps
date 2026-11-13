@@ -17,6 +17,41 @@
                   <field name="meli_receiver_zip_code" string="ML CP"/>
                   <separator/>
                   <filter string="MercadoLibre Orders" name="sale_orders_ml" domain="[('meli_order_id','!=',False)]" />
+                  <!-- Mismos filtros que en la vista de Cotizaciones: el aviso de
+                       cancelacion pendiente hace falta en las DOS pantallas, y de
+                       hecho aca mas, porque una orden de venta confirmada es la que
+                       puede facturarse o despacharse. Los dominios son identicos:
+                       si se toca uno, tocar el otro. -->
+                  <filter string="MercadoLibre Canceladas" name="sale_orders_ml_cancelled"
+                          domain="[('meli_order_id','!=',False),
+                                   ('meli_status','in',['cancelled','pending_cancel','invalid'])]" />
+                  <filter string="MercadoLibre Canceladas pendientes en Odoo" name="sale_orders_ml_cancel_pending"
+                          domain="[('meli_order_id','!=',False),
+                                   ('meli_status','=','cancelled'),
+                                   ('state','!=','cancel'),
+                                   ('meli_cancel_covered','=',False)]" />
+                  <filter string='MercadoLibre Status' domain="[]"
+                          context="{'group_by' : 'meli_status'}" name="meli_status_filter"/>
+                  <filter string='Estado de Odoo' domain="[]"
+                          context="{'group_by' : 'state'}" name="meli_odoo_state_filter"/>
+                  <!-- OLA 3 del mapeo de cancelaciones: el MOTIVO como eje de lectura.
+                       Antes el codigo de ML vivia concatenado dentro de meli_status_detail
+                       (un Text) y no se podia agrupar ni filtrar por el. -->
+                  <field name="meli_cancel_reason_code" string="ML Motivo de cancelación"/>
+                  <filter string='ML Motivo de cancelación' domain="[]"
+                          context="{'group_by' : 'meli_cancel_reason_code'}" name="meli_cancel_reason_code_filter"/>
+                  <filter string='Cancelación esperando retorno' name="meli_cancel_waiting_return_filter"
+                          domain="[('meli_cancel_waiting_return', '=', True)]"/>
+                  <!-- 26.221 (un cliente): canceladas por ML con un motivo fuera de
+                       meli_oerp.cancel_return_reasons => la mercaderia NO se devolvio sola. -->
+                  <filter string='ML: cancelada sin devolución de stock' name="meli_cancel_return_skipped_filter"
+                          domain="[('meli_cancel_return_skipped', '=', True)]"/>
+                  <!-- 26.278 (#caso-K04): ML canceló pero le pagó la venta al vendedor (bpp_covered). -->
+                  <filter string='ML: cancelada con venta cubierta por ML' name="meli_cancel_covered_filter"
+                          domain="[('meli_cancel_covered', '=', True)]"/>
+                  <!-- 26.171 (E2): canceladas en ML antes de 'Cancelaciones automáticas desde'. -->
+                  <filter string="MercadoLibre Cancelaciones retenidas (anteriores al corte)" name="meli_cancel_held_filter"
+                          domain="[('meli_cancel_held', '=', True), ('state', '!=', 'cancel')]"/>
                 </xpath>
             </field>
         </record>
@@ -41,12 +76,65 @@
                   <separator/>
                   <filter string="Con mensajes del comprador sin leer" name="meli_unread_msgs" domain="[('meli_unread_messages','>',0)]" />
                   <filter string="MercadoLibre Quotations" name="sale_orders_ml" domain="[('meli_order_id','!=',False)]" />
+                  <!-- 26.341 (26.190, #caso-K59): venta ML que entro sin producto (SKU sin cargar).
+                       Actividad abierta, o presupuesto ML sin ninguna linea. -->
+                  <filter string="ML: producto no encontrado" name="meli_product_not_found"
+                          domain="[('meli_order_id','!=',False), '|',
+                                   ('activity_ids.summary','ilike','ML: producto no encontrado'),
+                                   '&amp;', ('state','in',['draft','sent']), ('order_line','=',False)]" />
+                  <!-- Canceladas en ML. Incluye los tres estados que en la practica
+                       significan "esta venta no va": cancelled, pending_cancel (ML ya
+                       la cancelo pero queda una accion pendiente) e invalid (compra
+                       maliciosa). Filtrar solo por 'cancelled' deja afuera las otras
+                       dos y da un conteo optimista. -->
+                  <filter string="MercadoLibre Canceladas" name="sale_orders_ml_cancelled"
+                          domain="[('meli_order_id','!=',False),
+                                   ('meli_status','in',['cancelled','pending_cancel','invalid'])]" />
+                  <!-- EL ACCIONABLE: las que muestran el banner naranja "Cancelada en
+                       MercadoLibre - pendiente en Odoo" (ACCION REQUERIDA). En Odoo
+                       siguen vivas y pueden facturarse o despacharse, mientras en ML
+                       ya no existen.
+                       ⚠️ El dominio replica EXACTAMENTE la condicion de
+                       _compute_meli_cancel_pending_banner (meli_status == 'cancelled'
+                       y state != 'cancel'). El campo del banner es compute store=False,
+                       asi que no se puede filtrar por el: hay que duplicar la condicion.
+                       Si esa condicion cambia, ESTE DOMINIO TAMBIEN, o el filtro va a
+                       listar ordenes sin banner y el usuario no va a entender por que. -->
+                  <filter string="MercadoLibre Canceladas pendientes en Odoo" name="sale_orders_ml_cancel_pending"
+                          domain="[('meli_order_id','!=',False),
+                                   ('meli_status','=','cancelled'),
+                                   ('state','!=','cancel'),
+                                   ('meli_cancel_covered','=',False)]" />
                   <filter string='MercadoLibre Status' domain="[]"
         								context="{'group_by' : 'meli_status'}" name="meli_status_filter"/>
                   <!--filter string='MercadoLibre Status Brief' domain="[]"
         								context="{'group_by' : 'meli_status_brief'}" name="meli_status_brief_filter"/-->
                   <filter string='MercadoLibre Logistic Type' domain="[]"
                         context="{'group_by' : 'meli_shipment_logistic_type'}" name="meli_shipment_logistic_type_filter"/>
+                  <!-- Estado de Odoo, para cruzarlo con el de ML: aplicando los dos
+                       agrupados queda "Estado MELI > Estado Odoo" y se ven de un
+                       vistazo los desalineados (p.ej. cancelada en ML y confirmada
+                       en Odoo). -->
+                  <filter string='Estado de Odoo' domain="[]"
+                        context="{'group_by' : 'state'}" name="meli_odoo_state_filter"/>
+                  <!-- OLA 3 del mapeo de cancelaciones: el MOTIVO como eje de lectura.
+                       Antes el codigo de ML vivia concatenado dentro de meli_status_detail
+                       (un Text) y no se podia agrupar ni filtrar por el. -->
+                  <field name="meli_cancel_reason_code" string="ML Motivo de cancelación"/>
+                  <filter string='ML Motivo de cancelación' domain="[]"
+                          context="{'group_by' : 'meli_cancel_reason_code'}" name="meli_cancel_reason_code_filter"/>
+                  <filter string='Cancelación esperando retorno' name="meli_cancel_waiting_return_filter"
+                          domain="[('meli_cancel_waiting_return', '=', True)]"/>
+                  <!-- 26.221 (un cliente): canceladas por ML con un motivo fuera de
+                       meli_oerp.cancel_return_reasons => la mercaderia NO se devolvio sola. -->
+                  <filter string='ML: cancelada sin devolución de stock' name="meli_cancel_return_skipped_filter"
+                          domain="[('meli_cancel_return_skipped', '=', True)]"/>
+                  <!-- 26.278 (#caso-K04): ML canceló pero le pagó la venta al vendedor (bpp_covered). -->
+                  <filter string='ML: cancelada con venta cubierta por ML' name="meli_cancel_covered_filter"
+                          domain="[('meli_cancel_covered', '=', True)]"/>
+                  <!-- 26.171 (E2): canceladas en ML antes de 'Cancelaciones automáticas desde'. -->
+                  <filter string="MercadoLibre Cancelaciones retenidas (anteriores al corte)" name="meli_cancel_held_filter"
+                          domain="[('meli_cancel_held', '=', True), ('state', '!=', 'cancel')]"/>
                 </xpath>
             </field>
         </record>
@@ -134,6 +222,8 @@
                               <field name="meli_buyer_nickname"/>
                               <field name="meli_buyer_id"/>
                               <field name="meli_update_forbidden" string="No actualizar desde ML"/>
+                              <field name="meli_partner_invoice_auto_id" readonly="1"/>
+                              <field name="meli_partner_shipping_auto_id" readonly="1"/>
                               <field name="meli_order_id" invisible="0"/>
                               <field name="meli_status" invisible="0"/>
                               <field name="meli_unread_messages" readonly="1"
@@ -156,6 +246,11 @@
                                      decoration-warning="meli_handling_limit_status == 'urgent'"
                                      decoration-danger="meli_handling_limit_status == 'overdue'"
                                      decoration-muted="meli_handling_limit_status == 'none'"/>
+                              <field name="meli_cancel_reason_code" readonly="1" invisible="0"/>
+                              <field name="meli_cancel_return_skipped" readonly="1" invisible="not meli_cancel_return_skipped"/>
+                              <field name="meli_cancel_covered" readonly="1" invisible="not meli_cancel_covered"/>
+                              <field name="meli_cancel_waiting_return" readonly="1" invisible="not meli_cancel_waiting_return"/>
+                              <field name="meli_cancel_decision" readonly="1" invisible="not meli_cancel_decision"/>
                               <field name="meli_status_detail" invisible="0"/>
                               <field name="meli_total_amount" widget="monetary" invisible="0"/>
                               <field name="meli_shipping_amount" widget="monetary" invisible="0"/>
@@ -562,6 +657,40 @@
                 view_mode="form"
                 target="new"/-->
 
+
+        <!-- un caso: reparación de ventas confirmadas con moves en borrador sin entrega
+             (abastecimiento fallido). Re-lanza dentro de un savepoint; resultado en el chatter. -->
+        <record id="action_meli_relaunch_procurement_server" model="ir.actions.server">
+            <field name="name">MELI: Relanzar abastecimiento</field>
+            <field name="model_id" ref="sale.model_sale_order"/>
+            <field name="binding_model_id" ref="sale.model_sale_order"/>
+            <field name="binding_view_types">list,form</field>
+            <field name="state">code</field>
+            <field name="code">action = records.action_meli_relaunch_procurement()</field>
+        </record>
+
+        <!-- 26.171 (E2, caso-K13): procesar a mano las cancelaciones RETENIDAS por la fecha de
+             corte ('Cancelaciones automáticas desde'), como lo haría el cron. -->
+        <record id="action_meli_cancel_process_held_server" model="ir.actions.server">
+            <field name="name">MercadoLibre: procesar cancelación ignorando la fecha de corte</field>
+            <field name="model_id" ref="sale.model_sale_order"/>
+            <field name="binding_model_id" ref="sale.model_sale_order"/>
+            <field name="binding_view_types">list,form</field>
+            <field name="state">code</field>
+            <field name="code">records.action_meli_cancel_process_held()</field>
+        </record>
+
+        <!-- Columna opcional "Límite despacho ML" en la lista de pedidos (un caso) -->
+        <record id="sale_order_tree_meli_handling_limit" model="ir.ui.view">
+            <field name="name">sale.order.list.meli.handling.limit.sale_order_tree</field>
+            <field name="model">sale.order</field>
+            <field name="inherit_id" ref="sale.sale_order_tree"/>
+            <field name="arch" type="xml">
+                <field name="commitment_date" position="after">
+                    <field name="meli_handling_limit" optional="hide"/>
+                </field>
+            </field>
+        </record>
 
     </data>
 </odoo>

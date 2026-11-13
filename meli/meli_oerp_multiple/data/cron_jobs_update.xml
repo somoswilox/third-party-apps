@@ -76,7 +76,7 @@
 			<field name="priority">2000</field>
 		</record>
 
-		<!-- Refresca el contador de mensajes del comprador sin leer (post-venta) [#499] -->
+		<!-- Refresca el contador de mensajes del comprador sin leer (post-venta) [un caso] -->
 		<record id="ir_cron_meli_refresh_unread" model="ir.cron">
 			<field name="name">Meli: mensajes del comprador sin leer</field>
 			<field eval="True" name="active" />
@@ -87,6 +87,23 @@
 			<field name="state">code</field>
 			<field name="code">model.cron_meli_refresh_unread()</field>
 			<field name="priority">2100</field>
+		</record>
+
+		<!-- Vuelve a consultar los envios que quedaron sin etiqueta y la baja apenas
+		     Mercado Libre la publica. Sin esto la etiqueta solo se baja en el instante
+		     de importar la orden, y ML la publica de 8 a 50 h despues [un caso].
+		     Gateado por 'Imprimir etiquetas' + 'Reintentar etiquetas pendientes'. -->
+		<record id="ir_cron_meli_shipment_label_retry" model="ir.cron">
+			<field name="name">Meli Reintento Etiquetas</field>
+			<field eval="True" name="active" />
+			<field name="user_id" ref="base.user_root" />
+			<field name="interval_number">20</field>
+			<field name="interval_type">minutes</field>
+			<field ref="meli_oerp_multiple.model_mercadolibre_account" name="model_id" />
+			<field name="state">code</field>
+			<!--field name="numbercall">-1</field-->
+			<field name="code">model.cron_meli_shipment_label_retry()</field>
+			<field name="priority">2200</field>
 		</record>
 
 	</data>

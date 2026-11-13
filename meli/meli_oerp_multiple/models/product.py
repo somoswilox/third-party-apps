@@ -23,14 +23,42 @@ from odoo import fields, models, api
 from odoo.tools.translate import _
 import logging
 _logger = logging.getLogger(__name__)
+
+
+def _meli_precio_de_variacion(binding, variante, config=None):
+    """26.380 (caso-K21): precio de UNA variacion de una publicacion multivariante.
+
+    Lo decide el BINDING de esa variante (`mercadolibre.product.update_price()`: precio fijo,
+    lista de precios, precio de la plantilla de binding) — el mismo camino que
+    `_product_post_price_one` usa para la variante que se empuja. Antes se tomaba
+    `set_meli_price()` del PRODUCTO y el precio fijado en el binding no llegaba nunca a ML
+    (MLA1568564491: binding a 25398, se mando 24649 en las tres variaciones).
+    Si el binding no resuelve un precio > 0, cae al precio del producto (comportamiento anterior).
+    """
+    precio = 0.0
+    try:
+        binding.update_price()
+        precio = float(binding.meli_price or 0)
+    except (TypeError, ValueError):
+        precio = 0.0
+    except Exception as e:
+        _logger.warning("x_product_post_price: el binding %s no resolvio precio (%s); "
+                        "se usa el del producto", binding.id, e)
+        precio = 0.0
+    if precio > 0:
+        return precio
+    return variante.set_meli_price(config=config) or variante.meli_price
 import pdb
 from odoo.addons.meli_oerp.models.warning import warning
 
 # Cache en proceso de los atributos de categoría de MercadoLibre
 # (GET /categories/{id}/attributes). Clave = meli_category_id (str). Evita pegarle
-# a la API en cada intento de publicación del pre-flight de atributos obligatorios (#532).
+# a la API en cada intento de publicación del pre-flight de atributos obligatorios (un caso).
 # Los atributos de categoría son muy estables; se cachean por vida del worker.
 _MELI_CATEGORY_ATTRIBUTES_CACHE = {}
+# #caso-K21 1c (26.371): último error al leer los atributos de una categoría (NO se cachea el fallo: antes se
+# guardaba [] y "no se pudo leer" era indistinguible de "la categoría no tiene ese atributo").
+_MELI_CATEGORY_ATTRIBUTES_ERRORS = {}
 import requests
 
 from odoo.addons.meli_oerp.models.versions import *
@@ -39,6 +67,11 @@ from . import versions
 from .versions import *
 
 from odoo.exceptions import UserError, ValidationError
+
+# #caso-K21 cliente F (26.371): camino NUEVO de publicación («Publicar (nuevo)» / binding meli_post_mode='family'):
+# lógica pura (meli_family) y el camino completo (meli_family_post).
+from . import meli_family as _mf
+from .meli_family_post import _MeliFamilyVariantError, _meli_is_valid_gtin  # noqa: F401
 
 import hashlib
 import math
@@ -79,6 +112,60 @@ def _meli_short_permalink(meli_id):
     site = meli_id[:k]
     domain = _MELI_PRODUCT_DOMAINS.get(site, 'https://www.mercadolibre.com')
     return domain + '/' + site + '-' + meli_id[k:]
+
+
+# [#caso-K12 cliente B 26.260] Publicacion vinculada CERRADA o DADA DE BAJA en Mercado Libre.
+# Sobre un item asi ML rechaza cualquier modificacion (PUT /items -> 400 BODY_INVALID_FIELDS) y
+# el conector, que no miraba el estado, hacia el PUT igual: el usuario veia un error ilegible.
+#   'closed'    : status closed (finalizada)            -> se publica como NUEVA (POST)
+#   'deleted'   : sub_status deleted (eliminada)        -> se publica como NUEVA (POST)
+#   'forbidden' : sub_status forbidden (baja por moderacion) -> NO se republica sola: republicar un
+#                 item moderado sin corregirlo es reincidencia ante ML. Error claro; con
+#                 "Crear una nueva publicacion" (force_meli_new_pub) se publica como nueva.
+def _meli_item_unmodifiable(item_json):
+    if not isinstance(item_json, dict) or item_json.get("error"):
+        return False
+    sub = item_json.get("sub_status") or []
+    if isinstance(sub, str):
+        sub = [sub]
+    sub = [str(x).lower() for x in sub]
+    if "forbidden" in sub:
+        return "forbidden"
+    if "deleted" in sub:
+        return "deleted"
+    if str(item_json.get("status") or "").lower() == "closed":
+        return "closed"
+    return False
+
+
+def _meli_item_unmodifiable_message(meli_id, item_json, kind):
+    st = (item_json or {}).get("status") or ""
+    sub = ", ".join([str(x) for x in ((item_json or {}).get("sub_status") or [])])
+    if kind == "forbidden":
+        return ("La publicación %s fue dada de baja por Mercado Libre (estado: %s; motivo: %s) y no acepta "
+                "cambios. Revisá el motivo en el panel de Mercado Libre y corregí el producto (categoría, título, "
+                "atributos) antes de volver a publicar. Para publicarlo como una publicación nueva, usá la opción "
+                "\"Crear una nueva publicación\" del asistente de publicación: el producto queda vinculado a la "
+                "publicación nueva." % (meli_id, st, sub or "-"))
+    return ("La publicación %s está cerrada o eliminada en Mercado Libre (estado: %s; %s) y no acepta cambios: "
+            "se publica como una publicación nueva." % (meli_id, st, sub or "-"))
+
+
+class _MeliMissingAttr(str):
+    """[26.334] Nombre legible de un atributo obligatorio faltante (es un str, compatible con lo de
+    antes) que además recuerda el id de ML, para decirle al usuario DÓNDE se carga."""
+    def __new__(cls, name, att_id=None):
+        obj = str.__new__(cls, name)
+        obj.att_id = att_id or name
+        return obj
+
+
+# [26.334] Atributos de ML que tienen un CAMPO propio en la pestaña MercadoLibre del producto.
+# El resto (p.ej. Fabricante/MANUFACTURER, IVA, Impuesto interno) se carga como línea de atributo.
+MELI_ATTRS_CON_CAMPO_EN_PESTANA = (
+    "BRAND", "MODEL",
+    "SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT",
+)
 
 
 class product_template(models.Model):
@@ -384,6 +471,33 @@ class product_template(models.Model):
 
         res = {}
         for productT in self:
+            # #caso-K21 (26.371): camino NUEVO en cuenta user_product_seller ⇒ modo FAMILIA: UN binding de
+            # plantilla por cuenta y cada variante con su publicación (ver _meli_post_family). Entra si
+            # lo pidió el botón «Publicar (nuevo)» (contexto) o si la plantilla ya tiene en la cuenta
+            # un binding publicado así (meli_post_mode='family'). Si no, el camino de siempre.
+            _fam_cfg = account and (account.configuration or account.company_id)
+            _pp_mode = self.env["product.product"]
+            if account and not _pp_mode._meli_is_new_post_mode():
+                _acc_binds = productT._meli_family_account_bindings(account)
+                if any(b.meli_post_mode == "family" for b in _acc_binds):
+                    _pp_mode = _pp_mode.with_context(meli_post_mode="family")
+            if account and _pp_mode._meli_is_family_mode(_fam_cfg):
+                _fam_tmpl = productT.with_context(meli_post_mode="family")
+                # cada binding de plantilla de la cuenta es UNA familia (N publicaciones por producto
+                # es normal): se re-publica cada una; el primario además da de alta las variantes
+                # que todavía no tienen publicación. "Crear nueva publicación" ⇒ binding nuevo.
+                if new_pub:
+                    fam_binds = _fam_tmpl._meli_family_template_binding(account, meli=meli, new_pub=True)
+                else:
+                    fam_binds = _fam_tmpl._meli_family_account_bindings(account)
+                    fam_binds = fam_binds or _fam_tmpl._meli_family_template_binding(account, meli=meli)
+                for bindT in fam_binds:
+                    if not bindT.exists():  # un binding vacío pudo limpiarse en la vuelta anterior
+                        continue
+                    res = bindT.with_context(meli_post_mode="family").product_template_post(meli=meli, account=account)
+                    if res and 'name' in res:
+                        return res
+                continue
             #POST NEW
             #_logger.info( "productT.mercadolibre_bindings:" + str(productT.mercadolibre_bindings) )
             if ((not productT.mercadolibre_bindings) or new_pub):
@@ -696,16 +810,96 @@ class product_template(models.Model):
             templates_to_autopause._meli_auto_pause_on_archive()
         return res
 
+    # 26.268: motivo legible de un corte de product_post_stock (stock_error de la
+    # vinculacion de variante). Se busca por substring sobre el str(dict) que guarda.
+    _MELI_POST_STOCK_ERROR_HINTS = [
+        ('product blocked', "actualización de stock bloqueada: marca 'Bloquear actualización de stock' "
+                            "(plantilla, producto o vinculación) o el SKU no figura en la regla de stock 'Filtro' de la cuenta"),
+        ('product archived', "el producto está archivado"),
+        ('no product binded', "la publicación no tiene producto vinculado"),
+        ('fulfillment', "publicación Full: el stock lo administra Mercado Libre"),
+        ('forbidden', "Mercado Libre rechazó el cambio (403): la publicación no pertenece a esta cuenta o falta permiso"),
+        ('not_found', "la publicación no existe en Mercado Libre (404)"),
+        ('under_review', "la publicación está en revisión en Mercado Libre"),
+    ]
+
+    def _meli_post_stock_error_text(self, raw):
+        """'' si el stock_error indica que el push salio bien; si no, el motivo legible."""
+        raw = (raw or '').strip()
+        if not raw or raw == 'False' or raw.startswith('Ok'):
+            return ''
+        low = raw.lower()
+        for key, hint in self._MELI_POST_STOCK_ERROR_HINTS:
+            if key in low:
+                return hint
+        return raw[:300]
+
+    def _meli_post_stock_feedback(self, unbound, failed, posted):
+        """Respuesta del boton 'Publicar Stock' de la plantilla: notificacion si salio
+        todo bien, meli.warning con el detalle si hay plantillas sin vinculacion o
+        publicaciones donde el push no se hizo."""
+        if not unbound and not failed:
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': "Mercado Libre",
+                    'message': "Stock publicado en %s publicación(es)." % posted,
+                    'type': 'success',
+                    'sticky': False,
+                },
+            }
+        from odoo.tools import html_escape
+        lines = []
+        for tmpl in unbound:
+            lines.append("%s: este producto no está vinculado a ninguna publicación de Mercado Libre. "
+                         "Vinculalo con Importar Masivamente." % tmpl.display_name)
+        for label, text in failed:
+            lines.append("%s: no se actualizó el stock. Motivo: %s." % (label, text))
+        if posted:
+            lines.append("Stock publicado en %s publicación(es)." % posted)
+        message = "\n".join(lines)
+        message_html = "<ul>%s</ul>" % "".join("<li>%s</li>" % html_escape(l) for l in lines)
+        return self.env['meli.warning'].info(title='MELI WARNING', message=message, message_html=message_html)
+
     def product_template_post_stock( self, context=None, meli=None, account=None ):
         #_logger.info("producte.template: product_template_post_stock")
+        # 26.268: con context meli_post_stock_notify (lo pone SOLO el boton del form de
+        # la plantilla) avisa al usuario. Sin el flag (crons, asistentes) devuelve la
+        # lista de siempre: los llamadores no cambian.
+        notify = self.env.context.get('meli_post_stock_notify')
         res = []
+        unbound = self.browse()
+        failed = []
+        posted = 0
         for productT in self:
+            matched = False
             for bindT in productT.mercadolibre_bindings:
                 condition = not account
                 condition = condition or (account and bindT.connection_account and account.id == bindT.connection_account.id )
                 if condition:
+                    matched = True
                     r = bindT.product_template_post_stock(meli=meli,account=account)
                     res.append(r)
+                    if not notify:
+                        continue
+                    if not bindT.variant_bindings:
+                        failed.append((bindT.conn_id or productT.display_name,
+                                       "la vinculación no tiene variantes vinculadas"))
+                        continue
+                    for bindv in bindT.variant_bindings:
+                        text = productT._meli_post_stock_error_text(bindv.stock_error)
+                        if text:
+                            label = bindv.conn_id or bindT.conn_id or productT.display_name
+                            if bindv.conn_variation_id:
+                                label = "%s (variante %s)" % (label, bindv.conn_variation_id)
+                            failed.append((label, text))
+                        else:
+                            posted += 1
+            if not matched:
+                unbound |= productT
+        if notify:
+            return self._meli_post_stock_feedback(unbound, failed, posted)
         return res
 
     def product_template_post_price( self, context=None, meli=None, account=None ):
@@ -794,6 +988,45 @@ class product_product(models.Model):
 
     _inherit = "product.product"
 
+    # 26.384 (#caso-K21 cliente F, 8-nov-2026): el push de stock de una vinculacion hermana activaba el item
+    # LEGACY del producto (product.meli_id de meli_oerp) aunque su vinculacion estuviera bloqueada
+    # (meli_update_stock_blocked) y pausada por el vendedor. Defensa en profundidad: la activacion
+    # automatica a nivel producto respeta los bloqueos. Bypass explicito: contexto meli_activate_force.
+    def _meli_activacion_legacy_bloqueada( self ):
+        self.ensure_one()
+        product = self
+        if "meli_update_stock_blocked" in product._fields and product.meli_update_stock_blocked:
+            return "producto"
+        tmpl = product.product_tmpl_id
+        if "meli_update_stock_blocked" in tmpl._fields and tmpl.meli_update_stock_blocked:
+            return "plantilla"
+        meli_id = product.meli_id
+        if not meli_id:
+            return False
+        BT = self.env["mercadolibre.product_template"].sudo().with_context(active_test=False)
+        if BT.search([("conn_id", "=", meli_id), ("meli_update_stock_blocked", "=", True)], limit=1):
+            return "vinculacion"
+        BV = self.env["mercadolibre.product"].sudo().with_context(active_test=False)
+        if BV.search([("conn_id", "=", meli_id), ("binding_product_tmpl_id.meli_update_stock_blocked", "=", True)], limit=1):
+            return "vinculacion"
+        return False
+
+    def product_meli_status_active( self, meli=False ):
+        if self.env.context.get("meli_activate_force"):
+            return super(product_product, self).product_meli_status_active(meli=meli)
+        permitidos = self.browse()
+        for product in self:
+            motivo = product._meli_activacion_legacy_bloqueada()
+            if motivo:
+                _logger.warning("product_meli_status_active: NO se activa %s (%s): bloqueada por %s "
+                                "(meli_update_stock_blocked). Activar desde la vinculacion.",
+                                product.meli_id, product.default_code, motivo)
+                continue
+            permitidos |= product
+        if not permitidos:
+            return {}
+        return super(product_product, permitidos).product_meli_status_active(meli=meli)
+
     mercadolibre_bindings = fields.Many2many( "mercadolibre.product", string="MercadoLibre Connection Bindings", copy=False,
                                              groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" )
 
@@ -808,15 +1041,8 @@ class product_product(models.Model):
 
         if ( tax_excluded and product_template.taxes_id ):
             #_logger.info("Adjust taxes")
-            txfixed = 0
-            txpercent = 0
-            #_logger.info("Adjust taxes")
-            for txid in product_template.taxes_id:
-                if (txid.type_tax_use=="sale" and not txid.price_include):
-                    if (txid.amount_type=="percent"):
-                        txpercent = txpercent + txid.amount
-                    if (txid.amount_type=="fixed"):
-                        txfixed = txfixed + txid.amount
+            # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+            txpercent, txfixed = ml_sale_tax_rates(product_template.taxes_id, company)
             if (txfixed>0 or txpercent>0):
                 #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                 ml_price_converted = txfixed + ml_price_converted / (1.0 + txpercent*0.01)
@@ -895,9 +1121,17 @@ class product_product(models.Model):
                 seller_sku = None
 
                 if sku and product.default_code:
-                    #TODO: cap unsensitive comparison?
+                    # un cliente: comparar case-insensitive, igual que el gate de
+                    # mercadolibre_bind_to (fix un caso). El SKU de la variacion en ML
+                    # puede diferir solo en mayus/minus del default_code de Odoo
+                    # (tipico en los sufijos de color: _BK/_BL vs _Bk/_Bl). Con la
+                    # comparacion sensible no se resolvia meli_id_variation, pero el
+                    # gate posterior -que SI es case-insensitive- no abortaba: se creaba
+                    # un binding SIN variacion, y dos variantes fallidas del mismo
+                    # template colisionaban en el mismo registro (conn_variation_id=False)
+                    # pisandose una a otra -> 1 binding con producto cruzado + 1 faltante.
                     #_logger.info("mercadolibre_bind_variation_id >> check sku and default_code: "+str(sku)+" vs." + str(product.default_code) )
-                    if product.default_code == sku:
+                    if product.default_code.lower() == sku.lower():
                         #_logger.info("mercadolibre_bind_variation_id >> meli_id_variation match: same SKU: " + product.name + " << " + str(sku) + " >>>> var id:" +str(var["id"]))
                         meli_id_variation = var["id"]
                         seller_sku = sku
@@ -915,7 +1149,7 @@ class product_product(models.Model):
                 pass;
 
         else: #no variations
-            # RPM #532: un item SIN variaciones puede traer el SKU SOLO en el
+            # un caso: un item SIN variaciones puede traer el SKU SOLO en el
             # atributo SELLER_SKU (attributes[] id=='SELLER_SKU'), con
             # seller_custom_field/seller_sku a nivel item en None. La extraccion
             # vieja miraba solo esas dos claves -> None -> abort "NO SKU" falso.
@@ -936,7 +1170,7 @@ class product_product(models.Model):
 
             if not seller_sku:
                 #abort binding (using Only SKU binding)
-                _logger.error(_("mercadolibre_bind_to >> Aborting binding product (using Only SKU: NO SKU) %s to %s, id: %s, var id: %s, sku: %s") % (product.display_name, account.name, str(meli_id), str(meli_id_variation),str(seller_sku)))
+                _logger.error("mercadolibre_bind_to >> Aborting binding product (using Only SKU: NO SKU) %s to %s, id: %s, var id: %s, sku: %s" % (product.display_name, account.name, str(meli_id), str(meli_id_variation),str(seller_sku)))
                 seller_sku = None
                 meli_id_variation = None
 
@@ -953,7 +1187,19 @@ class product_product(models.Model):
         pv_bind = None
         pvba = None
         #_logger.info( "mercadolibre_bind_to >> product bind_only: " + str(bind_only)+" meli_id: "+str(meli_id)+" meli_id_variation: "+str(meli_id_variation)+" context:"+str(self.env.context) )
+        # [caso de un cliente] `meli_id_variation` es un PARAMETRO que el for reutilizaba entre
+        # variantes: tras la primera vuelta quedaba en False (no None) y las siguientes variantes ya no
+        # entraban al chequeo de SKU (`meli_id_variation==None and bind_only`) y se vinculaban directo
+        # a la misma publicacion — gana la ULTIMA, aunque otra variante tenga la referencia correcta.
+        # Se restaura el valor recibido al empezar cada variante.
+        _arg_meli_id_variation = meli_id_variation
+        # [caso-K34] Ultima vinculacion que QUEDO de verdad. Si el cuerpo del bind revienta, el
+        # savepoint deshace la fila pero `pvba` seguia apuntando al registro deshecho y se
+        # devolvia truthy: el asistente de vincular avisaba "Vinculacion creada" sin fila
+        # (medido 22-oct-2026 con ML respondiendo error: copy_from_rjson -> KeyError 'title').
+        _pvba_ok = None
         for product in self:
+            meli_id_variation = _arg_meli_id_variation
 
             #for bind in product.mercadolibre_bindings:
             #    if (account.id in bind.connection_account.ids):
@@ -988,7 +1234,7 @@ class product_product(models.Model):
                 # Check if default_code matches any SKU in the list
                 sku_matches = False
                 if product.default_code and seller_sku:
-                    # RPM #532: comparar case-insensitive. El SKU en ML puede diferir
+                    # un caso: comparar case-insensitive. El SKU en ML puede diferir
                     # solo en mayus/minus del default_code de Odoo; el lookup de
                     # _process_meli_item_direct ya matchea con .lower() (por eso el
                     # producto SE encuentra), pero este gate case-sensitive hacia
@@ -1000,7 +1246,29 @@ class product_product(models.Model):
                         sku_matches = (seller_sku.lower() == dc_lower)
 
                 if not meli_id_variation and product.default_code and seller_sku and not sku_matches:
-                    #_logger.info("Dont bind, sku not match: sku: "+str(seller_sku)+" vs default_code:"+str( product.default_code))
+                    # [#caso-K70] antes era un `continue` mudo: el asistente decia "Vinculacion creada"
+                    # (el binding de PLANTILLA si se crea) y la variante nunca quedaba vinculada.
+                    _logger.warning("mercadolibre_bind_to >> NO se vincula %s a %s: SKU en ML %s y la "
+                                    "referencia interna es %r.", product.display_name, meli_id,
+                                    seller_sku, product.default_code)
+                    continue;
+                # [caso de un cliente] Publicacion SIN variaciones (un item por talle/
+                # color, modelo user-products) con SKU en ML, y esta variante sin coincidencia:
+                # el `continue` de arriba solo cubre una referencia DISTINTA; con la referencia
+                # VACIA se seguia y cada variante del template reescribia el MISMO binding
+                # (gana la ultima: MLA<id> SKU <SKU> quedo atada a la <otra variante> y publico
+                # su stock). Si el template tiene mas de una variante no hay como saber cual
+                # es: no se vincula. Con una sola variante no hay ambiguedad (sin cambio).
+                _no_variations = not (isinstance(rjson, dict) and rjson.get("variations"))
+                if (not meli_id_variation and _no_variations and seller_sku
+                        and not isinstance(seller_sku, (list, tuple))
+                        and (product.default_code or '').strip().lower() != str(seller_sku).strip().lower()
+                        and len(product.product_tmpl_id.product_variant_ids) > 1):
+                    _logger.warning("mercadolibre_bind_to >> NO se vincula %s a %s: publicacion sin "
+                                    "variaciones con SKU %s y la variante tiene referencia %r "
+                                    "(template con %s variantes).", product.display_name, meli_id,
+                                    seller_sku, product.default_code,
+                                    len(product.product_tmpl_id.product_variant_ids))
                     continue;
                 #call with meli_id_variation set!
                 seller_sku = account.fetch_meli_sku( meli_id = meli_id, meli_id_variation = meli_id_variation, meli=meli, rjson=rjson)
@@ -1016,7 +1284,7 @@ class product_product(models.Model):
             #_logger.info(_("mercadolibre_bind_to >> Adding/Update product %s to %s, id: %s, var id: %s, sku: %s, barcode: %s") % (product.display_name, account.name, str(meli_id), str(meli_id_variation),str(seller_sku),str(barcode)))
 
             try:
-                # [solsun-local->source] Savepoint sobre TODO el cuerpo del bind: cualquier
+                # [caso de un cliente] Savepoint sobre TODO el cuerpo del bind: cualquier
                 # fallo SQL (unlink/write/create/copy_from_rjson) abortaba la tx PG; el except
                 # desnudo atrapaba la excepcion Python pero dejaba la tx muerta y el llamador
                 # seguia con SQL (fetch_meli_product -> copy_from_rjson) cayendo con
@@ -1064,6 +1332,7 @@ class product_product(models.Model):
                             pvba.copy_from_rjson(rjson=rjson, meli=meli)
                             product.mercadolibre_bindings = [(4, pvba.id)]
                         pv_bind = pvba
+                        _pvba_ok = pvba or _pvba_ok
                         continue  # saltar el bloque normal de búsqueda/write
 
                     #Binding Variant finally
@@ -1147,6 +1416,19 @@ class product_product(models.Model):
 
                         product.mercadolibre_bindings = [(4, pvba.id)]
 
+                        # #caso-K21 (d) (26.371, para TODAS las cuentas): vincular una variante a una
+                        # publicación y dejarla con meli_id vacío la hacía invisible en la lista
+                        # "Variantes" de la plantilla (que se arma con product.meli_id) y en los campos
+                        # meli_* de la variante. Sólo se COMPLETA: nunca se pisa un meli_id que apunte
+                        # a otra publicación.
+                        if meli_id and not product.meli_id:
+                            _pvals = {"meli_id": meli_id}
+                            if meli_id_variation:
+                                _pvals["meli_id_variation"] = meli_id_variation
+                            product.write(_pvals)
+                        elif meli_id and product.meli_id == meli_id and meli_id_variation and not product.meli_id_variation:
+                            product.write({"meli_id_variation": meli_id_variation})
+
                         if (meli_id_variation):
                             #drop all UNASSIGNED bindings for this meli_id_variation
                             un_pv_bind = self.env["mercadolibre.product"].search([ ("conn_id","=",meli_id),
@@ -1178,10 +1460,13 @@ class product_product(models.Model):
                         pvba.connection_account = account
                         MeliCommit( self )
 
+                _pvba_ok = pvba or _pvba_ok
+
             except Exception as e:
                 _logger.error("mercadolibre_bind_to > "+str(meli_title))
                 _logger.error(e, exc_info=True)
-                pass;
+                # el savepoint deshizo lo de ESTA variante: no se informa como vinculada
+                pvba = _pvba_ok
 
         return pvba
 
@@ -1320,7 +1605,7 @@ class product_product(models.Model):
                 product._meli_set_images(product_template, pictures)
 
         #categories
-        # [solsun-local->source] Savepoint: un fallo SQL en _meli_set_category abortaba la tx y
+        # [caso de un cliente] Savepoint: un fallo SQL en _meli_set_category abortaba la tx y
         # TODO lo posterior de la sync (precio, posting.search, ...) caia con InFailedSqlTransaction.
         try:
             with self.env.cr.savepoint():
@@ -1335,12 +1620,22 @@ class product_product(models.Model):
         if "variations" in rjson and len(rjson["variations"])>1:
             force_price_for_variant = False
 
+        # [caso-K20] Con una oferta activa ML devuelve en 'price' el precio CON DESCUENTO y en
+        # 'original_price' el de lista. Al importar, el precio de Odoo es el de LISTA: la oferta
+        # es de ML y vence; si se copia a la lista de precios, Odoo queda con el precio rebajado.
+        meli_list_price = rjson.get('price')
+        try:
+            if rjson.get('original_price') and float(rjson['original_price']) > float(rjson['price'] or 0):
+                meli_list_price = rjson['original_price']
+        except Exception:
+            meli_list_price = rjson.get('price')
+
         try:
             if (float(rjson['price'])>=0.0):
-                # [solsun-local->source] Savepoint: el except desnudo dejaba la tx PG abortada ->
+                # [caso de un cliente] Savepoint: el except desnudo dejaba la tx PG abortada ->
                 # InFailedSqlTransaction en el SQL siguiente (posting.search).
                 with self.env.cr.savepoint():
-                    product._meli_set_product_price( product_template, rjson['price'], force_variant=force_price_for_variant, config=config )
+                    product._meli_set_product_price( product_template, meli_list_price, force_variant=force_price_for_variant, config=config )
         except Exception as e:
             _logger.error(e, exc_info=True)
             rjson['price'] = 0.0
@@ -1358,7 +1653,7 @@ class product_product(models.Model):
 
         try:
             if (float(rjson['price'])>=0.0):
-                product._meli_set_product_price( product_template, rjson['price'], config=config )
+                product._meli_set_product_price( product_template, meli_list_price, config=config )
         except:
             rjson['price'] = 0.0
             pass;
@@ -1448,10 +1743,14 @@ class product_product(models.Model):
         meli_available_quantity = rjson.get('available_quantity', 0)
         if (meli_available_quantity >=0):
             try:
-                # [solsun-local->source] Savepoint: write(ProductType()) fallido dejaba la tx
+                # [caso de un cliente] Savepoint: write(ProductType()) fallido dejaba la tx
                 # abortada y arrastraba al resto de la importacion.
                 with self.env.cr.savepoint():
-                    product_template.write( ProductType() )
+                    # ERROR-012: ProductTypeWrite devuelve {} si el producto ya esta como
+                    # corresponde, para no disparar el recalculo de invoice_policy.
+                    _vals_type = ProductTypeWrite( product_template, config=config )
+                    if _vals_type:
+                        product_template.write( _vals_type )
             except Exception as e:
                 #_logger.info("Set type almacenable ('product') not possible:")
                 _logger.error(e, exc_info=True)
@@ -1691,7 +1990,10 @@ class product_product(models.Model):
                     pass;
 
         if (config.mercadolibre_update_local_stock):
-            product_template.write( ProductType() )
+            # ERROR-012: idem, sin write inutil.
+            _vals_type2 = ProductTypeWrite( product_template, config=config )
+            if _vals_type2:
+                product_template.write( _vals_type2 )
 
             if (len(product_template.product_variant_ids)):
                 for variant in product_template.product_variant_ids:
@@ -1755,7 +2057,7 @@ class product_product(models.Model):
         # This override does NOT chain to base product_meli_get_product, so the
         # call base makes there never runs for multi-account clients; without
         # this the dedicated fields only filled via the "Traer medidas" backfill.
-        # [#424/#474 Deco/KPI]
+        # [caso de un cliente]
         product._meli_import_template_attributes(product_template, rjson)
 
         #TODO: images complete
@@ -2014,13 +2316,36 @@ class product_product(models.Model):
     def _product_post_set_attributes( self, product_tmpl=None, product=None, meli=None, config=None ):
         attributes = []
         attributes_ids = {}
-        # #532 (import ficha ML): capturar el set de atributos IMPORTADOS de MercadoLibre
+        # un caso (import ficha ML): capturar el set de atributos IMPORTADOS de MercadoLibre
         # (persistidos en meli_attributes por _meli_import_attributes) ANTES de que la lógica de
         # abajo pise ese campo con str(attributes). Se reincorporan al final (seed-merge) para los
         # ids que esta función NO computa (TREADWEAR, LINE, ITEM_CONDITION, etc.), cerrando el loop
         # import↔publish y destrabando el pre-flight de atributos obligatorios de la categoría.
         _imported_attributes_raw = product.meli_attributes if (product and "meli_attributes" in product._fields) else None
-        variations_candidates = (product_tmpl and "meli_pub_as_variant" in product_tmpl._fields and product_tmpl.meli_pub_as_variant)
+        # [gtin-variations-candidates 2026-09-24] El gate de SELLER_SKU/GTIN a nivel item tiene
+        # que coincidir con la MISMA condicion que decide si esta publicacion va a llevar
+        # variations[] en el body (_product_set_variations, ~L2858): el template marcado como
+        # variante (meli_pub_as_variant) Y que ESTE producto sea la variante principal definida
+        # (meli_pub_principal_variant). Cualquier otro caso -flag apagado, flag prendido sin
+        # principal definida, o cualquier variante que NO sea la principal- se publica como
+        # ITEM INDEPENDIENTE (o directamente no se publica, ver el "return {}" de
+        # _product_set_variations cuando la principal no esta definida) y por lo tanto el
+        # GTIN/SELLER_SKU SOLO puede viajar a nivel item: no hay otro lugar donde vayan a llegar.
+        # ANTES este flag arrancaba igual pero el elif de abajo (linea de atributo del TEMPLATE
+        # con >1 valor) lo forzaba a True sin mirar ni el flag ni si este producto es la
+        # principal -> cerraba la puerta del item en templates con flag apagado o sin variante
+        # principal, sin abrir nunca la de variacion. Medido en cliente K (caso-K28): 3 variantes con
+        # meli_pub_as_variant=True, SIN principal definida, publicadas como 3 items
+        # independientes -> GTIN nunca viajaba por ningun lado.
+        variations_candidates = bool(
+            product_tmpl
+            and "meli_pub_as_variant" in product_tmpl._fields
+            and product_tmpl.meli_pub_as_variant
+            and "meli_pub_principal_variant" in product_tmpl._fields
+            and product_tmpl.meli_pub_principal_variant
+            and product
+            and product_tmpl.meli_pub_principal_variant.id == product.id
+        )
         att_line_ids = ("attribute_line_ids" in product_tmpl._fields and product_tmpl.attribute_line_ids)
 
         #binding template
@@ -2083,8 +2408,13 @@ class product_product(models.Model):
                         }
                         attributes_ids[attribute["id"]] = attribute["value_name"]
                         attributes.append(attribute)
-                elif (len(at_line_id.value_ids)>1):
-                    variations_candidates = True
+                # [gtin-variations-candidates 2026-09-24] ANTES habia un
+                # `elif (len(at_line_id.value_ids)>1): variations_candidates = True` aca: forzaba
+                # el gate a True por una linea de atributo del TEMPLATE con mas de un valor, sin
+                # mirar si ESTE producto es la variante principal ni si el template tiene siquiera
+                # el flag de publicar-como-variante prendido. Ese era justamente el defecto:
+                # `variations_candidates` ya se calcula arriba con la condicion real (misma que
+                # `_product_set_variations`), asi que este override quedo eliminado.
 
         if product.meli_brand and len(product.meli_brand) > 0:
             attribute = { "id": "BRAND", "value_name": product.meli_brand }
@@ -2164,6 +2494,16 @@ class product_product(models.Model):
                 attributes_ids['UNITS_PER_PACK'] = "1"
                 _logger.info("Auto-added UNITS_PER_PACK=1 (ML requires it when SALE_FORMAT=%s)", _sale_format_attr.get('value_name'))
 
+        # [#caso-K35 cliente B 26.261] Con "User Product Seller" (publicacion por family_name) el body NUNCA
+        # lleva variations[]: _product_post las borra (ML rechaza family_name + variations) y cada
+        # variante sale como item propio. Si aca se salteaba SELLER_SKU/GTIN "porque van por
+        # variacion", el GTIN no viajaba por ningun lado y ML respondia
+        # item.attribute.missing_conditional_required [GTIN] con el barcode cargado.
+        # Medido en seco en cliente B (PMG4200_14 / PMG10845_W, 21-oct-2026).
+        if (variations_candidates and config and "mercadolibre_user_product_seller" in config._fields
+                and config.mercadolibre_user_product_seller):
+            variations_candidates = False
+
         if (not variations_candidates):
 
             if ("sku" in product._fields and "product_id" in product._fields and config.mercadolibre_post_default_code and product.product_id and product.product_id.default_code):
@@ -2204,7 +2544,7 @@ class product_product(models.Model):
                     attributes.append(attribute)
                     product.meli_attributes = str(attributes)
 
-        # #532 SEED-MERGE: reincorporar los atributos IMPORTADOS de la ficha ML que esta función
+        # un caso SEED-MERGE: reincorporar los atributos IMPORTADOS de la ficha ML que esta función
         # NO computó (BRAND/MODEL/SKU/package ya calculados tienen prioridad: solo se agregan ids
         # que aún no estén en attributes_ids). Defensivo: cualquier error NO bloquea la publicación.
         if _imported_attributes_raw:
@@ -2226,13 +2566,26 @@ class product_product(models.Model):
             except Exception:
                 _logger.exception("_product_post_set_attributes: seed-merge de meli_attributes falló (no bloqueante)")
 
+        # 26.349 (caso-K21): W5 también en el camino multi-cuenta — «Fabricante» = Marca si falta (antes sólo
+        # lo hacía meli_oerp; acá el pre-flight cortaba con "faltan atributos obligatorios: Fabricante").
+        # 26.352 (caso-K21 C): auto-fill completo — Marca desde la marca del producto, IVA [meli] o el del
+        # impuesto de venta, impuesto interno '0 %' (MLA) y Fabricante desde el proveedor principal.
+        # `product` puede ser el binding (mercadolibre.product): el auto-fill corre sobre la variante.
+        _pp = product
+        if _pp and _pp._name != 'product.product':
+            _pp = ('product_id' in _pp._fields and _pp.product_id) or False
+        if _pp and hasattr(_pp, '_meli_attr_auto_fill'):
+            _pp._meli_attr_auto_fill(attributes, attributes_ids, config=config, product_tmpl=product_tmpl)
+        elif product and hasattr(product, '_meli_attr_manufacturer_from_brand'):
+            product._meli_attr_manufacturer_from_brand(attributes, attributes_ids)
+
         if attributes:
             product.meli_attributes = str(attributes)
 
         return attributes
 
     def _meli_import_attributes( self, rjson_attributes, write_template=True, write_binding=True ):
-        """#532 (ML → Odoo): persiste los atributos de la ficha de una publicación de MercadoLibre
+        """un caso (ML → Odoo): persiste los atributos de la ficha de una publicación de MercadoLibre
         (lista cruda `rjson['attributes']` de GET /items/{id}) en el/los objeto(s) Odoo, en el formato
         que (a) se ve en la ficha (campo `meli_attributes`) y (b) se re-envía igual al publicar
         (seed-merge en `_product_post_set_attributes`).
@@ -2310,15 +2663,24 @@ class product_product(models.Model):
             rjs = resp.json()
             if not isinstance(rjs, list):
                 _logger.warning("_meli_get_category_attributes: respuesta inesperada p/ %s: %s", catcode, rjs)
-                rjs = []
-        except Exception:
+                # #caso-K21 1c: el fallo NO se cachea (antes quedaba "sin atributos" por vida del worker)
+                _MELI_CATEGORY_ATTRIBUTES_ERRORS[catcode] = str(rjs)[:300]
+                return []
+        except Exception as e:
             _logger.exception("_meli_get_category_attributes: fallo GET /categories/%s/attributes", catcode)
-            rjs = []
+            _MELI_CATEGORY_ATTRIBUTES_ERRORS[catcode] = str(e)[:300]
+            return []
+        _MELI_CATEGORY_ATTRIBUTES_ERRORS.pop(catcode, None)
         _MELI_CATEGORY_ATTRIBUTES_CACHE[catcode] = rjs
         return rjs
 
+    def _meli_category_attributes_read_error(self, category):
+        """Error de la última lectura de atributos de `category` (None si se leyó bien)."""
+        catcode = category and category.meli_category_id
+        return catcode and _MELI_CATEGORY_ATTRIBUTES_ERRORS.get(str(catcode)) or None
+
     def _meli_preflight_missing_required_attributes( self, product=None, attributes=None, meli=None, config=None, catalog_mode=False ):
-        """Pre-flight (#532): antes de publicar, resuelve los atributos OBLIGATORIOS de la
+        """Pre-flight (un caso): antes de publicar, resuelve los atributos OBLIGATORIOS de la
         categoría (GET /categories/{code}/attributes → tags `required` / `catalog_required`)
         y los compara con los que el producto realmente tiene armados. Devuelve la lista de
         nombres legibles de los atributos obligatorios FALTANTES (vacía = todo ok).
@@ -2367,10 +2729,113 @@ class product_product(models.Model):
                 att_id = str(att.get("id") or "")
                 if not att_id or att_id in provided:
                     continue
-                missing.append(att.get("name") or att_id)
+                missing.append(_MeliMissingAttr(att.get("name") or att_id, att_id))
             return missing
         except Exception:
             _logger.exception("_meli_preflight_missing_required_attributes: fallo; no bloqueo publicación")
+            return []
+
+    @staticmethod
+    def _meli_norm_value(value):
+        """[#caso-K36-K37] Normaliza un valor de atributo para compararlo con la lista de ML:
+        minusculas, sin acentos, espacios colapsados."""
+        import unicodedata
+        txt = unicodedata.normalize("NFKD", str(value or ""))
+        txt = "".join(c for c in txt if not unicodedata.combining(c))
+        return " ".join(txt.casefold().split())
+
+    def _meli_missing_attributes_where(self, missing):
+        """[26.334] Dice DÓNDE se carga cada atributo faltante: los que tienen campo propio van en la
+        pestaña MercadoLibre; el resto (Fabricante, IVA, …) es una línea en «Atributos y variantes»
+        (atributo con ese nombre y un solo valor). Antes decía «pestaña MercadoLibre» para todos."""
+        en_pestana, en_lineas, gtin = [], [], []
+        for m in (missing or []):
+            att_id = str(getattr(m, "att_id", "") or "")
+            if att_id in MELI_ATTRS_CON_CAMPO_EN_PESTANA:
+                en_pestana.append(str(m))
+            elif att_id == "GTIN":
+                gtin.append(str(m))
+            else:
+                en_lineas.append(str(m))
+        partes = []
+        if en_lineas:
+            partes.append("%s: agregalo en la pestaña «Atributos y variantes» del producto (una línea con "
+                          "el atributo de ese nombre y su valor)." % ", ".join(en_lineas))
+        if en_pestana:
+            partes.append("%s: completalo en la pestaña MercadoLibre del producto." % ", ".join(en_pestana))
+        if gtin:
+            partes.append("%s: cargá el Código de barras del producto." % ", ".join(gtin))
+        return " ".join(partes)
+
+    def _meli_attribute_mapping_hint(self):
+        """[#caso-K36-K37] Texto que orienta al mapeo de campos, si el modulo lo tiene (19.0)."""
+        if "meli_oerp.attribute.mapping" in self.env:
+            return (" Si el valor sale de un campo propio del producto, revisalo también en "
+                    "MercadoLibre > Mapeo de Atributos.")
+        return ""
+
+    def _meli_preflight_invalid_list_values( self, product=None, attributes=None, meli=None, config=None, catalog_mode=False ):
+        """[#caso-K36-caso-K37 cliente P] Pre-flight de VALORES: para los atributos OBLIGATORIOS de la categoria
+        (los mismos que controla _meli_preflight_missing_required_attributes) que en ML son de tipo
+        LISTA (value_type=list, con values[]), el valor que se va a enviar tiene que ser uno de la
+        lista. Si no, ML rechaza con "Attribute [X] is not valid, item values [(null:...)]".
+        Caso real: PRODUCT_TYPE en MLM3390 (9 valores) con el nombre del set ("Hyperia City").
+
+        Devuelve [{'name', 'value', 'valid': [nombres]}] (vacia = todo ok). Compara por value_id o
+        por nombre normalizado (sin acentos ni mayusculas). Defensivo: ante cualquier error devuelve []."""
+        try:
+            product = product or self
+            category = ("meli_category" in product._fields and product.meli_category) or None
+            if not category or not category.meli_category_id:
+                return []
+            cat_atts = self._meli_get_category_attributes(category, meli=meli)
+            if not cat_atts:
+                return []
+            by_id = {}
+            for att in cat_atts:
+                if not isinstance(att, dict) or not att.get("id"):
+                    continue
+                tags = att.get("tags") or {}
+                is_required = ("required" in tags) or (catalog_mode and ("catalog_required" in tags))
+                if not is_required or ("read_only" in tags) or ("fixed" in tags):
+                    continue
+                values = att.get("values") or []
+                if att.get("value_type") != "list" or not values:
+                    continue
+                by_id[str(att["id"])] = att
+            invalid = []
+            for a in (attributes or []):
+                if not isinstance(a, dict):
+                    continue
+                att = by_id.get(str(a.get("id") or ""))
+                if not att:
+                    continue
+                valid_ids = set(str(v.get("id")) for v in att["values"] if isinstance(v, dict) and v.get("id"))
+                valid_names = dict((self._meli_norm_value(v.get("name")), v.get("name"))
+                                   for v in att["values"] if isinstance(v, dict) and v.get("name"))
+                sent = []
+                if a.get("value_id") or a.get("value_name"):
+                    sent.append((a.get("value_id"), a.get("value_name")))
+                for v in (a.get("values") or []):
+                    if isinstance(v, dict):
+                        sent.append((v.get("id"), v.get("name")))
+                for vid, vname in sent:
+                    if vid and str(vid) in valid_ids:
+                        continue
+                    if vname and self._meli_norm_value(vname) in valid_names:
+                        continue
+                    if not vid and not vname:
+                        continue
+                    invalid.append({
+                        "id": str(att.get("id")),
+                        "name": att.get("name") or str(att.get("id")),
+                        "value": vname or vid,
+                        "valid": [v.get("name") for v in att["values"] if isinstance(v, dict) and v.get("name")],
+                    })
+                    break
+            return invalid
+        except Exception:
+            _logger.exception("_meli_preflight_invalid_list_values: fallo; no bloqueo publicación")
             return []
 
     def _product_post_set_images( self, product_tmpl=None, product=None, meli=None, config=None ):
@@ -2407,7 +2872,11 @@ class product_product(models.Model):
         _title_val = ("meli_family_name" in product._fields and product.meli_family_name) or product.meli_title or ''
         if (config and "mercadolibre_user_product_seller" in config._fields ):
             if (config.mercadolibre_user_product_seller):
-                body["family_name"] = _title_val
+                if self._meli_is_family_mode(config):
+                    # #caso-K21 1e (camino nuevo): el family_name sale de la PLANTILLA y es idéntico para toda la familia
+                    body["family_name"] = _mf.family_name_for_template(*self._meli_family_template_names(product_tmpl)) or _title_val
+                else:
+                    body["family_name"] = _title_val
             else:
                 body["title"] = _title_val
         else:
@@ -2475,7 +2944,12 @@ class product_product(models.Model):
             # family_name solo se puede actualizar si el User Product NO tiene ventas
             # Por seguridad, no enviamos family_name en actualizaciones
             # Solo enviamos title que es mas seguro
-            if (config and "mercadolibre_user_product_seller" in config._fields ):
+            if self._meli_is_family_mode(config):
+                # #caso-K21 (etapa 1b, camino nuevo): en ACTUALIZACIÓN de un item user_product NO va family_name
+                # ni title: ML responde 400 "The field family name is invalid" aunque no tenga ventas (cliente F
+                # 28-sep, MLA4399526254). family_name sólo en el POST de alta.
+                body.update(_mf.update_name_fields(True, product.meli_family_name or product.meli_title or ''))
+            elif (config and "mercadolibre_user_product_seller" in config._fields ):
                 if (config.mercadolibre_user_product_seller):
                     # En modo user_product, verificar si podemos actualizar family_name
                     # Solo actualizar si el producto no tiene ventas (sold_quantity == 0)
@@ -2501,7 +2975,7 @@ class product_product(models.Model):
                         attributes_ml =  productjson["attributes"]
                         x = 0
                         for att in attributes_ml:
-                            if (att["id"] in dicatts):
+                            if (att.get("id") in dicatts):
                                 attributes_ml[x] = dicatts[att["id"]]
                             else:
                                 if att.get("value_id") is not None:
@@ -2711,6 +3185,14 @@ class product_product(models.Model):
         source = product_tmpl
         target = product
         meli_id = (bind_tpl and bind_tpl.conn_id) or product.meli_id
+
+        # #caso-K21 (26.371) Camino NUEVO en cuenta user_product (modo FAMILIA): cada variante es su publicación ⇒
+        # sin variations[]; el body por variante lo arma UN solo lugar: models/meli_family_post.py
+        # (_meli_family_item_body). Salvo una publicación vieja CON variations: se actualiza como antes.
+        if self._meli_is_family_mode(config) and (
+                self.env.context.get('family_name_variant_post') or not (productjson and productjson.get("variations"))):
+            return product._meli_family_item_body(body, product_tmpl=product_tmpl, config=config, meli=meli,
+                                                  productjson=productjson)
 
         # user_product_seller family_name flow: esta variante se publica como
         # listing independiente — no armar variations[] en el body.
@@ -2994,6 +3476,41 @@ class product_product(models.Model):
     #
     # @param bind_tpl binded template; used when posting an alternative derived binded publication (not the base product)
     # @param bind  binded variant; specify the variant binding
+    def _meli_611_repoint(self, old_id, new_id):
+        """[#caso-K12 cliente B 26.260] Tras publicar como NUEVA una publicacion cerrada/dada de baja, todo lo que
+        apuntaba al id viejo (vinculaciones de plantilla y de variante, variantes) pasa al nuevo."""
+        old_id, new_id = str(old_id or ''), str(new_id or '')
+        if not old_id or not new_id or old_id == new_id:
+            return
+        for model, fnames in (('mercadolibre.product_template', ('conn_id', 'meli_id')),
+                              ('mercadolibre.product', ('conn_id', 'meli_id')),
+                              ('product.product', ('meli_id',))):
+            if model not in self.env:
+                continue
+            Model = self.env[model]
+            fnames = [f for f in fnames if f in Model._fields and Model._fields[f].store]
+            if not fnames:
+                continue
+            dom = ['|'] * (len(fnames) - 1) + [(f, '=', old_id) for f in fnames]
+            for rec in Model.search(dom):
+                vals = dict((f, new_id) for f in fnames if str(rec[f] or '') == old_id)
+                if vals:
+                    rec.write(vals)
+                    _logger.info("MELI #caso-K12: %s %s re-vinculado %s -> %s", model, rec.id, old_id, new_id)
+
+    def _meli_resolve_new_pricelist(self, pricelist):
+        """[26.334] force_meli_new_pricelist llega como record (asistente) o id (contexto/RPC)."""
+        if not pricelist:
+            return None
+        if isinstance(pricelist, models.BaseModel):
+            return pricelist.exists()[:1] or None
+        if isinstance(pricelist, (list, tuple)):
+            pricelist = pricelist and pricelist[0]
+        try:
+            return self.env["product.pricelist"].browse(int(pricelist)).exists() or None
+        except (TypeError, ValueError):
+            return None
+
     def _product_post( self, bind_tpl=None, bind=None, meli=None, config=None ):
 
         warningobj = self.env['meli.warning']
@@ -3135,7 +3652,11 @@ class product_product(models.Model):
         self._product_post_set_title( meli_title=force_meli_new_title, source_tmpl=source, target=target, meli=meli, config=config )
 
         #revisar regla e precio
-        product and product.set_meli_price( meli=meli, config=config)
+        # [26.334] «Nueva Lista de Precios» del asistente: el precio del body sale de ESA lista.
+        # Antes sólo la usaba el binding (update_price) y el POST salía con la lista de la cuenta
+        # (modo familia / sin binding: el asistente mostraba un precio y se publicaba otro).
+        _new_pl = self._meli_resolve_new_pricelist(force_meli_new_pricelist)
+        product and product.set_meli_price( meli=meli, config=config, plist=_new_pl)
         #target.price = product.meli_price
         if force_meli_new_price and target and target.meli_currency!="MXN":
             force_meli_new_price = str(int(float(force_meli_new_price)))
@@ -3152,9 +3673,42 @@ class product_product(models.Model):
             return warningobj.info( title='MELI WARNING', message="Debe seleccionar una Categoría de MercadoLibre antes de publicar. Usá el botón 'Sugerir Categoría' en la pestaña MercadoLibre del producto para que MercadoLibre proponga una según el título, o elegila manualmente.", message_html="<p>El producto no tiene una categoría de MercadoLibre asignada. Usá el botón <strong>'Sugerir Categoría'</strong> (pestaña MercadoLibre del producto) para que ML proponga una a partir del título, o seleccioná una manualmente.</p>" )
 
         meli_id = target.meli_id or ("conn_id" in target._fields and target.conn_id)
+
+        # [#caso-K12 cliente B 26.260] Antes de modificar, mirar si la publicacion vinculada sigue viva en ML.
+        _meli_611_old_id = False
+        if meli_id:
+            _item_json = productjson if (isinstance(productjson, dict)
+                                         and str(productjson.get("id") or "") == str(meli_id)) else None
+            if _item_json is None:
+                try:
+                    _resp = meli.get("/items/%s" % str(meli_id), {'access_token': meli.access_token})
+                    _item_json = (_resp and _resp.json()) or {}
+                except Exception:
+                    _logger.exception("MELI #caso-K12: no se pudo leer el estado de %s", meli_id)
+                    _item_json = {}
+            _unmod = _meli_item_unmodifiable(_item_json)
+            if _unmod:
+                _msg = _meli_item_unmodifiable_message(meli_id, _item_json, _unmod)
+                if _unmod == "forbidden" and not force_meli_new_pub:
+                    _logger.warning("MELI #caso-K12: %s", _msg)
+                    return warningobj.info(title='MELI PUBLICACIÓN DADA DE BAJA', message=_msg, message_html="",
+                                           context={'rjson': {"error": "item_unmodifiable", "status": _unmod,
+                                                              "message": _msg, "cause": [],
+                                                              "item": {"id": meli_id,
+                                                                       "status": _item_json.get("status"),
+                                                                       "sub_status": _item_json.get("sub_status")}}})
+                _logger.warning("MELI #caso-K12: %s (se suelta %s de %s y se hace POST)", _msg, meli_id, target)
+                _meli_611_old_id = str(meli_id)
+                _vals = {'meli_id': False}
+                for _f in ('conn_id', 'meli_id_variation', 'conn_variation_id'):
+                    if _f in target._fields and target[_f]:
+                        _vals[_f] = False
+                target.write(_vals)
+                meli_id = False
+                productjson = False
         #if meli_id is false, publish on base product
 
-        # PRE-FLIGHT #532: en la CREACIÓN (sin meli_id), verificar que estén los atributos
+        # PRE-FLIGHT un caso: en la CREACIÓN (sin meli_id), verificar que estén los atributos
         # OBLIGATORIOS de la categoría ANTES de pegarle a ML. Si faltan, cortamos con un aviso
         # humanizado/estilado (rojo) listando los faltantes por su nombre, en vez de dejar que
         # ML devuelva el críptico build-title "attributes are required".
@@ -3164,7 +3718,7 @@ class product_product(models.Model):
                 product=target, attributes=attributes, meli=meli, config=config, catalog_mode=_catalog_mode )
             if _missing_required:
                 _missing_txt = ", ".join([str(x) for x in _missing_required])
-                _logger.warning("PRE-FLIGHT #532: faltan atributos obligatorios de la categoría %s: %s",
+                _logger.warning("PRE-FLIGHT: faltan atributos obligatorios de la categoría %s: %s",
                                 target.meli_category.meli_category_id, _missing_txt)
                 _preflight_rjson = {
                     "error": "missing_required_attributes",
@@ -3173,17 +3727,47 @@ class product_product(models.Model):
                     "cause": [{
                         "type": "error",
                         "code": "item.attributes.missing_required",
-                        "message": ("Para publicar faltan estos atributos obligatorios de la categoría: %s. "
-                                    "Completá la ficha técnica del producto (pestaña MercadoLibre) y volvé a publicar." % _missing_txt),
+                        "message": ("Para publicar faltan estos atributos obligatorios de la categoría: %s. %s "
+                                    "Después volvé a publicar.%s"
+                                    % (_missing_txt, self._meli_missing_attributes_where(_missing_required),
+                                       self._meli_attribute_mapping_hint())),
                     }],
                 }
-                self.env.cr.rollback()
+                self._meli_rollback_unless_kept()
                 return warningobj.info(
                     title='MELI WARNING',
-                    message=("Para publicar faltan estos atributos obligatorios de la categoría: %s. "
-                             "Completá la ficha técnica del producto en la pestaña MercadoLibre." % _missing_txt),
+                    message=("Para publicar faltan estos atributos obligatorios de la categoría: %s. %s%s"
+                             % (_missing_txt, self._meli_missing_attributes_where(_missing_required),
+                                self._meli_attribute_mapping_hint())),
                     message_html="",
                     context={'rjson': _preflight_rjson} )
+
+            # [#caso-K36-K37] Valores fuera de la lista de ML en atributos obligatorios de tipo lista.
+            _invalid_values = self._meli_preflight_invalid_list_values(
+                product=target, attributes=attributes, meli=meli, config=config, catalog_mode=_catalog_mode )
+            if _invalid_values:
+                _parts = []
+                for _iv in _invalid_values:
+                    _valid = [str(x) for x in (_iv.get("valid") or [])]
+                    _valid_txt = ", ".join(_valid[:30]) + ((" (y %s más)" % (len(_valid) - 30)) if len(_valid) > 30 else "")
+                    _parts.append("«%s» no acepta el valor «%s»; Mercado Libre sólo acepta: %s"
+                                  % (_iv.get("name"), _iv.get("value"), _valid_txt))
+                _invalid_txt = ("El valor de un atributo obligatorio no es uno de los que acepta Mercado Libre para esta "
+                                "categoría. %s. Elegí uno de esos valores en la ficha técnica del producto (pestaña "
+                                "MercadoLibre) y volvé a publicar.%s" % (". ".join(_parts), self._meli_attribute_mapping_hint()))
+                _logger.warning("PRE-FLIGHT #caso-K36-K37: valores fuera de lista en la categoría %s: %s",
+                                target.meli_category.meli_category_id, _invalid_values)
+                self._meli_rollback_unless_kept()
+                return warningobj.info(
+                    title='MELI WARNING',
+                    message=_invalid_txt,
+                    message_html="",
+                    context={'rjson': {
+                        "error": "invalid_attribute_values",
+                        "status": "400",
+                        "message": "No se pudo publicar: hay atributos con valores que Mercado Libre no acepta",
+                        "cause": [{"type": "error", "code": "item.attribute.invalid_value", "message": _invalid_txt}],
+                    }} )
 
         self._product_post_set_quantity( target=target, product=product, meli_id=meli_id, meli=meli, config=config )
 
@@ -3193,7 +3777,7 @@ class product_product(models.Model):
         #    product._meli_remove_images_unsync( product_tmpl, productjson["pictures"] )
 
         if first_image_to_publish==None:
-            raise ValidationError("Debe cargar una imagen de base en el producto, si chequeo el 'Dont use first image' debe al menos poner una imagen adicional en el producto.")
+            raise ValidationError(_("Debe cargar una imagen de base en el producto, si chequeo el 'Dont use first image' debe al menos poner una imagen adicional en el producto."))
             #return warningobj.info( title='MELI WARNING', message="Debe cargar una imagen de base en el producto, si chequeo el 'Dont use first image' debe al menos poner una imagen adicional en el producto.", message_html="" )
         else:
             # #_logger.info( "try uploading image..." )
@@ -3205,7 +3789,7 @@ class product_product(models.Model):
                     _logger.error(error_msg)
                     if (resim["status"]=="error"):
                         #raise ValidationError("Problemas cargando la imagen principal. Imagen principal faltante.")
-                        self.env.cr.rollback()
+                        self._meli_rollback_unless_kept()
                         return warningobj.info( title='MELI WARNING', message="Problemas cargando la imagen principal.", message_html=error_msg, context= { 'rjson': resim } )
                 else:
                     assign_img = True and product.meli_imagen_id
@@ -3227,7 +3811,11 @@ class product_product(models.Model):
 
         # Usar nuevo sistema de imagenes cuando se publican variantes
         # Esto permite asignar imagenes especificas a cada variante (ej: por color)
-        use_new_image_system = product_tmpl.meli_pub_as_variant and len(product_tmpl.product_variant_ids) > 1
+        # #caso-K21 1f (camino nuevo, modo FAMILIA): cada publicación es UNA variante ⇒ sus fotos por el camino por
+        # variante (principal = imagen de la variante). El "sistema nuevo" subía las de TODAS las variantes a
+        # cada publicación y todas arrancaban con la foto de la primera variante.
+        use_new_image_system = (product_tmpl.meli_pub_as_variant and len(product_tmpl.product_variant_ids) > 1
+                                and not self._meli_is_family_mode(config))
 
         if use_new_image_system:
             # Nuevo sistema: recolectar y subir todas las imagenes con mapeo por variante
@@ -3251,7 +3839,7 @@ class product_product(models.Model):
                 #_logger.info("_product_post >> multi_images_ids"+str(multi_images_ids))
                 if 'status' in multi_images_ids:
                     _logger.error("product_meli_upload_multi_images > "+str(multi_images_ids) )
-                    self.env.cr.rollback()
+                    self._meli_rollback_unless_kept()
                     #return warningobj.info( title='MELI WARNING', message="Error publicando imagenes", message_html="Error: "+str(("error" in multi_images_ids and multi_images_ids["error"]) or "")+" Status:"+str(("status" in multi_images_ids and multi_images_ids["status"]) or "") )
                     return warningobj.info( title='MELI WARNING', message="Error publicando imagenes", message_html="Error: "+str(multi_images_ids), context = { 'rjson': multi_images_ids } )
                     #raise ValidationError("Error publicando multiples imagenes")
@@ -3307,6 +3895,9 @@ class product_product(models.Model):
             _logger.info(pretty_json(body))
         if meli_id:
             #_logger.info("update post:"+str(body))
+            body, _name_removed = _mf.strip_name_fields_for_update(body, self._meli_is_family_mode(config))
+            if _name_removed:
+                _logger.info("user_product_seller: PUT sin %s (sólo van en el alta)", _name_removed)
             response = meli.put_mini("/items/"+str(meli_id), body, {'access_token':meli.access_token})
         else:
             assign_img = True and product.meli_imagen_id
@@ -3329,19 +3920,25 @@ class product_product(models.Model):
             #expired token
             if "message" in rjson and (rjson["error"]=="forbidden" or rjson["message"]=='invalid_token' or rjson["message"]=="expired_token"):
                 url_login_meli = meli.auth_url()
-                self.env.cr.rollback()
+                self._meli_rollback_unless_kept()
                 #raise ValidationError("Debe iniciar sesión en MELI:  "+str(rjson["message"]))
                 return warningobj.info( title='MELI WARNING', message="Debe iniciar sesión en MELI:  "+str(rjson["message"]), message_html="<br><br>"+error_msg, context = { 'rjson': rjson })
             else:
                 #Any other errors
-                self.env.cr.rollback()
+                self._meli_rollback_unless_kept()
                 #raise ValidationError("Recuerde completar todos los campos y revise el mensaje siguiente."+str(error_msg))
                 return warningobj.info( title='MELI WARNING', message="Recuerde completar todos los campos y revise el mensaje siguiente.", message_html="<br><br>"+error_msg, context = { 'rjson': rjson } )
 
         #last modifications if response is OK
         if "id" in rjson:
             otros_errores = []
+            # #caso-K21 (e) (camino nuevo): alta NUEVA confirmada por ML ⇒ se registra ANTES de seguir (lo que
+            # viene después —descripción, fetch, bindings— puede fallar y no debe dejarla huérfana)
+            if not meli_id and self._meli_is_new_post_mode():
+                self._meli_trace_created_listing(rjson["id"])
             meli_id = rjson["id"]
+            if _meli_611_old_id:
+                self._meli_611_repoint(_meli_611_old_id, meli_id)
 
             #vuelve a traer el registro completo formateandolo con barcode y sku
             rjson = account and account.fetch_meli_product( meli_id=meli_id, meli=meli ) or self.env["mercadolibre.account"].fetch_meli_product( meli_id=meli_id, meli=meli ) or rjson
@@ -3376,6 +3973,13 @@ class product_product(models.Model):
                 if _family_id:
                     _bind_vals['meli_family_id'] = _family_id
                 bind.write(_bind_vals)
+                # 26.123 (caso-K32 cliente N): el estado del item viene en ESTA misma
+                # respuesta. Si no lo guardamos, el binding nace con
+                # meli_last_status vacio, meli_status cae a "unknown" y la ficha
+                # se queda sin el icono/los botones de ML hasta que pase un
+                # webhook o un cron. Cero llamadas extra a la API.
+                if 'meli_last_status' in bind._fields:
+                    bind.meli_stamp_last_status( rjson )
                 MeliCommit( self )
                 #WARNING IF NEW PUB with variants, must call product_template_rebind, to create all variant binding too
             else:
@@ -3384,7 +3988,11 @@ class product_product(models.Model):
                 if _family_id:
                     _target_vals['meli_family_id'] = _family_id
                 # family_name flow: listing propio sin variation ID — limpiar valores residuales
-                if self.env.context.get('family_name_variant_post') and target.meli_id_variation:
+                _clear_variation = self.env.context.get('family_name_variant_post') and target.meli_id_variation
+                if self._meli_is_family_mode(config):
+                    # #caso-K21 (camino nuevo): sin variations en la respuesta ⇒ no queda id de variación
+                    _clear_variation = target.meli_id_variation and not rjson.get("variations")
+                if _clear_variation:
                     _target_vals['meli_id_variation'] = False
                     _logger.info("user_product_seller family_name: clearing stale meli_id_variation for %s", target)
                 target.write(_target_vals)
@@ -3416,6 +4024,12 @@ class product_product(models.Model):
                 bindv.stock = bindv.meli_available_quantity
                 stock+= bindv.stock
             bind_tpl.stock = stock
+            # 26.123 (caso-K32 cliente N): los bindings de variante recien creados por
+            # product_template_rebind() tampoco tenian estado. Se estampa el mismo
+            # status del item para TODA la publicacion (una publicacion = un item,
+            # el status es del item, no de la variacion).
+            if "id" in rjson:
+                bind_tpl.variant_bindings.meli_stamp_last_status( rjson )
             #bind.copy_from_rjson( rjson=rjson, meli=meli )
         else:
             for bindT in product_tmpl.mercadolibre_bindings:
@@ -3436,6 +4050,11 @@ class product_product(models.Model):
                         bindv.price = bindv.meli_price
                         stock+= bindv.stock
                     bindT.stock = stock
+                    # 26.123 (caso-K32 cliente N): idem para la publicacion sin bind
+                    # explicito (producto base). Sin esto el binding queda en
+                    # "unknown" y desaparece el icono de ML de la ficha.
+                    if "id" in rjson:
+                        bindT.variant_bindings.meli_stamp_last_status( rjson )
 
 
         #raise ValidationError(str(rjson)+str(body))
@@ -3453,6 +4072,13 @@ class product_product(models.Model):
     def product_post(self, bind_tpl=None, bind=None, meli=None, config=None ):
         res = []
         for product in self:
+            # #caso-K21 (26.371): la publicación recuerda con qué camino se creó (meli_post_mode del binding).
+            # Un update que llega con el binding (cron, asistente de bindings, Publicar viejo) sigue el
+            # camino FAMILIA si el binding es 'family', aunque el llamador no sepa de botones.
+            if not product._meli_is_new_post_mode() and (
+                    (bind and "meli_post_mode" in bind._fields and bind.meli_post_mode == "family")
+                    or (bind_tpl and "meli_post_mode" in bind_tpl._fields and bind_tpl.meli_post_mode == "family")):
+                product = product.with_context(meli_post_mode="family")
             res.append(product._product_post( bind_tpl=bind_tpl, bind=bind, meli=meli, config=config ))
 
         return res
@@ -3488,21 +4114,25 @@ class product_product(models.Model):
         
         meli = self.env['meli.util'].get_new_instance( company, account )
 
-        if meli and meli.need_login():
-            ML_status = "unknown"
-            ML_permalink_edit = ""
-            ML_permalink_api = ""
-            ML_state = True
+        login_required = bool(meli and meli.need_login())
 
         for product in self:
-            if product.meli_id and meli and not meli.need_login():
+            # caso-K51 3-nov-2026 (26.365): se reinician POR VARIANTE. Inicializados una sola vez antes del for, la variante
+            # que no trae sub_status (o da error, o no tiene meli_id) mostraba el status/sub_status/links de la anterior
+            # (columna «Sub Status» de Variantes: activas en ML con «out_of_stock»).
+            ML_status = "unknown"
+            ML_sub_status = ""
+            ML_permalink_edit = ""
+            ML_permalink_api = ""
+            ML_state = login_required
+            if product.meli_id and meli and not login_required:
                 response = meli.get("/items/"+product.meli_id, {'access_token':meli.access_token} )
                 rjson = response.json()
                 if "status" in rjson:
                     ML_status = rjson["status"]
                 if "permalink" in rjson:
                     ML_permalink_edit = company.get_ML_LINK_URL(meli=meli)+str("publicaciones/")+str(product.meli_id)+str("/modificar")
-                    ML_permalink_api = str("https://api.mercadolibre.com/items/")+str(product.meli_id)+str("?include_attributes=all&access_token="+str(meli and meli.access_token))
+                    ML_permalink_api = "/meli/item_api/%s?account=%s" % (product.meli_id, account.id)  # un caso: sin token
                 if "error" in rjson:
                     ML_status = rjson["error"]
                 if "sub_status" in rjson:
@@ -3567,9 +4197,61 @@ class product_product(models.Model):
                     'barcode': meli_barcode
                 })
 
+        # (B2) un cliente, 19-ago-2026 — FALLBACKS cuando ML no devuelve seller_sku NI barcode
+        # en las variaciones. Sin ellos esta funcion no matcheaba NUNCA y la publicacion quedaba
+        # parada en 'revision_variation_not_found', un estado que nadie vuelve a mirar (medido en
+        # un cliente: 55 publicaciones ahi, con stock movido en Odoo despues del ultimo push).
+        # Los dos fallbacks alimentan la MISMA lista de matches, asi que reutilizan tal cual el
+        # preflight de duplicados y la re-vinculacion de abajo — no hay un segundo camino.
+        if not barcode_match and not sku_matches:
+            # (a) Combinacion de atributos: el mismo criterio que ya usa el camino de publicacion
+            #     por variantes (_is_product_combination). No depende de SKU ni de barcode.
+            #     OJO: _is_product_combination arranca en True y solo baja a False si la variacion
+            #     TRAE 'attribute_combinations' y alguna no coincide -> una variacion sin ese campo
+            #     matchea con CUALQUIER producto. Por eso se exige que el campo exista y tenga
+            #     contenido antes de preguntar. Y si matchea mas de una, la rama de abajo lo manda
+            #     a revision manual en vez de elegir por nosotros.
+            for vr in productjson["variations"]:
+                try:
+                    if vr.get("attribute_combinations") and self._is_product_combination(vr):
+                        sku_matches.append({
+                            'id': vr.get("id"),
+                            'sku': vr.get("seller_sku") or vr.get("seller_custom_field"),
+                            'barcode': vr.get("barcode"),
+                        })
+                except Exception as _comb_err:
+                    _logger.debug("x_match_variation_id: _is_product_combination fallo: %s", _comb_err)
+            if sku_matches:
+                _logger.info("x_match_variation_id: SKU %s resuelto por COMBINACION de atributos: %s",
+                             product_sku, [m['id'] for m in sku_matches])
+            # (b) El item tiene UNA sola variacion Y el producto UNA sola variante en Odoo: no hay
+            #     ambiguedad posible, es esa. Se exige la unicidad de LOS DOS lados a proposito:
+            #     con varias variantes en Odoo, adoptar la unica variacion de ML publicaria el
+            #     stock de la variante equivocada.
+            elif (len(productjson["variations"]) == 1
+                  and self.product_tmpl_id
+                  and len(self.product_tmpl_id.product_variant_ids) == 1):
+                _only_var = productjson["variations"][0]
+                sku_matches.append({
+                    'id': _only_var.get("id"),
+                    'sku': _only_var.get("seller_sku") or _only_var.get("seller_custom_field"),
+                    'barcode': _only_var.get("barcode"),
+                })
+                _logger.warning(
+                    "x_match_variation_id: SKU %s — el item %s tiene UNA sola variacion (%s) y el "
+                    "producto UNA sola variante: se adopta (ML no devolvio seller_sku ni barcode)",
+                    product_sku, meli_id, _only_var.get("id"))
+
         # Use barcode match if found
         if barcode_match:
             target_meli_id_variation = barcode_match
+        elif len(sku_matches) == 1 and product_sku and self.product_tmpl_id and \
+                self.product_tmpl_id.with_context(active_test=False).product_variant_ids.filtered(
+                    lambda p: p.id != self.id and (p.default_code or '').strip().lower() == str(product_sku).strip().lower()):
+            #caso-K51 (26.337): el SKU es de mas de una variante de la plantilla => adoptar la variacion de ML que lo
+            #tiene publicaria el stock de una variante en la de otra. Revision manual (o vincular la variacion).
+            revision_matches = "SKU ambiguo: %s esta en varias variantes de Odoo; no se re-vincula %s a la variacion %s." % (
+                product_sku, meli_id, sku_matches[0]['id'])
         elif len(sku_matches) == 1:
             # Exactly one SKU match - use it
             match = sku_matches[0]
@@ -3584,8 +4266,8 @@ class product_product(models.Model):
                     # `mercadolibre_product_unique_conn_id_product_tmpl` will
                     # explode at flush time with a duplicate-key violation and
                     # poison the whole stock-post transaction (seen in prod
-                    # kelebcenter, 20/04/2026 SKU PA-RO-RO-477 meli_id
-                    # MLA1718187740). Skip the rename and surface the duplicate
+                    # un cliente, 20/04/2026 SKU <SKU> meli_id
+                    # MLA<id>). Skip the rename and surface the duplicate
                     # via stock_error so the UI flags it for manual merge.
                     _target_tmpl_id = target.product_tmpl_id and target.product_tmpl_id.id
                     _conflict = self.env['mercadolibre.product'].search([
@@ -3610,6 +4292,11 @@ class product_product(models.Model):
                                 _conflict.stock_error = _dup_tag
                         except Exception:
                             pass
+                        #caso-K51 (26.337): antes se devolvia IGUAL la variacion en conflicto y el stock de este
+                        #producto salia a la variacion de OTRO binding. Ahora no se publica: revision manual.
+                        target_meli_id_variation = None
+                        revision_matches = "Variacion ya vinculada: %s/%s esta vinculada al binding %s; no se publica stock de SKU %s (binding %s)." % (
+                            meli_id, match['id'], _conflict.id, product_sku, target.id)
                     else:
                         _logger.info(
                             "Auto-fix: Updating variation_id for SKU %s: %s -> %s (meli_id: %s)",
@@ -3667,6 +4354,203 @@ class product_product(models.Model):
 
         return meli_util
 
+
+    # -------------------------------------------------------------------------
+    # 26.87 (F7) — verificacion de lo efectivamente aplicado por MercadoLibre
+    #
+    # Hasta 26.86 el modulo daba por publicado cualquier PUT que devolviera 200,
+    # SIN mirar la cantidad que ML respondia (las lineas que lo hacian estaban
+    # comentadas). Eso deja un modo de falla invisible: ML contesta 200 y NO
+    # aplica el valor — el binding se marca 'updated', sale de la cola y nadie
+    # se entera nunca de que la publicacion quedo con la cantidad vieja.
+    #
+    # Devuelve None si esta OK o si no se pudo leer la cantidad (nunca inventamos
+    # un error: si no sabemos, no rompemos), o un dict de error con not_applied.
+    def _meli_verify_posted_quantity( self, rjson, expected_qty, put_url=None,
+                                      meli_id_variation=None, config=None ):
+        # [caso de un cliente] PUT /items/{id}/variations/{var} responde la LISTA de variaciones del item,
+        # no un dict: antes se descartaba (verificacion F7 muerta para variaciones) y mas arriba
+        # rjson.get("status") levantaba AttributeError DESPUES de un PUT exitoso => stock_error falso.
+        if isinstance(rjson, list) and meli_id_variation:
+            rjson = {'variations': rjson}
+        if not isinstance(rjson, dict) or expected_qty is None:
+            return None
+
+        applied = None
+        if 'available_quantity' in rjson:
+            applied = rjson.get('available_quantity')
+        elif meli_id_variation and isinstance(rjson.get('variations'), list):
+            # PUT sobre el item con body {"variations":[...]}: buscamos la nuestra
+            for _var in rjson['variations']:
+                if isinstance(_var, dict) and str(_var.get('id')) == str(meli_id_variation):
+                    applied = _var.get('available_quantity')
+                    break
+
+        if applied is None:
+            return None  # respuesta sin cantidad legible (user-products, etc.)
+
+        try:
+            if int(round(float(applied))) == int(round(float(expected_qty))):
+                return None
+        except (TypeError, ValueError):
+            return None  # no comparable: no bloqueamos el flujo
+
+        _logger.error(
+            "STOCK_NOT_APPLIED %s %s: se publico available_quantity=%s y ML respondio %s "
+            "(HTTP OK). La publicacion NO quedo con el stock de Odoo.",
+            (config and config.name) or '', put_url or '', expected_qty, applied
+        )
+        return {
+            "error": "stock_not_applied",
+            "not_applied": True,
+            "expected_quantity": expected_qty,
+            "applied_quantity": applied,
+            "put_url": put_url,
+        }
+
+    def _meli_stock_locations_by_mapping( self, account, locs_list, meli_id=None, meli=False, config=None ):
+        """26.363 (caso-K10): cuerpo `locations` de PUT /user-products/{id}/stock/type/seller_warehouse
+        armado POR DEPÓSITO desde el mapeo «Depósitos ML» (mercadolibre.account.stock_location).
+
+        Sólo actúa si la cuenta tiene `meli_stock_by_location_mapping` prendido; si no, devuelve None y el
+        llamador sigue con el reparto proporcional de siempre.
+
+        Por cada depósito que trae ML (locs_list = [{store_id, network_node_id, existing_qty}] del GET /stock):
+          - con ubicación Odoo mapeada (por store_id; si no, por network_node_id) ⇒ la cantidad es
+            `_meli_available_quantity` de esta variante SÓLO en esa ubicación (mismo método de cantidad, kits y
+            stock de seguridad; ver contexto `meli_stock_force_location_ids` en meli_oerp_stock);
+          - sin ubicación mapeada ⇒ NO SE TOCA: se reenvía la cantidad que ML ya tenía (el body de
+            seller_warehouse lleva todos los depósitos) y queda un warning en el log.
+        Si ningún depósito está mapeado devuelve None (reparto proporcional) con warning: prender el flag sin
+        cargar el mapeo no puede dejar todo en lo que ML ya tenía sin avisar.
+
+        No asume nada sobre el stock físico: si dos depósitos ML apuntan a ubicaciones Odoo con el mismo
+        stock replicado, cada uno publica lo que Odoo dice de su ubicación.
+        """
+        self.ensure_one()
+        if not (account and 'meli_stock_by_location_mapping' in account._fields
+                and account.meli_stock_by_location_mapping):
+            return None
+        if not locs_list or 'mercadolibre.account.stock_location' not in self.env:
+            return None
+        rows = self.env['mercadolibre.account.stock_location'].sudo().search([
+            ('account_id', '=', account.id), ('odoo_location_id', '!=', False)])
+        by_store = {}
+        by_node = {}
+        for r in rows:
+            if r.meli_store_id:
+                by_store.setdefault(str(r.meli_store_id), r)
+            if r.network_node_id:
+                by_node.setdefault(str(r.network_node_id), r)
+        out = []
+        mapped = 0
+        qty_odoo = 0
+        unmapped = []
+        for loc in locs_list:
+            store = loc.get("store_id")
+            node = loc.get("network_node_id")
+            rec = (store and by_store.get(str(store))) or (node and by_node.get(str(node))) or None
+            if rec:
+                # 26.375 (#caso-K69): el depósito viaja por contexto ⇒ las reglas de stock con «Depósitos ML»
+                # (umbral / resguardo por depósito) se aplican a ESTE depósito.
+                qty = self.with_context(
+                    meli_stock_force_location_ids=rec.odoo_location_id.ids,
+                    meli_stock_store_location_id=rec.id,
+                )._meli_available_quantity( meli_id=meli_id, meli=meli, config=config )
+                qty = max(0, int(round(qty or 0)))
+                mapped += 1
+                qty_odoo += qty
+            else:
+                qty = max(0, int(round(loc.get("existing_qty", 0) or 0)))
+                unmapped.append(str(store or node))
+            entry = {"quantity": qty}
+            if store:
+                entry["store_id"] = store
+            if node:
+                entry["network_node_id"] = node
+            out.append(entry)
+        if not mapped:
+            _logger.warning(
+                "stock por deposito (%s, %s): ningun deposito ML tiene ubicacion Odoo mapeada en «Depósitos ML» "
+                "— se publica el total con el reparto proporcional", account.name, self.default_code)
+            return None
+        if unmapped:
+            _logger.warning(
+                "stock por deposito (%s, %s): deposito(s) ML sin ubicacion Odoo mapeada, NO se modifican "
+                "(se reenvia la cantidad que ya tenian en ML): %s", account.name, self.default_code,
+                ", ".join(unmapped))
+        # 26.375 (caso-K10): lo calculado queda para el indicador «Depósitos» de la vinculación (sin red extra);
+        # lo toma mercadolibre.product._product_post_stock_one si la publicación no devolvió error.
+        try:
+            self.env.cr.precommit.data.setdefault('meli_wh_post', {})[self.id] = {
+                'out': out, 'unmapped': len(unmapped), 'qty_odoo': qty_odoo}
+        except Exception:
+            pass
+        return out
+
+    def _meli_stock_pick_variation( self, productjson, target=None, meli_id_variation=None ):
+        """131 (26.337, port de 13.0.26.336): elige UNA variacion de ML para publicar el stock de esta variante.
+
+        Devuelve (variacion_json | None, error | None):
+        1. binding exacto: la variacion vinculada (target.conn_variation_id o meli_id_variation) existe en ML => gana,
+           aunque el SKU/barcode no coincida (mismo criterio que el import, 26.335: la vinculacion explicita manda);
+        2. si no: barcode unico > SKU (case-insensitive; ambiguo => error, NO se publica) > combinacion de atributos
+           unica (la variacion tiene que traer attribute_combinations y no tener otro SKU).
+        SKU ambiguo = el SKU esta en mas de una variacion de la publicacion, o en otra variante de la plantilla.
+        Antes x_product_post_stock recorria TODAS las variaciones y hacia un PUT por cada una que matcheaba.
+        """
+        product = self
+        variations = (productjson and productjson.get("variations")) or []
+        bound = str((target and target.conn_variation_id) or meli_id_variation or "")
+        default_code = (product.default_code or "").strip()
+        dc = default_code.lower()
+
+        def _sku(vr):
+            return str(vr.get("seller_sku") or vr.get("seller_custom_field") or "").strip()
+
+        if bound:
+            for vr in variations:
+                if str(vr.get("id")) == bound:
+                    if dc and _sku(vr) and _sku(vr).lower() != dc:
+                        _logger.warning("131 post stock: binding exacto gana sobre SKU distinto: %s var %s SKU ML %s vs %s",
+                                        productjson.get("id"), bound, _sku(vr), default_code)
+                    return vr, None
+
+        if product.barcode:
+            by_barcode = [vr for vr in variations if vr.get("barcode") and vr.get("barcode") == product.barcode]
+            if len(by_barcode) == 1:
+                return by_barcode[0], None
+            if len(by_barcode) > 1:
+                return None, { "error": "Barcode ambiguo: %s esta en %d variaciones de %s (%s). No se publica stock: corregir los barcodes o vincular la variacion." % (
+                    product.barcode, len(by_barcode), productjson.get("id"), ",".join(str(v.get("id")) for v in by_barcode) ) }
+
+        by_sku = dc and [vr for vr in variations if _sku(vr).lower() == dc] or []
+        if by_sku:
+            others = product.product_tmpl_id.with_context(active_test=False).product_variant_ids.filtered(
+                lambda p: p.id != product.id and (p.default_code or "").strip().lower() == dc )
+            if len(by_sku) > 1 or others:
+                return None, { "error": "SKU ambiguo: %s esta en %d variaciones de %s (%s) y en %d variantes de Odoo (%s). No se publica stock: corregir el SKU o vincular la variacion." % (
+                    default_code, len(by_sku), productjson.get("id"), ",".join(str(v.get("id")) for v in by_sku),
+                    len(others) + 1, ",".join(str(i) for i in (product | others).ids) ) }
+            return by_sku[0], None
+
+        by_comb = []
+        for vr in variations:
+            if not vr.get("attribute_combinations"):
+                continue
+            if dc and _sku(vr) and _sku(vr).lower() != dc:
+                continue
+            try:
+                if product._is_product_combination(vr):
+                    by_comb.append(vr)
+            except Exception as _comb_err:
+                _logger.debug("_meli_stock_pick_variation: _is_product_combination fallo: %s", _comb_err)
+        if len(by_comb) == 1:
+            return by_comb[0], None
+        if len(by_comb) > 1:
+            return None, { "error": "Combinacion ambigua: %d variaciones de %s coinciden (%s). No se publica stock: vincular la variacion." % (
+                len(by_comb), productjson.get("id"), ",".join(str(v.get("id")) for v in by_comb) ) }
+        return None, None
 
     def x_product_post_stock( self, context=None, meli=False, config=None, meli_id=None, meli_id_variation=None, target=None, item_json=None ):
         import time
@@ -3791,7 +4675,7 @@ class product_product(models.Model):
                 return _stock_update_mode, _stock_update_type, None, _headers
 
             # Recolectar TODOS los depósitos del tipo detectado (un producto puede tener
-            # seller_warehouse en múltiples stores, ej: Guadalajara 66093017 + Tepatitlán 79214650)
+            # seller_warehouse en múltiples stores, ej: <store_id_1> + <store_id_2>)
             _detected_type = None
             _all_locs = []  # [{store_id, network_node_id, existing_qty}, ...]
             if isinstance(_data, dict) and "locations" in _data:
@@ -3892,7 +4776,13 @@ class product_product(models.Model):
                         # Si todos los depósitos tienen 0, el total va al primer depósito.
                         _locs_list = (_eff_loc if isinstance(_eff_loc, list)
                                       else ([_eff_loc] if isinstance(_eff_loc, dict) and _eff_loc else []))
-                        if _locs_list:
+                        # 26.363 (caso-K10): con el flag de la cuenta, stock POR DEPÓSITO desde el mapeo
+                        # «Depósitos ML»; None = flag apagado o nada mapeado ⇒ reparto proporcional.
+                        _by_mapping = (_locs_list and product._meli_stock_locations_by_mapping(
+                            account, _locs_list, meli_id=_meli_id, meli=meli, config=config )) or None
+                        if _by_mapping:
+                            _put_var_stock = {"locations": _by_mapping}
+                        elif _locs_list:
                             _existing_total = sum(l.get("existing_qty", 0) for l in _locs_list)
                             _sw_locations = []
                             for _i, _loc_entry in enumerate(_locs_list):
@@ -3934,6 +4824,62 @@ class product_product(models.Model):
 
             return _put_var_stock
         
+        def _put_stock_with_version_retry( _url, _body, _headers ):
+            """(B3) un cliente, 19-ago-2026 — 409: relectura de version + UN reintento.
+
+            ML devuelve 409 en dos situaciones y las dos eran TERMINALES para nosotros,
+            porque no habia ningun reintento en ningun lado:
+              · PUT /user-products/{id}/stock/type/{tipo} con un X-Version obsoleto — el
+                stock cambio (otra pasada del cron, o el propio vendedor) entre el GET que
+                trajo la version y el PUT que la usa;
+              · PUT /items/{id}[/variations/{var}] con 'item optimistic locking' — el item
+                se modifico en ML mientras publicabamos.
+            En los dos casos el remedio es el mismo: releer la VERSION y repetir UNA vez.
+            Una sola vez a proposito: si la carrera se repite, el error queda a la vista en
+            el binding y el re-encolado acotado lo vuelve a tomar en la proxima pasada
+            (reintentar en bucle acá solo alargaria el cron y taparia el diagnostico).
+            Devuelve la respuesta (el rjson viaja adentro, como en put_mini).
+            """
+            _resp = meli.put_mini( _url, _body, { 'access_token': meli.access_token, 'headers': _headers or {} })
+            _rj = (_resp and _resp.json()) or {}
+            if not isinstance(_rj, dict):
+                return _resp
+            _rj_str = str(_rj).lower()
+            _is_conflict = (_rj.get("status") == 409
+                            or "optimistic" in _rj_str
+                            or "x-version" in _rj_str
+                            or "conflict" in _rj_str)
+            if not _is_conflict:
+                return _resp
+            _logger.warning("x_product_post_stock: 409 en %s (%s) — releo la version y reintento UNA vez",
+                            _url, str(_rj)[:200])
+            _retry_headers = dict(_headers or {})
+            try:
+                if "/user-products/" in str(_url) and target and getattr(target, 'meli_user_product_id', False):
+                    # El X-Version que compara ML sale del GET /stock: hay que pedirlo de nuevo.
+                    _d2, _xv2 = meli.get_user_product_stock_with_version(
+                        target.meli_user_product_id, meli.access_token )
+                    if _xv2:
+                        _retry_headers["X-Version"] = _xv2
+                else:
+                    # /items/...: releer el item para reintentar contra su estado actual.
+                    self.env["mercadolibre.account"].fetch_meli_product( meli_id=meli_id, meli=meli )
+            except Exception as _v_err:
+                _logger.warning("x_product_post_stock: no pude releer la version para reintentar %s: %s",
+                                _url, _v_err)
+            _resp2 = meli.put_mini( _url, _body, { 'access_token': meli.access_token, 'headers': _retry_headers })
+            _rj2 = (_resp2 and _resp2.json()) or {}
+            if isinstance(_rj2, dict) and (_rj2.get("status") == 409 or "optimistic" in str(_rj2).lower()):
+                # Marca explicita: que el estado no quede en un 'revision_error' generico.
+                _rj2["optimistic_locking"] = True
+                _logger.warning("x_product_post_stock: el reintento de %s volvio a dar 409", _url)
+            return _resp2
+
+        # 26.87 (H1): inicializados FUERA del try — si la excepcion cae antes de
+        # que se les asigne valor adentro, el bloque final los necesita igual.
+        posted_try = False
+        _post_exception = None
+
         try:
             #self.product_update_stock()
             product_fab = False
@@ -4034,192 +4980,114 @@ class product_product(models.Model):
                     pictures_v = []
                     same_price = False
 
-                    #TODO: check combination now based on SKU and forget!!
+                    #caso-K51 (26.337, port de 13.0.26.336): UNA sola variacion destino. Antes se recorrian TODAS y cada
+                    #una que matcheaba por barcode/SKU/combinacion recibia un PUT (y "Changing binding variant"):
+                    #con el SKU repetido en dos talles (NICNAI701ROSCHI1, MLA1430074051) el stock de un talle salia
+                    #a la variacion del otro, o el preflight de conflicto devolvia sin publicar nunca la vinculada.
+                    #Regla (= import 26.335): binding exacto > barcode > SKU (si no es ambiguo) > combinacion.
                     _t_var_loop = time.time()
                     _var_count = len(productjson["variations"])
-                    for ix in range(len(productjson["variations"]) ):
-                        vr = productjson["variations"][ix]
-                        seller_sku = ("seller_sku" in vr and vr["seller_sku"]) or ("seller_custom_field" in vr and vr["seller_custom_field"])
-                        barcode = ("barcode" in vr and vr["barcode"])
-                        target_meli_id_variation = vr["id"]
-
-                        #check if combination is related to this product
-                        if 'picture_ids' in productjson["variations"][ix]:
-                            if (len(productjson["variations"][ix]["picture_ids"])>len(pictures_v)):
-                                pictures_v = productjson["variations"][ix]["picture_ids"]
-                        same_price = productjson["variations"][ix]["price"]
-
-                        #_logger.info(vr)
-
-                        #_logger.info("meli sku: "+str(seller_sku)+" vs. product.default_code: "+str(product.default_code))
-                        #_logger.info("meli barcode: "+str(barcode)+" vs. product.barcode: "+str(product.barcode))
-
-                        barcode_coincide = (barcode and product.barcode and barcode==product.barcode)
-                        sin_barcode_en_ml_sku_ok = (not barcode and seller_sku==product.default_code)
-                        combinacion_coincide = self._is_product_combination(productjson["variations"][ix])
-                        sku_coincide = (product.default_code and seller_sku and seller_sku==product.default_code)
-
-                        if sku_coincide:
+                    for vr in productjson["variations"]:
+                        if 'picture_ids' in vr and len(vr["picture_ids"])>len(pictures_v):
+                            pictures_v = vr["picture_ids"]
+                        same_price = vr.get("price")
+                        _vr_sku = vr.get("seller_sku") or vr.get("seller_custom_field")
+                        if (product.default_code and _vr_sku and str(_vr_sku).lower()==product.default_code.lower()):
                             ningun_sku_coincide = False
-
-                        if barcode_coincide:
+                        if (vr.get("barcode") and product.barcode and vr.get("barcode")==product.barcode):
                             ningun_barcode_coincide = False
 
-                        if 1==2:
-                            _logger.info("barcode_coincide: "+str(barcode_coincide)+"")
-                            _logger.info("sku_coincide: "+str(sku_coincide)+"")
-                            _logger.info("combinacion_coincide: "+str(combinacion_coincide)+"")
-                            _logger.info("sin_barcode_en_ml_sku_ok: "+str(sin_barcode_en_ml_sku_ok)+"")
+                    picked, pick_error = product._meli_stock_pick_variation( productjson, target=target, meli_id_variation=meli_id_variation )
+                    if pick_error:
+                        _logger.warning("%s %s %s", config and config.name, meli_id, pick_error)
+                        return pick_error
 
-                        variation_id_coincide = str((target and target.conn_variation_id) or meli_id_variation)==str(target_meli_id_variation)
+                    if picked:
+                        found_comb = True
+                        target_meli_id_variation = picked["id"]
+                        _bound_variation = str((target and target.conn_variation_id) or meli_id_variation or "")
+                        if target and _bound_variation!=str(target_meli_id_variation):
+                            #caso-K51: la escritura local que puede fallar va ANTES del PUT y se valida: si otro binding ya
+                            #tiene esa variacion, no se re-vincula ni se publica.
+                            _rebind_error = target._meli_stock_rebind_variation( target_meli_id_variation )
+                            if _rebind_error:
+                                _logger.warning(str(_rebind_error))
+                                return _rebind_error
 
-                        if ( (barcode_coincide)
-                            or (not barcode and sku_coincide)
-                            or ( len(productjson["variations"])==1 and seller_sku==product.default_code)
-                            or (sku_coincide)
-                            or combinacion_coincide):
+                        #update base product qty
+                        product.meli_available_quantity = product._meli_available_quantity( meli_id=product.meli_id, meli=meli, config=config )
+                        meli_id_stock = product.meli_available_quantity
 
-                            #_logger.info("x_product_post_stock _is_product_combination! Post stock to variation: "+str(target_meli_id_variation))
+                        #update target binding qty (target!=product)
+                        if (target and meli_id and meli_id!=product.meli_id):
+                            meli_id_stock = product._meli_available_quantity( meli_id=meli_id, meli=meli, config=config )
+                            if (meli_id_stock<0.0):
+                                meli_id_stock = 0.0
+                            target.meli_available_quantity = meli_id_stock
 
-                            #_logger.info(productjson["variations"][ix])
-                            found_comb = True
-                            #reset meli_id_variation (TODO: resetting must be done outside)
-                            target_meli_id_variation = productjson["variations"][ix]["id"]
-                            if target:
-                                #WARNING; will change the publication id variation?
-                                reserror = None
-                                if (not variation_id_coincide):
-                                    if (sku_coincide):
-                                        reserror =  { "warning": "Changing binding variant meli_id:"+str(target.conn_id)+" conn_id_variation: " + str(target.conn_variation_id) + " TO target_meli_id_variation: " + str(target_meli_id_variation)+" internal:"+str(product.default_code) }
-                                        _logger.warning(reserror)
-                                    else:
-                                        # SKU mismatch - needs manual review, not a critical error
-                                        reserror =  { "error": "Changing binding variant meli_id:"+str(target.conn_id)+" conn_id_variation: " + str(target.conn_variation_id) + " TO target_meli_id_variation: " + str(target_meli_id_variation)+" different seller_sku! Need to check! "+" internal:"+str(product.default_code)+" vs seller_sku:"+str(seller_sku) }
-                                        _logger.info("SKU mismatch detected: %s", reserror)
-                                        return reserror
-
-                                    # Preflight: if another binding already holds the target
-                                    # conn_variation_id for this (account, conn_id, product_tmpl),
-                                    # the unique constraint mercadolibre_product_unique_conn_id_product_tmpl
-                                    # will fail at flush time. Skip the rename instead of crashing —
-                                    # the duplicate binding needs a manual merge.
-                                    _conflict = self.env['mercadolibre.product'].search([
-                                        ('connection_account', '=', target.connection_account.id),
-                                        ('conn_id', '=', target.conn_id),
-                                        ('conn_variation_id', '=', str(target_meli_id_variation)),
-                                        ('product_tmpl_id', '=', target.product_tmpl_id.id),
-                                        ('id', '!=', target.id),
-                                    ], limit=1)
-                                    if _conflict:
-                                        reserror = {
-                                            "warning": (
-                                                "Skipping conn_variation_id change on binding id:%s "
-                                                "(%s → %s) because binding id:%s already holds the target. "
-                                                "Both bindings must be merged manually."
-                                            ) % (target.id, target.conn_variation_id,
-                                                 target_meli_id_variation, _conflict.id)
-                                        }
-                                        _logger.warning(reserror["warning"])
-                                        return reserror
-                                try:
-
-                                    target.meli_id_variation = str(target_meli_id_variation)
-                                    target.conn_variation_id = str(target_meli_id_variation)
-                                except Exception as e:
-                                    if reserror:
-                                        _logger.error("Error updating conn_variation_id: "+str(e))
-                                        _logger.error(reserror)
-                                        return reserror
-                                    else:
-                                        reserror = { "error": str(e) }
-                                        _logger.error("Error updating conn_variation_id: "+str(reserror))
-                                        return reserror
-
-
-                            #update base product qty
-                            product.meli_available_quantity = product._meli_available_quantity( meli_id=product.meli_id, meli=meli, config=config )
-                            meli_id_stock = product.meli_available_quantity
-
-                            #update target binding qty (target!=product)
-                            if (target and meli_id and meli_id!=product.meli_id):
-                                meli_id_stock = product._meli_available_quantity( meli_id=meli_id, meli=meli, config=config )
-                                if (meli_id_stock<0.0):
-                                    meli_id_stock = 0.0
-                                target.meli_available_quantity = meli_id_stock
-
-                            var = {
-                                #"id": str( product.meli_id_variation ),
-                                "available_quantity": (meli_id_stock>0.0 and meli_id_stock) or 0.0,
-                                #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                        var = {
+                            #"id": str( product.meli_id_variation ),
+                            "available_quantity": (meli_id_stock>0.0 and meli_id_stock) or 0.0,
+                            #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
+                        }
+                        varias["variations"].append(var)
+                        #_logger.info(varias)
+                        #_logger.info(var)
+                        _t_hdrs_var = time.time()
+                        _eff_mode, _eff_type, _eff_loc, put_headers = _resolve_auto_stock_mode()
+                        _x_timing['var_get_headers'] = _x_timing.get('var_get_headers', 0) + (time.time() - _t_hdrs_var)
+                        if _eff_mode == 'skip_fulfillment':
+                            # Full product: ML handles stock in its facilities.
+                            # Skip the PUT entirely to avoid the guaranteed
+                            # 400 item.available_quantity.not_modifiable.
+                            responsevar = None
+                            posted_try = False
+                            reserror = {
+                                "warning": "Stock no modificable en ML (producto Full: logistic_type=%s). "
+                                           "MercadoLibre gestiona el stock en sus depósitos." % (
+                                               (target and target.meli_shipping_logistic_type) or "fulfillment"
+                                           ),
+                                "fulfillment": True,
+                                "not_modifiable": True,
                             }
-                            varias["variations"].append(var)
-                            #_logger.info(varias)
-                            #_logger.info(var)
-                            _t_hdrs_var = time.time()
-                            _eff_mode, _eff_type, _eff_loc, put_headers = _resolve_auto_stock_mode()
-                            _x_timing['var_get_headers'] = _x_timing.get('var_get_headers', 0) + (time.time() - _t_hdrs_var)
-                            if _eff_mode == 'skip_fulfillment':
-                                # Full product: ML handles stock in its facilities.
-                                # Skip the PUT entirely to avoid the guaranteed
-                                # 400 item.available_quantity.not_modifiable.
-                                responsevar = None
-                                posted_try = False
-                                reserror = {
-                                    "warning": "Stock no modificable en ML (producto Full: logistic_type=%s). "
-                                               "MercadoLibre gestiona el stock en sus depósitos." % (
-                                                   (target and target.meli_shipping_logistic_type) or "fulfillment"
-                                               ),
-                                    "fulfillment": True,
-                                    "not_modifiable": True,
-                                }
-                                return reserror
-                            put_url = put_url_stock( meli_id, target_meli_id_variation, _eff_mode, _eff_type )
-                            put_var = put_var_stock( meli_id, target_meli_id_variation, var, _eff_mode, _eff_type, _eff_loc )
-                            _t_put_var = time.time()
-                            responsevar = meli.put_mini( put_url, put_var, { 'access_token':meli.access_token, 'headers': put_headers })
-                            _x_timing['var_put_api'] = _x_timing.get('var_put_api', 0) + (time.time() - _t_put_var)
-                            posted_try = True
-                            #_logger.info("x_product_post_stock put_url : "+str(put_url)+" put_var:"+str(put_var)+" put_headers:"+str(put_headers))
-                            if responsevar:
-                                #_logger.info(responsevar.json())
-                                rjson = responsevar.json()
-                                if rjson:
-                                    if "error" in rjson:
-                                        rjson["put_url"] = put_url
-                                        rjson_str = str(rjson).lower()
-                                        # Lower log level for known non-critical errors and flag error type
-                                        status_code = rjson.get("status")
-                                        if status_code == 404 or "not_found" in rjson_str:
-                                            _logger.debug("%s %s var:%s Item no encontrado (404)",
-                                                         config and config.name, put_url, var)
-                                            rjson["not_found"] = True
-                                        elif "status:under_review" in rjson_str:
-                                            _logger.debug("%s %s var:%s Item bajo revisión en ML",
-                                                         config and config.name, put_url, var)
-                                            rjson["under_review"] = True
-                                        elif "status:closed" in rjson_str or "status:inactive" in rjson_str:
-                                            _logger.debug("%s %s var:%s Item cerrado/inactivo en ML",
-                                                         config and config.name, put_url, var)
-                                            rjson["closed"] = True
-                                        elif "not_modifiable" in rjson_str or "not modifiable" in rjson_str or "field_not_updatable" in rjson_str:
-                                            _logger.debug("%s %s var:%s Stock no modificable",
-                                                         config and config.name, put_url, var)
-                                            rjson["not_modifiable"] = True
-                                        else:
-                                            _logger.error(str(config and config.name) + " "+ put_url+" var:"+str(var)+" result: "+str(rjson))
-                                        return rjson
-                                    #rjson["put_url"] = put_url
-                                    #_logger.info("x_product_post_stock res: "+put_url+" "+str(rjson)+ " token: " + meli.access_token)
-                                else:
-                                    continue;
-                        else:
-                            no_es_variante_unica_o_sku_no_coincide = ( len(productjson["variations"])==1 and seller_sku==product.default_code )
-                            revisar = (not barcode_coincide and "barcode_nocoincide ") or ""
-                            revisar+= (not sin_barcode_en_ml_sku_ok and "con_barcode_en_ml ") or ""
-                            revisar+= (not no_es_variante_unica_o_sku_no_coincide and "no_es_variante_unica_o_sku_no_coincide ") or ""
-                            revisar+= (not combinacion_coincide and "combinacion_no_coincide") or ""
-                            res = { 'error': 'verificar publicacion > '+str(revisar) }
-                            # ATENCINON >>> NO BLOQUEAR!!!!
+                            return reserror
+                        put_url = put_url_stock( meli_id, target_meli_id_variation, _eff_mode, _eff_type )
+                        put_var = put_var_stock( meli_id, target_meli_id_variation, var, _eff_mode, _eff_type, _eff_loc )
+                        _t_put_var = time.time()
+                        responsevar = _put_stock_with_version_retry( put_url, put_var, put_headers )
+                        _x_timing['var_put_api'] = _x_timing.get('var_put_api', 0) + (time.time() - _t_put_var)
+                        posted_try = True
+                        #_logger.info("x_product_post_stock put_url : "+str(put_url)+" put_var:"+str(put_var)+" put_headers:"+str(put_headers))
+                        if responsevar:
+                            #_logger.info(responsevar.json())
+                            rjson = responsevar.json()
+                            if rjson:
+                                if "error" in rjson:
+                                    rjson["put_url"] = put_url
+                                    rjson_str = str(rjson).lower()
+                                    # Lower log level for known non-critical errors and flag error type
+                                    status_code = rjson.get("status")
+                                    if status_code == 404 or "not_found" in rjson_str:
+                                        _logger.debug("%s %s var:%s Item no encontrado (404)",
+                                                     config and config.name, put_url, var)
+                                        rjson["not_found"] = True
+                                    elif "status:under_review" in rjson_str:
+                                        _logger.debug("%s %s var:%s Item bajo revisión en ML",
+                                                     config and config.name, put_url, var)
+                                        rjson["under_review"] = True
+                                    elif "status:closed" in rjson_str or "status:inactive" in rjson_str:
+                                        _logger.debug("%s %s var:%s Item cerrado/inactivo en ML",
+                                                     config and config.name, put_url, var)
+                                        rjson["closed"] = True
+                                    elif "not_modifiable" in rjson_str or "not modifiable" in rjson_str or "field_not_updatable" in rjson_str:
+                                        _logger.debug("%s %s var:%s Stock no modificable",
+                                                     config and config.name, put_url, var)
+                                        rjson["not_modifiable"] = True
+                                    else:
+                                        _logger.error(str(config and config.name) + " "+ put_url+" var:"+str(var)+" result: "+str(rjson))
+                                    return rjson
+                                #rjson["put_url"] = put_url
+                                #_logger.info("x_product_post_stock res: "+put_url+" "+str(rjson))
 
                     _x_timing['var_loop'] = time.time() - _t_var_loop
                     _x_timing['var_loop_count'] = _var_count
@@ -4276,7 +5144,9 @@ class product_product(models.Model):
                     if (vr_qty<0):
                         vr_qty = 0
                     best_available+= vr_qty
-                if (best_available>0 and product.meli_status=="paused"):
+                # 26.384 (#caso-K21): con target (camino multiple) NO se activa el item LEGACY product.meli_id: es OTRA
+                # publicacion, puede estar bloqueada/pausada por el vendedor. El target se decide en su bloque.
+                if (not target and best_available>0 and product.meli_status=="paused"):
                     #_logger.info("x_product_post_stock > Active! product:"+str(product.meli_id))
                     product.product_meli_status_active(meli=meli)
                 elif (best_available<=0 and product.meli_status=="active"):
@@ -4331,6 +5201,43 @@ class product_product(models.Model):
                             if chatter_log:
                                 _logger.info("fix product meli_id_variation: "+str(meli_id_variation))
                             product.meli_id_variation = meli_id_variation
+                    else:
+                        # (B1) un cliente, 19-ago-2026 — ITEM CON VARIACIONES Y VINCULACION SIN VARIACION.
+                        # Hasta aca solo se adoptaba la variacion cuando el item tenia UNA sola. Con dos
+                        # o mas se seguia de largo y se terminaba haciendo PUT /items/{id} con
+                        # available_quantity, o sea stock A NIVEL ITEM: MercadoLibre NO lo aplica en una
+                        # publicacion con variaciones, asi que el stock no subia nunca y el binding
+                        # quedaba en un error generico que no decia por que.
+                        # Ahora se resuelve la variacion por SKU / barcode / combinacion de atributos,
+                        # el mismo criterio que usa la re-vinculacion.
+                        _fix_var, _rev_matches = self.x_match_variation_id(
+                            meli=meli, meli_id=meli_id, meli_id_variation=None,
+                            product_sku=product.default_code, product_barcode=product.barcode,
+                            target=target
+                        )
+                        if _fix_var:
+                            meli_id_variation = _fix_var
+                            if (target and target.conn_id==meli_id):
+                                target.conn_variation_id = str(meli_id_variation)
+                                target.meli_id_variation = str(meli_id_variation)
+                            if (product.meli_id==meli_id
+                                    and str(product.meli_id_variation or '') != str(meli_id_variation)):
+                                product.meli_id_variation = str(meli_id_variation)
+                            _logger.info(
+                                "x_product_post_stock: vinculacion sin variacion en un item con %d "
+                                "variaciones — resuelta por SKU/barcode/combinacion: %s (SKU %s, item %s)",
+                                len(productjson["variations"]), meli_id_variation,
+                                product.default_code, meli_id)
+                        else:
+                            # Sin variacion resoluble NO se publica a nivel item: seria un PUT
+                            # condenado. El error dice exactamente que pasa, para que se pueda
+                            # re-vincular a mano (o desvincular) desde el asistente de limpieza.
+                            _verror = { "error": (_rev_matches or (
+                                "Variation id not found for SKU %s in %s (el item tiene %d variaciones "
+                                "y la vinculacion no apunta a ninguna)" % (
+                                    product.default_code, meli_id, len(productjson["variations"])))) }
+                            _logger.warning(_verror)
+                            return _verror
 
                 if (meli_id_variation):
                     #_logger.info("Posting using product.meli_id_variation")
@@ -4393,7 +5300,7 @@ class product_product(models.Model):
                     var = {
                         #"id": str( product.meli_id_variation ),
                         "available_quantity": int(round( (meli_id_stock>0.0 and meli_id_stock) or 0 )),
-                        #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                        #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
                     }
 
                     _t_headers = time.time()
@@ -4415,7 +5322,7 @@ class product_product(models.Model):
                     put_var = put_var_stock( meli_id, meli_id_variation, var, _eff_mode, _eff_type, _eff_loc )
                     #_logger.info("x_product_post_stock put_url : "+str(put_url)+" put_var:"+str(put_var)+" put_headers:"+str(put_headers))
                     _t_put = time.time()
-                    responsevar = meli.put_mini( put_url, put_var, { 'access_token':meli.access_token, 'headers': put_headers })
+                    responsevar = _put_stock_with_version_retry( put_url, put_var, put_headers )
                     _x_timing['put_stock_api'] = time.time() - _t_put
                     posted_try = True
                     if (responsevar):
@@ -4424,7 +5331,7 @@ class product_product(models.Model):
                             #_logger.info(rjson)
                             if "error" in rjson:
                                 rjson["put_url"] = put_url
-                                rjson["access_token"] = meli.access_token
+                                # [caso de un cliente] el access_token NO se guarda: este dict termina en stock_error (visible en la ficha)
                                 rjson_str = str(rjson).lower()
                                 # Lower log level for known non-critical errors and flag error type
                                 status_code = rjson.get("status")
@@ -4445,19 +5352,22 @@ class product_product(models.Model):
                                                  config and config.name, put_url, put_var)
                                     rjson["not_modifiable"] = True
                                 else:
-                                    _logger.error(str(config and config.name) + " "+ put_url+" put_var:"+str(put_var)+" result: "+str(rjson)+ " token: " + meli.access_token)
+                                    _logger.error(str(config and config.name) + " "+ put_url+" put_var:"+str(put_var)+" result: "+str(rjson))
                                 return rjson
                             # ML 403 body has no "error" key — detect via status field
-                            elif rjson.get("status") == 403:
+                            elif isinstance(rjson, dict) and rjson.get("status") == 403:
                                 rjson["put_url"] = put_url
                                 _logger.warning("%s 403 PA_UNAUTHORIZED on %s (variation path) — marking not_modifiable",
                                                 config and config.name, put_url)
                                 rjson["not_modifiable"] = True
                                 return rjson
-                            #rjson["put_url"] = put_url
-                            #if ('available_quantity' in rjson):
-                            #    _logger.info( str(config and config.name) + " "+put_url +" Posted ok: " + str(rjson['available_quantity']) )
-                            #    pass;
+                            # 26.87 (F7): 200 OK no alcanza — verificar que ML aplico el valor.
+                            _not_applied = self._meli_verify_posted_quantity(
+                                rjson, var.get("available_quantity"), put_url=put_url,
+                                meli_id_variation=meli_id_variation, config=config)
+                            if _not_applied:
+                                _not_applied["_timing"] = _x_timing
+                                return _not_applied
                 else:
                     _t_headers2 = time.time()
                     _eff_mode, _eff_type, _eff_loc, put_headers = _resolve_auto_stock_mode()
@@ -4478,7 +5388,7 @@ class product_product(models.Model):
                     put_var = put_var_stock( meli_id, None, fields, _eff_mode, _eff_type, _eff_loc )
                     #_logger.info("x_product_post_stock put_url : "+str(put_url)+" put_var:"+str(put_var)+" put_headers:"+str(put_headers))
                     _t_put2 = time.time()
-                    response = meli.put_mini( path=put_url, body=put_var, params={'access_token':meli.access_token, 'headers': put_headers })
+                    response = _put_stock_with_version_retry( put_url, put_var, put_headers )
                     _x_timing['put_stock_api_alt'] = time.time() - _t_put2
                     posted_try = True
                     #_logger.info("x_product_post_stock responsevar : "+str(put_url)+str(response))
@@ -4486,7 +5396,7 @@ class product_product(models.Model):
                         rjson = response.json()
                         if rjson and "error" in rjson:
                             rjson["put_url"] = put_url
-                            rjson["access_token"] = meli.access_token
+                            # [caso de un cliente] el access_token NO se guarda: este dict termina en stock_error (visible en la ficha)
                             # Lower log level for known non-critical errors
                             rjson_str_alt = str(rjson).lower()
                             if "not_modifiable" in rjson_str_alt or "not_updatable" in rjson_str_alt:
@@ -4494,13 +5404,13 @@ class product_product(models.Model):
                                              config and config.name, put_url, put_var)
                                 rjson["not_modifiable"] = True
                             else:
-                                _logger.error(str(config and config.name) + " "+ put_url+" put_var:"+str(put_var)+" "+str(rjson)+ " token: " + meli.access_token)
+                                _logger.error(str(config and config.name) + " "+ put_url+" put_var:"+str(put_var)+" "+str(rjson))
                             return rjson
                         # ML 403 PA_UNAUTHORIZED: algunos productos son bloqueados por PolicyAgent
                         # al intentar PUT /items/{id}. El body de ese error NO tiene campo "error",
                         # solo {code: "PA_UNAUTHORIZED_RESULT_FROM_POLICIES", blocked_by, message, status: 403}.
                         # Detectar por status==403 y reintentar con el endpoint multi-origen correcto.
-                        elif rjson and rjson.get("status") == 403:
+                        elif isinstance(rjson, dict) and rjson.get("status") == 403:
                             _up_id = (target and "meli_user_product_id" in target._fields
                                       and target.meli_user_product_id)
                             if _up_id:
@@ -4552,18 +5462,23 @@ class product_product(models.Model):
                                 _logger.warning("%s 403 PA_UNAUTHORIZED on %s, no user_product_id for retry",
                                                 config and config.name, put_url)
                                 return rjson
-                        #rjson["put_url"] = put_url
-                        #if (rjson and 'available_quantity' in rjson):
-                        #    _logger.info( put_url +" Posted ok: "+ str(rjson['available_quantity']) )
-                        #    pass;
-                        #else:
-                        #    _logger.info( put_url +" Posted response: "+ str(rjson) )
+                        # 26.87 (F7): 200 OK no alcanza — verificar que ML aplico el valor.
+                        # Solo tiene sentido cuando publicamos por /items/{id} (modo standard):
+                        # los endpoints de user-products no devuelven available_quantity.
+                        else:
+                            _not_applied = self._meli_verify_posted_quantity(
+                                rjson, fields.get("available_quantity"), put_url=put_url,
+                                config=config)
+                            if _not_applied:
+                                _not_applied["_timing"] = _x_timing
+                                return _not_applied
 
                 if (product.meli_available_quantity<=0 and product.meli_status=="active"):
                     #product.product_meli_status_pause(meli=meli)
                     #_logger.info("Pause (not)")
                     pass;
-                elif (product.meli_available_quantity>0 and product.meli_status=="paused"):
+                # 26.384 (#caso-K21): idem — con target no se toca el item legacy del producto.
+                elif (not target and product.meli_available_quantity>0 and product.meli_status=="paused"):
                     product.product_meli_status_active(meli=meli)
 
                 if (target.meli_available_quantity<=0 and target.meli_status=="active"):
@@ -4574,12 +5489,19 @@ class product_product(models.Model):
                     target.product_meli_status_active(meli=meli)
 
         except Exception as e:
+            # 26.87 (H1): la excepcion se logueaba y se seguia de largo. Si caia
+            # DESPUES del PUT, posted_try ya era True y la funcion devolvia exito:
+            # el binding se marcaba publicado sin saber si el stock quedo bien.
             _logger.error("x_product_post_stock > exception error: %s", e, exc_info=True)
-            pass;
+            _post_exception = e
          #_logger.info("x_product_post_stock > ended")
 
         # Always capture timing breakdown in result for caller to use
         _x_timing['total'] = time.time() - _x_start
+
+        # 26.87 (H1): si hubo excepcion, el error viaja en el return (antes se perdia).
+        if _post_exception is not None:
+            return { "error": str(_post_exception), "_timing": _x_timing }
 
         if not posted_try:
             _logger.error("NO posted stock try")
@@ -4694,13 +5616,45 @@ class product_product(models.Model):
 
         if (meli_id_variation and pjson):
             if "variations" in pjson:
+                # FIX (un cliente, 4-ago-2026): el payload lleva TODAS las variaciones —mandar una sola
+                # las borraría en ML— pero le ponía a cada una el `meli_price` de la ÚNICA que se está
+                # empujando: empujar una variante le PISABA el precio a todas sus hermanas.
+                # Medido en MLA<id> (2 variantes): ML tenía ambas en $45.480,80 y el push de la
+                # de $42.086,10 dejó a las DOS en $42.087. Alcance en un cliente: 244 publicaciones con precio
+                # distinto por variante, y el ciclador las visita de a una — gana la última empujada,
+                # incluso si trae un precio corrupto.
+                # Ahora cada variación viaja con SU precio, resuelto por el binding de su propia
+                # variante; si una variación de ML no tiene binding, cae al comportamiento anterior.
+                # 26.380 (caso-K21): "resuelto por el binding" ahora es de verdad: update_price() del
+                # binding (fijo / lista / plantilla), no set_meli_price() del producto.
+                precio_por_variacion = {}
+                cuenta = self._meli_resolve_account(config)
+                if cuenta:
+                    hermanos = self.env["mercadolibre.product"].search([
+                        ("conn_id", "=", str(meli_id)),
+                        ("connection_account", "=", cuenta.id),
+                        ("conn_variation_id", "!=", False),
+                    ])
+                    for hermano in hermanos:
+                        variante = hermano.product_id
+                        if not variante or not hermano.conn_variation_id:
+                            continue
+                        try:
+                            precio_hermano = _meli_precio_de_variacion(hermano, variante, config=config)
+                        except Exception as e:
+                            _logger.warning("x_product_post_price: no se resolvio el precio de la "
+                                            "variacion %s: %s", hermano.conn_variation_id, e)
+                            continue
+                        if precio_hermano:
+                            precio_por_variacion[str(hermano.conn_variation_id)] = precio_hermano
+
                 vars = []
                 for varx in pjson["variations"]:
                 #_logger.info("Posting using product.meli_id_variation")
                     var = {
                         "id": varx["id"],
-                        "price": meli_price,
-                        #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                        "price": precio_por_variacion.get(str(varx["id"]), meli_price),
+                        #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
                     }
                     vars.append(var)
                 #_logger.info("product_post_price (variations):"+str(vars))
@@ -4824,6 +5778,13 @@ class product_product(models.Model):
 
     def _meli_update_logistic_type(self, meli_id=None, meli=False, config=False, rjson=None):
 
+        # [caso-K01 #caso-K33] Tipo logistico ya conocido (el guardado en la vinculacion): se usa tal cual,
+        # sin GET a ML y sin escribir producto/vinculaciones. Lo usan el stock en vivo de la
+        # vinculacion (lista/filtro) y el diagnostico de stock de meli_oerp.
+        _hint = self.env.context.get('meli_logistic_type_hint')
+        if _hint is not None:
+            return _hint or ""
+
         company = self.env.user.company_id
         product = self
         config = config or company
@@ -4901,7 +5862,7 @@ class product_product(models.Model):
             return
 
         product_count = len(self)
-        _logger.info("MELI_BENCHMARK process_meli_stock_moves_update START: %d products", product_count)
+        _logger.debug("MELI_BENCHMARK process_meli_stock_moves_update START: %d products", product_count)
 
         # Choose strategy based on batch size
         if product_count < self.MELI_LARGE_BATCH_THRESHOLD:
@@ -4912,7 +5873,7 @@ class product_product(models.Model):
             self._process_stock_update_sql_only()
 
         t_total = time.time() - t_start
-        _logger.info(
+        _logger.debug(
             "MELI_BENCHMARK process_meli_stock_moves_update END: %d products in %.3fs (%.1f products/sec)",
             product_count, t_total, product_count / t_total if t_total > 0 else 0
         )
@@ -4943,7 +5904,7 @@ class product_product(models.Model):
             pv_binds.process_meli_stock_moves_update()
         t3_end = time.time()
 
-        _logger.info(
+        _logger.debug(
             "MELI_BENCHMARK _process_stock_update_orm: products=%d, bindings=%d, "
             "update_products=%.3fs, search_bindings=%.3fs, update_bindings=%.3fs",
             len(self), len(pv_binds), t1_end - t1, t2_end - t2, t3_end - t3
@@ -4980,17 +5941,21 @@ class product_product(models.Model):
             t_chunk = time.time()
 
             # Step 1: SQL UPDATE for products - set meli_stock_moves_update to NOW()
+            # 26.87 (F1b): GREATEST(...) — el sello es monotono, nunca retrocede.
             self.env.cr.execute("""
                 UPDATE product_product
-                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                SET meli_stock_moves_update = GREATEST(
+                        meli_stock_moves_update, NOW() AT TIME ZONE 'UTC')
                 WHERE id IN %s
             """, (tuple(chunk_ids),))
 
             # Step 2: SQL UPDATE for bindings - sync dates from product
             self.env.cr.execute("""
                 UPDATE mercadolibre_product mp
-                SET meli_stock_moves_update = NOW() AT TIME ZONE 'UTC',
-                    product_meli_stock_moves_update = NOW() AT TIME ZONE 'UTC'
+                SET meli_stock_moves_update = GREATEST(
+                        mp.meli_stock_moves_update, NOW() AT TIME ZONE 'UTC'),
+                    product_meli_stock_moves_update = GREATEST(
+                        mp.product_meli_stock_moves_update, NOW() AT TIME ZONE 'UTC')
                 WHERE mp.product_id IN %s
             """, (tuple(chunk_ids),))
             bindings_in_chunk = self.env.cr.rowcount
@@ -5010,7 +5975,7 @@ class product_product(models.Model):
             total_bindings_updated += bindings_in_chunk
 
             t_chunk_end = time.time()
-            _logger.info(
+            _logger.debug(
                 "MELI_BENCHMARK _process_stock_update_sql_only chunk %d/%d: "
                 "products=%d, bindings=%d, time=%.3fs",
                 chunk_num, total_chunks, len(chunk_ids), bindings_in_chunk, t_chunk_end - t_chunk
@@ -5023,7 +5988,7 @@ class product_product(models.Model):
         ])
 
         t_total = time.time() - t_start
-        _logger.info(
+        _logger.debug(
             "MELI_BENCHMARK _process_stock_update_sql_only COMPLETE: "
             "products=%d, bindings=%d, total_time=%.3fs, rate=%.0f products/sec",
             product_count, total_bindings_updated, t_total,

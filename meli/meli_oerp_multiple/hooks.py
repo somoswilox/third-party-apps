@@ -77,17 +77,22 @@ def post_init_hook(env):
 
     # Fix individual crons stuck at numbercall=0 or with a past nextcall that never advanced
     from odoo import fields as odoo_fields
-    broken_crons = env['ir.cron'].sudo().search([
-        ('name', 'like', '[MELI-'),
-        ('active', '=', True),
-        ('numbercall', '=', 0),
-    ])
-    if broken_crons:
-        broken_crons.write({'numbercall': -1})
-        _logger.info(
-            "meli_oerp_multiple: Fixed %d individual Meli crons stuck at numbercall=0",
-            len(broken_crons)
-        )
+    # un caso: 'numbercall' se ELIMINO de ir.cron en Odoo 18. Buscar por un campo que no
+    # existe levanta ValueError y, como esto corre en el hook de instalacion/actualizacion,
+    # se lleva puesta la actualizacion del modulo entera. En 18+ no hay nada que reparar:
+    # el cron ya es indefinido por definicion. Se pregunta por el campo, no por la version.
+    if 'numbercall' in env['ir.cron']._fields:
+        broken_crons = env['ir.cron'].sudo().search([
+            ('name', 'like', '[MELI-'),
+            ('active', '=', True),
+            ('numbercall', '=', 0),
+        ])
+        if broken_crons:
+            broken_crons.write({'numbercall': -1})
+            _logger.info(
+                "meli_oerp_multiple: Fixed %d individual Meli crons stuck at numbercall=0",
+                len(broken_crons)
+            )
 
     # Reset nextcall to now for stuck individual crons so they run on the next scheduler tick
     stuck_crons = env['ir.cron'].sudo().search([

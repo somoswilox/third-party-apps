@@ -31,7 +31,11 @@ class SaleOrder(models.Model):
 
     _inherit = "sale.order"
 
-    ocapi_bindings = fields.Many2many( "ocapi.binding.sale_order", string="Ocapi Connection Bindings" )
+    # 26.304: groups= como mercadolibre_bindings (meli_oerp_multiple). El formulario de Venta pide
+    # este M2M (pagina invisible) con `order` => web_read hace search() sobre el comodelo y daba
+    # AccessError a todo usuario sin "Odoo Connectors Api Manager", aunque el M2M este vacio.
+    ocapi_bindings = fields.Many2many( "ocapi.binding.sale_order", string="Ocapi Connection Bindings",
+                                       groups="odoo_connector_api.group_ocapi_connectors_manager" )
 
 class SaleOrderLine(models.Model):
 

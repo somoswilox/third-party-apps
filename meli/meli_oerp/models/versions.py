@@ -140,6 +140,59 @@ def meli_message_already_posted(record, once_key):
         return False
 
 
+
+def meli_message_text_posted(record, text):
+    """True si el chatter de `record` ya tiene un mensaje que contiene `text` (con o sin marca).
+
+    26.394 (un caso): guarda de legado para los avisos que pasaron a `once_key` — las ventas
+    anteriores los tienen sin marca. Búsqueda por (model, res_id), indexada; sólo lectura."""
+    if not record or not text or not record.id:
+        return False
+    try:
+        return bool(record.env['mail.message'].sudo().search_count([
+            ('model', '=', record._name),
+            ('res_id', '=', record.id),
+            ('body', 'like', text),
+        ], limit=1))
+    except Exception as e:
+        _logger.warning("meli_message_text_posted failed on %s(%s): %s", record._name, record.id, e)
+        return False
+
+# ---------------------------------------------------------------------------
+# 26.309 (caso-K02): venta BLOQUEADA para actualizar desde ML (`sale.order.meli_update_forbidden`).
+# El freno es correcto (no escribe nada), pero se logueaba ERROR en CADA llamada y la notificacion
+# quedaba FAILED => el cron de notificaciones (RECEIVED + FAILED) la reintentaba en cada corrida,
+# para siempre. Ahora: WARNING una vez por venta y por proceso (despues DEBUG) y el retorno trae la
+# marca `meli_update_forbidden` para que la notificacion se cierre como SUCCESS sin reintento.
+MELI_UPDATE_FORBIDDEN_ERRORS = ('Forbidden to upate by meli_oerp', 'Forbidden to update sale order by meli_oerp')
+_MELI_UPDATE_FORBIDDEN_WARNED = set()
+
+
+def meli_is_update_forbidden_error(err):
+    """True si `err` (str o dict de retorno) es el freno de venta bloqueada."""
+    if isinstance(err, dict):
+        if err.get('meli_update_forbidden'):
+            return True
+        err = err.get('error')
+    return any(m in str(err or '') for m in MELI_UPDATE_FORBIDDEN_ERRORS)
+
+
+def meli_log_update_forbidden(logger, sorder, where=''):
+    """WARNING la primera vez por venta en este proceso; las siguientes DEBUG."""
+    key = (getattr(sorder, '_name', ''), getattr(sorder, 'id', None))
+    if key in _MELI_UPDATE_FORBIDDEN_WARNED:
+        logger.debug("MELI_UPDATE_FORBIDDEN: venta %s bloqueada (ya avisado)%s",
+                     getattr(sorder, 'name', key[1]), where)
+        return False
+    if len(_MELI_UPDATE_FORBIDDEN_WARNED) > 50000:
+        _MELI_UPDATE_FORBIDDEN_WARNED.clear()
+    _MELI_UPDATE_FORBIDDEN_WARNED.add(key)
+    logger.warning("MELI_UPDATE_FORBIDDEN: venta %s bloqueada para actualizar desde ML "
+                   "(No actualizar desde ML = activo): no se escribe nada%s",
+                   getattr(sorder, 'name', key[1]), where)
+    return True
+
+
 def meli_message_body_with_marker(body, once_key):
     """Devuelve `body` con la marca `once_key` pegada al final, invisible en el chatter.
 
@@ -155,7 +208,7 @@ def meli_message_body_with_marker(body, once_key):
     return markup_escape(body) + Markup(meli_once_marker(once_key))
 
 
-def meli_message_post(record, body, config=None, once_key=None):
+def meli_message_post(record, body, config=None, once_key=None, force_chatter=False, legacy_text=None, routine=False):
     """Post a message respecting the MeLi notification mode setting.
 
     config: res.company or connection_account record with mercadolibre_notification_mode field.
@@ -169,10 +222,19 @@ def meli_message_post(record, body, config=None, once_key=None):
            aviso se repetía cada ~5 min para siempre — visto en prod con 1215 y 832
            mensajes en el chatter de dos órdenes.
 
+    legacy_text: (26.394) sólo con `once_key`. Texto del aviso tal como se posteaba
+           ANTES de llevar marca: si el chatter ya lo tiene (venta vieja, sin marca), tampoco
+           se repostea. Así el cambio a once_key no reabre una ronda de avisos en ventas viejas.
+
+    routine: (26.394) aviso de RUTINA de la sincronización (venta creada, almacén asignado, monto
+           correcto, compañías coinciden). Sólo cambia algo con el modo 'important'.
+
     Modes:
       - 'notification': standard notification (appears in user inbox)
       - 'internal_note': logged in chatter as internal note (no inbox notification)
       - 'none': only server log, no chatter message at all
+      - 'important': (26.394) los avisos `routine` van sólo al log; el resto como nota interna
+        (lo que pide una acción sigue visible en el chatter, sin inbox).
     """
     if not record:
         return
@@ -182,12 +244,21 @@ def meli_message_post(record, body, config=None, once_key=None):
     if config and 'mercadolibre_notification_mode' in config._fields:
         mode = config.mercadolibre_notification_mode or 'notification'
 
+    if mode == 'important':
+        # 26.394 (un caso): bajar el volumen del chatter sin esconder lo accionable.
+        mode = 'none' if (routine and not force_chatter) else 'internal_note'
+    if mode == 'none' and force_chatter:
+        # [26.270] Aviso de DINERO BLOQUEADO (cobro/pago que no se registro): el modo 'none'
+        # existe para bajar ruido, no para esconder plata sin registrar. Va como nota interna
+        # (sin inbox), una vez por pago (once_key).
+        mode = 'internal_note'
     if mode == 'none':
         _logger.info("MELI [%s] %s: %s", record._name, getattr(record, 'name', record.id), body)
         return
 
     if once_key:
-        if meli_message_already_posted(record, once_key):
+        if meli_message_already_posted(record, once_key) or (
+                legacy_text and meli_message_text_posted(record, legacy_text)):
             _logger.info("MELI [%s] %s (ya posteado, once_key=%s): %s",
                          record._name, getattr(record, 'name', record.id), once_key, body)
             return
@@ -212,7 +283,30 @@ def meli_message_post(record, body, config=None, once_key=None):
         record.message_post(**kwargs)
     except Exception as e:
         _logger.warning("meli_message_post failed on %s(%s): %s", record._name, record.id, e)
-disable_cancel_warning_enabled = False
+# ---------------------------------------------------------------------------
+# disable_cancel_warning: clave de CONTEXTO del core de Odoo (addon `sale`).
+#
+# LEER EL NOMBRE DESPACIO -- es un doble negativo y ya nos costo caro.
+#   True  = "desactiva el aviso"  -> `_show_cancel_wizard()` corta y `action_cancel()`
+#           CANCELA de verdad y devuelve un bool.
+#   False = "deja el aviso"       -> `action_cancel()` NO cancela: DEVUELVE el dict del
+#           wizard `sale.order.cancel` para que lo abra la interfaz. Sin excepcion y sin
+#           log. Llamado desde un cron, no cancela absolutamente nada y parece que si.
+#
+# Historia: nacio en `True` (25.20, sep-2025). El commit "Upgraded 18.0.25.29" (nov-2025)
+# reemplazo los `disable_cancel_warning=True` literales por esta constante y en el mismo
+# movimiento la puso en `False`, invirtiendo el sentido de los CUATRO call sites de una
+# sola vez. Desde entonces `meli_cancel_with_detail()` no cancela ninguna venta confirmada.
+# `meli_oerp_multiple` nunca paso por ese refactor y sigue con el `True` literal -- o sea
+# que la intencion original esta a la vista.
+#
+# YA NO SE USA COMO VALOR DE CONTEXTO: el valor efectivo lo fuerza
+# `sale.order._meli_action_cancel()`, que ademas VERIFICA que la venta haya quedado en
+# 'cancel'. Se conserva el nombre (y en `True`) porque `versions` se importa con `*` y
+# porque un `False` aca vuelve a ser una bomba silenciosa.
+#
+# ---------------------------------------------------------------------------
+disable_cancel_warning_enabled = True
 price_list_apply_tax = True
 search_partner_vat_match = False
 mercadolibre_shipment_print_guide_mode = "pdf"
@@ -228,19 +322,10 @@ mercadolibre_shipment_print_guide_mode = "pdf"
 #   versions.USE_MELI_SDK = True   # forzar SDK
 #   versions.USE_MELI_SDK = False  # forzar requests
 # ---------------------------------------------------------------------------
+# el SDK oficial NO se usa. Fijo en False y sin `import meli`:
+# todas las llamadas salen por requests (MeliApiNoSDK) y por el host de meli_api_url.
 MELI_SDK_AVAILABLE = False
-try:
-    import meli as _meli_sdk_probe
-    MELI_SDK_AVAILABLE = True
-    _logger.info("meli SDK disponible")
-except ImportError:
-    _logger.info("meli SDK no disponible - Usando requests directo")
-
-# Por defecto: usar SDK solo si está instalado
-USE_MELI_SDK = MELI_SDK_AVAILABLE
-
-#forzar NO SDK: comentar siguiente linea
-#USE_MELI_SDK = False
+USE_MELI_SDK = False
 
 # Detectar si unidecode está disponible
 UNIDECODE_AVAILABLE = False
@@ -382,50 +467,114 @@ def SaleOrderLineUomField(self):
     return 'product_uom_id'
 
 
-def UpdateProductType( product ):
+def MeliInvoicePolicy( prod, config=None ):
+    """Politica de facturacion a mandar JUNTO con un write de 'type'.
+
+    ERROR-012 -- POR QUE ESTA FUNCION EXISTE.
+    En Odoo 17/18/19 `product.template.invoice_policy` es un compute
+    `store=True, readonly=False` que **depende de `type`**
+    (`addons/sale/models/product_template.py`): cualquier write sobre `type` lo
+    recalcula y lo fuerza a `'order'`. Como el conector escribia `type='consu'` en
+    cada importacion de orden, le pisaba al cliente la politica que habia elegido,
+    en silencio y varias veces por dia.
+
+    Un valor EXPLICITO en el mismo write le gana al compute. Orden de precedencia:
+      1. la politica configurada en la CUENTA (`mercadolibre.configuration`),
+      2. si no, la configurada en la COMPANIA (`res.company`),
+      3. si no, **la que el producto ya tenia** -> se preserva y nada cambia,
+      4. si el campo no existe (sin modulo `sale`), no se manda nada.
+
+    El punto 3 es lo que implementa "dejarla vacia = accion predeterminada": sobre
+    un producto que ya existe, lo predeterminado es **no cambiarle nada**.
+    """
+    if not prod or "invoice_policy" not in prod._fields:
+        return {}
+
+    politica = False
+    for origen in (config, getattr(prod, "company_id", False)):
+        if not origen:
+            continue
+        if "mercadolibre_product_invoice_policy" in origen._fields:
+            politica = origen.mercadolibre_product_invoice_policy
+            if politica:
+                break
+
+    politica = politica or prod.invoice_policy
+    return {"invoice_policy": politica} if politica else {}
+
+
+def UpdateProductType( product, config=None ):
+    """Deja el producto como almacenable, SIN pisar la politica de facturacion.
+
+    ERROR-012: antes esta funcion escribia `type='consu'` **siempre**, porque su
+    guard (`prod.type not in ['product']`) era de Odoo <=16 -- en 17/18/19 el valor
+    `'product'` ya no existe, asi que la condicion daba verdadero incluso cuando
+    el producto YA era `consu`. Ese write inutil disparaba el recalculo de
+    `invoice_policy`. Ahora solo se escribe **si hay algo que cambiar**, y cuando
+    se escribe va la politica explicita para que el compute no gane.
+    """
     if not product:
         return
     for prod in product:
-        if (prod and "detailed_type" in prod._fields and prod.detailed_type not in ['product']):
-            failed = False
-            try:
-                prod.write( { 'detailed_type': 'consu' } )
-            except Exception as e:
-                _logger.info("Set detailed_type almacenable ('consu') not possible:")
-                _logger.error(e, exc_info=True)
-                failed = True
-                pass;
+        vals = {}
 
-        if (prod and "type" in prod._fields and prod.type not in ['product']):
-            failed = False
-            try:
-                prod.write( { 'type': 'consu' } )
-            except Exception as e:
-                _logger.info("Set type almacenable ('consu') not possible:")
-                _logger.error(e, exc_info=True)
-                failed = True
-                pass;
+        # Odoo <=16: detailed_type. Se mantiene por compatibilidad hacia atras.
+        if "detailed_type" in prod._fields and prod.detailed_type != 'consu':
+            vals['detailed_type'] = 'consu'
 
-        if (prod and "is_storable" in prod._fields and prod.is_storable):
-            failed = False
-            try:
-                prod.write( { 'is_storable': True } )
-            except Exception as e:
-                _logger.info("Set type is_storable ('is_storable') not possible:")
-                _logger.error(e, exc_info=True)
-                failed = True
-                pass;
+        if "type" in prod._fields and prod.type != 'consu':
+            vals['type'] = 'consu'
 
-            query = """UPDATE product_template SET type='consu', is_storable=True WHERE id=%i""" % (prod.id)
-            cr = prod.env.cr
-            respquery = cr.execute(query)
+        # Guard invertido (defecto historico): decia `if prod.is_storable`, o sea
+        # solo escribia cuando YA era True -- un no-op -- y nunca cumplia su objetivo.
+        if "is_storable" in prod._fields and not prod.is_storable:
+            vals['is_storable'] = True
+
+        # Nada que cambiar => NO se escribe. Este early-continue es el que elimina
+        # la enorme mayoria de los reverts de politica.
+        if not vals:
+            continue
+
+        vals.update( MeliInvoicePolicy( prod, config=config ) )
+
+        try:
+            prod.write( vals )
+        except Exception as e:
+            _logger.info("UpdateProductType: no se pudo actualizar el producto %s: %s",
+                         getattr(prod, 'id', '?'), vals)
+            _logger.error(e, exc_info=True)
+
 
 def ProductType():
+    """Valores de tipo para el ALTA de un producto creado por el conector.
+
+    Para escrituras sobre productos que YA existen no usar esto directamente:
+    usar `ProductTypeWrite(prod, config)`, que ademas preserva la politica.
+    """
     return {
         "type": "consu",
         "is_storable": True
         #"detailed_type": "consu"
     }
+
+
+def ProductTypeWrite( prod, config=None ):
+    """`ProductType()` + la politica de facturacion, para writes sobre productos existentes.
+
+    Devuelve **{}** si el producto ya esta como corresponde, para no disparar el
+    recalculo de `invoice_policy` con un write que no cambia nada (ERROR-012).
+    """
+    vals = {}
+    if not prod:
+        return vals
+    if "type" in prod._fields and prod.type != 'consu':
+        vals["type"] = "consu"
+    if "is_storable" in prod._fields and not prod.is_storable:
+        vals["is_storable"] = True
+    if not vals:
+        return {}
+    vals.update( MeliInvoicePolicy( prod, config=config ) )
+    return vals
 
 # Odoo 12.0 -> Odoo 13.0
 prod_att_line = "product.template.attribute.line"
@@ -439,6 +588,24 @@ stock_inv_model = "stock.quant"
 # default_create_variant
 default_no_create_variant = "no_variant"
 default_create_variant = "always"
+
+# Atributos de ML que NUNCA deben generar variantes en Odoo, aunque ML los
+# declare variation_attribute y no hidden.
+#
+# ML los marca "de variacion" porque del lado de ML cada variacion puede llevar
+# su propio codigo/SKU. Pero en Odoo eso NO es una caracteristica del producto:
+# el GTIN es el campo `barcode` de la variante y el SELLER_SKU su `default_code`.
+# Tomarlos como generadores abre UNA VARIANTE POR CADA CODIGO, que es justo lo
+# contrario de para lo que se usan las variantes.
+#
+# SELLER_SKU hoy se salva solo porque ML lo manda hidden=true; si ML cambiara
+# ese flag rompe igual. Por eso va en la lista y no se deja librado al flag.
+meli_attributes_never_variant = ("GTIN", "SELLER_SKU")
+
+
+def meli_attribute_is_never_variant( att_id ):
+    """True si ese att_id de ML no debe generar variantes nunca."""
+    return bool(att_id) and str(att_id).strip().upper() in meli_attributes_never_variant
 
 #'unique(product_tmpl_id,meli_imagen_id)'
 unique_meli_imagen_id_fields = 'unique(product_tmpl_id,product_variant_id,meli_imagen_id)'
@@ -527,20 +694,29 @@ def stock_picking_set_quantities( picking ):
 def stock_inventory_action_done( self, product, stock, config ):
     return_id = False
     uomobj = self.env[uom_model]
-    whid = self.env['stock.location'].search([('usage','=','internal')]).id
+    # `.id` sobre TODAS las ubicaciones internas (ValueError con mas de una): la del deposito de la compania.
+    _company = (config and 'company_id' in config._fields and config.company_id) or self.env.company
+    whid = self.env['stock.warehouse'].search([('company_id','=',_company.id)], limit=1).lot_stock_id.id \
+        or self.env['stock.location'].search([('usage','=','internal')], limit=1).id
     product_uom_id = uomobj.search([('name','=','Unidad(es)')])
     if (product_uom_id.id==False):
         product_uom_id = 1
     else:
         product_uom_id = product_uom_id.id
 
-    stock_inventory_fields = get_inventory_fields( product, whid, quantity=_stock )
+    # C-1: decia `quantity=_stock` (NameError: `_stock` es local del llamador, que lo pasa como `stock`)
+    # y aplicaba el inventario sobre `self` (el producto). Desde el port 15.0 (28057b33) la funcion
+    # recibia el registro de inventario: se aplica sobre el quant creado. Unico llamador: product.py
+    # product_update_stock, hoy detras de `1==2` (no corre).
+    stock_inventory_fields = get_inventory_fields( product, whid, quantity=stock )
 
     _logger.info("stock_inventory_fields:")
     _logger.info(stock_inventory_fields)
-    StockInventory = self.env[stock_inv_model].create(stock_inventory_fields)
+    # inventory_mode en el CREATE: asi el quant existente de esa ubicacion toma inventory_quantity (y queda
+    # marcado para aplicar); sin el contexto se creaba un quant aparte en 0 y el apply no movia nada.
+    StockInventory = self.env[stock_inv_model].with_context(inventory_mode=True).create(stock_inventory_fields)
     if (StockInventory):
-        return_id = self.with_context(inventory_mode=True)._apply_inventory()
+        return_id = StockInventory.with_context(inventory_mode=True)._apply_inventory()
     return return_id
 
 def ml_datetime(datestr):
@@ -561,25 +737,65 @@ def ml_datetime(datestr):
         return None
 
 def ml_tax_excluded(self, config=None ):
-    #11.0
-    #tax_excluded = self.env.user.has_group('sale.group_show_price_subtotal')
-    #12.0 and 13.0
-    tax_excluded = self.env.user.has_group('account.group_show_line_subtotals_tax_excluded')
+    """True = el precio de lista de Odoo es NETO (al publicar se suma el IVA; al importar se netea).
 
+    [caso-K11/caso-K10] (19-oct-2026) `auto` ("Configuracion del sistema") se resolvia con el grupo
+    account.group_show_line_subtotals_tax_excluded, que existe SOLO hasta Odoo 16 (17 lo movio a
+    website_sale; 18/19 usan res.company.account_price_include). En 17+ has_group() de un xmlid
+    inexistente da False, asi que `auto` ya era "lista con impuestos incluidos" para publicar e
+    importar precios. Se deja EXPLICITO y sin depender de un xmlid que no existe; NO se cambia el
+    significado: este flag gobierna el precio PUBLICADO (price_list_apply_tax=True) y atarlo a
+    account_price_include (default 'tax_excluded') subiria x1,21 lo publicado de todo cliente 17+
+    con `auto`. Las ORDENES no dependen de esto: ver ml_product_price_conversion [#caso-K23].
+    """
     company = (config and "company_id" in config._fields and config.company_id) or self.env.user.company_id
     config = config or company
     if (config and config.mercadolibre_tax_included not in ['auto']):
-        tax_excluded = (config.mercadolibre_tax_included in ['tax_excluded'])
-    return tax_excluded
+        return (config.mercadolibre_tax_included in ['tax_excluded'])
+    #11.0: 'sale.group_show_price_subtotal' / 12.0 a 16.0: el grupo de abajo / 17.0+: no existe
+    if self.env.ref('account.group_show_line_subtotals_tax_excluded', raise_if_not_found=False):
+        return self.env.user.has_group('account.group_show_line_subtotals_tax_excluded')
+    return False
+
+def ml_sale_tax_rates(taxes, company=None):
+    """(porcentaje, fijo) de los impuestos de VENTA no incluidos en precio, SOLO de `company`.
+
+    [caso-K10] (19-oct-2026) Un producto compartido entre compañias lleva en taxes_id el IVA de CADA
+    una: sumarlos todos dividia/multiplicaba por 1,42 en vez de 1,21 con dos compañias. Sin
+    compañia (llamador viejo) se suman todos, como antes.
+    """
+    txpercent = 0.0
+    txfixed = 0.0
+    for txid in (taxes or []):
+        if company and txid.company_id and txid.company_id != company:
+            continue
+        if (txid.type_tax_use == "sale" and not txid.price_include):
+            if (txid.amount_type == "percent"):
+                txpercent = txpercent + txid.amount
+            if (txid.amount_type == "fixed"):
+                txfixed = txfixed + txid.amount
+    return txpercent, txfixed
 
 def ml_product_price_conversion( self, product_related_obj, price, config=None):
+    """Importe que COBRA ML (unitario de una orden, o flete) -> price_unit de la linea de venta.
+
+    [caso de un cliente] El precio de una venta de ML es SIEMPRE final, con impuestos incluidos.
+    Por eso se netea siempre por los impuestos de venta NO incluidos del producto (los
+    `price_include` ya lo absorben solos), de modo que total Odoo == lo cobrado en ML.
+
+    Antes esto dependia de ml_tax_excluded(config), o sea de `mercadolibre_tax_included`,
+    que es el flag de la PUBLICACION (si la lista de precios de Odoo trae IVA o no). Un mismo
+    campo gobernaba dos cosas: al pasar la conf a 'tax_included' (para publicar la lista tal
+    cual, que ya trae IVA), las ordenes importadas dejaron de netearse y entraron x1,16
+    (impuesto de 16 % no incluido sumado encima), y el control de montos de confirm_ml las
+    frenaba en presupuesto. La PUBLICACION sigue usando ml_tax_excluded() sin cambios.
+    """
     company_id = ("company_id" in config._fields and config.company_id) or config
     product_template = product_related_obj.product_tmpl_id
     ml_price_converted = float(price)
-    tax_excluded = ml_tax_excluded( self, config=config )
-    #tax_excluded = True
+    # Sin depender de ml_tax_excluded(): ver docstring [un caso].
     #_logger.info("Taxes:"+str(product_template.taxes_id))
-    if ( tax_excluded and product_template.taxes_id ):
+    if ( product_template.taxes_id ):
         txfixed = 0
         txpercent = 0
         #_logger.info("Adjust taxes")
@@ -620,7 +836,7 @@ def meli_resolve_coupon_invoice_mode(config):
     """Modo de facturacion del cupon ML (tri-estado). Devuelve 'full'|'product_discount'|'separate_line'.
 
       - full (default): factura a precio pleno; el cupon ML (reembolsado por ML, vendedor
-        made-whole) NO se refleja en lineas. [caso #433 Elvimarta]
+        made-whole) NO se refleja en lineas. [caso un cliente]
       - product_discount: el cupon se imputa como descuento (%) sobre las lineas de PRODUCTO.
       - separate_line: el cupon se imputa como linea(s) de descuento separada(s), una por grupo
         de impuesto (prorrateo), sin tocar producto ni envio. OPT-IN (riesgos AFIP/CL).
@@ -636,6 +852,25 @@ def meli_resolve_coupon_invoice_mode(config):
     if "meli_coupon_discount_on_invoice" in config._fields:
         return "product_discount" if config.meli_coupon_discount_on_invoice else "full"
     return "full"
+
+
+def meli_shipping_cost_as_purchase_price(config):
+    """True si el flete de ML debe imputarse como COSTE (purchase_price) en la linea de envio.
+
+    Campo: mercadolibre_shipping_cost_as_purchase_price (meli_oerp_multiple, configuracion de la
+    cuenta). Default True = comportamiento historico: la linea de envio lleva como coste el flete
+    que ML le cobra al vendedor (shipping_seller_cost) y el margen del pedido lo descuenta.
+
+    En False la linea de envio se sigue creando y facturando EXACTAMENTE igual, pero queda sin
+    coste -> el margen del pedido no descuenta el flete (#caso-K66 / #caso-K64 cliente K: el control
+    vivia solo en el repo del cliente y un sync del source lo borro; 26.350 lo sube al source).
+
+    Compat: si el campo no existe (meli_oerp solo, sin multiple, o config que no lo define) se
+    devuelve True, o sea, nada cambia.
+    """
+    if not config or "mercadolibre_shipping_cost_as_purchase_price" not in config._fields:
+        return True
+    return bool(config.mercadolibre_shipping_cost_as_purchase_price)
 
 
 def _meli_line_tax_field(rec):
@@ -751,6 +986,33 @@ def get_delivery_line(sorder):
     return delivery_line
 
 
+def _meli_guard_delivery_write(sorder, delivery_line, delivery_price):
+    """True -> NO se debe escribir la linea de envio (la venta ya tiene factura posteada).
+
+    [caso de un cliente] El guard estaba SOLO dentro de set_delivery_line, con un comentario que
+    afirmaba que ese era "el unico lugar por el que pasan TODAS las reescrituras de la
+    linea de envio". No era cierto: shipment.py escribe `price_unit`/`qty_to_invoice`
+    DIRECTO sobre la linea, y `_remove_delivery_line()` la borra entera. Por esos caminos
+    la venta quedaba igual por debajo de su propia factura, y encima el chatter posteaba
+    "Cambio no aplicado" — un aviso falso, que es lo que el cliente nos marco el 5/8.
+
+    Extraido a helper para que TODO camino que toque la linea consulte lo mismo. No
+    levanta: ante cualquier error deja pasar la escritura (comportamiento previo) y avisa.
+    """
+    try:
+        if not hasattr(sorder, '_meli_guard_invoiced'):
+            return False
+        _current = (delivery_line and delivery_line.price_unit) or 0.0
+        # sin cambio real de precio no hay nada que proteger
+        if abs(float(_current) - float(delivery_price or 0.0)) <= 0.01:
+            return False
+        _detail = "envío %s -> %s" % (_current, delivery_price)
+        return bool(sorder._meli_guard_invoiced("la línea de envío", _detail))
+    except Exception as e:
+        _logger.warning("MELI guard de venta facturada: fallo en %s: %s",
+                        getattr(sorder, 'name', '?'), e)
+    return False
+
 
 def set_delivery_line( sorder, delivery_price, delivery_message ):
     """Setea el precio de la linea de envio SIN riesgo de perderla.
@@ -769,11 +1031,18 @@ def set_delivery_line( sorder, delivery_price, delivery_message ):
          deshace el borrado en vez de dejar la venta pelada;
       3) los fallos se loguean con la venta y el error reales.
 
-    Caso que lo destapo (Elvimarta, jul-2026): 47 ordenes quedaron sin flete en 7 semanas y
+    Caso que lo destapo (un cliente, jul-2026): 47 ordenes quedaron sin flete en 7 semanas y
     20 se facturaron por debajo de lo cobrado al comprador.
     """
     #check version
     delivery_line = get_delivery_line(sorder)
+
+    # [caso de un cliente] No tocar ventas YA FACTURADAS. Este es el punto por el que el
+    # conector dejaba el flete en 0 sobre ventas con factura posteada, y la venta
+    # quedaba por debajo de su propia factura.
+    if _meli_guard_delivery_write(sorder, delivery_line, delivery_price):
+        return delivery_line
+
     carrier = sorder.carrier_id
 
     if not carrier:
@@ -839,3 +1108,120 @@ def tax_names_equivalent(name1: str, name2: str) -> bool:
         return False
     # reconocemos equivalencia si las tasas son iguales
     return r1 == r2
+
+
+# ---------------------------------------------------------------------------
+# [26.269] Linea de metodo de pago EXPLICITA para los cobros/pagos de ML.
+#
+# El modulo creaba el account.payment con journal_id + payment_method_id pero sin
+# payment_method_line_id, asi que Odoo elegia la linea solo: en 18/19 la preferida
+# del partner y si no la PRIMERA linea del diario; en 16/17 la primera. La "Cuenta
+# de pagos pendientes" del cobro sale de esa linea (payment_account_id). En 18/19 no
+# hay default de compania: si la primera linea es "Online"/"En linea" sin cuenta, el
+# cobro queda SIN ASIENTO (visto en un cliente: los 3 diarios de cobro tenian "Online"
+# sin cuenta). En 16/17 la linea sin cuenta cae al default de la compania
+# (account_journal_payment_debit/credit_account_id) y en 18/19 Community Odoo pone la
+# cuenta pendiente del plan: esos defaults se respetan. El caso roto es 18/19 con
+# account_accountant (Enterprise / Odoo.sh), donde no hay default.
+#
+# Regla: si la linea que Odoo elegiria sola es valida, se usa ESA (sin cambio de
+# comportamiento). Si no, la primera linea del diario que si tenga cuenta. Si
+# ninguna es valida, devuelve una linea vacia + el motivo, y el que llama NO crea
+# el pago (un pago sin asiento es peor que un pago que falta y avisa).
+# ---------------------------------------------------------------------------
+def meli_payment_method_line_for(journal, payment_type='inbound', partner=None):
+    """Devuelve (account.payment.method.line, motivo). motivo == '' si hay linea valida."""
+    from odoo import release
+    env = journal.env
+    Line = env['account.payment.method.line']
+    if not journal:
+        return Line, "no hay diario de pagos configurado"
+    journal = journal[:1]
+    lines = journal._get_available_payment_method_lines(payment_type)
+    company = journal.company_id
+    default_field = ('account_journal_payment_debit_account_id' if payment_type == 'inbound'
+                     else 'account_journal_payment_credit_account_id')
+    company_default = default_field in company._fields and company[default_field]
+    if not company_default and release.version_info[0] >= 18:
+        # 18/19 SIN contabilidad completa (Community: _get_invoice_in_payment_state != 'in_payment'):
+        # al crear el pago Odoo le pone la cuenta pendiente del plan si la linea no tiene
+        # (account.payment.create -> _get_outstanding_account). Ese default se respeta. Con
+        # account_accountant (Enterprise / Odoo.sh) no hay default: linea sin cuenta = sin asiento.
+        Move = env['account.move']
+        if hasattr(Move, '_get_invoice_in_payment_state') and Move._get_invoice_in_payment_state() != 'in_payment':
+            company_default = True
+
+    def _valid(line):
+        return bool(line and (line.payment_account_id or company_default))
+
+    # Lo que Odoo elegiria solo (ver account.payment._compute_payment_method_line_id).
+    odoo_pick = Line
+    if partner and release.version_info[0] >= 18:
+        pref_field = ('property_inbound_payment_method_line_id' if payment_type == 'inbound'
+                      else 'property_outbound_payment_method_line_id')
+        if pref_field in partner._fields:
+            pref = partner.with_company(company)[pref_field]
+            if pref and pref.id in lines.ids:
+                odoo_pick = pref
+    odoo_pick = odoo_pick or lines[:1]
+    if _valid(odoo_pick):
+        return odoo_pick, ''
+    for line in lines:
+        if _valid(line):
+            _logger.info("MELI payment method line: diario %s, la linea por defecto '%s' no tiene "
+                         "cuenta de pagos pendientes; se usa '%s'.",
+                         journal.display_name, odoo_pick.name, line.name)
+            return line, ''
+    tipo = 'entrante' if payment_type == 'inbound' else 'saliente'
+    return Line, ("el diario '%s' no tiene ningun metodo de pago %s con 'Cuenta de pagos pendientes' "
+                  "configurada (Contabilidad > Configuracion > Diarios > %s > pestana de pagos). "
+                  "Sin esa cuenta el pago quedaria sin asiento." % (journal.display_name, tipo, journal.display_name))
+
+
+def meli_money_block_post(record, body, config=None, once_key=None):
+    """[26.270] Aviso de cobro/pago NO registrado: siempre queda en el chatter (nota interna si el
+    modo de notificaciones es 'none'). Si el registro no tiene chatter, queda en el log."""
+    _logger.warning("MELI dinero sin registrar [%s %s]: %s", record and record._name,
+                    record and record.ids, body)
+    if record and hasattr(record, 'message_post'):
+        meli_message_post(record, body, config=config, once_key=once_key, force_chatter=True)
+
+
+def meli_payment_commission_from_json(full_payment):
+    """[26.361] Comision de MercadoLibre de un pago de MercadoPago, para cuando la suma de los
+    cargos con nombre conocido (meli_percentage_fee / flat_fee / financing_add_on_fee) da 0.
+
+    Caso 430 (OFF 720, 2-nov-2026): MercadoPago empezo a informar la comision en charges_details
+    con el nombre `meli_fee` (source deferred-charges/fees-api). La ingesta ponia fee_amount=0 al
+    ver charges_details y solo sumaba los nombres conocidos: el pago quedaba con comision 0 aunque
+    fee_details dijera 300.30, y el pago a proveedor de comision se creaba por 0.00.
+
+    Orden: (1) fee_details application_fee que paga el vendedor (collector); (2) si no hay,
+    cargos type=fee que salen del vendedor, sin `financing_fee` (financiacion en cuotas: no es
+    comision). Devuelve 0.0 si no hay nada; nunca un negativo."""
+    fp = full_payment if isinstance(full_payment, dict) else {}
+    total = 0.0
+    for fd in (fp.get("fee_details") or []):
+        if not isinstance(fd, dict):
+            continue
+        if fd.get("type") == "application_fee" and fd.get("fee_payer") == "collector":
+            try:
+                total += float(fd.get("amount") or 0.0)
+            except (TypeError, ValueError):
+                pass
+    if total > 0.0:
+        return round(total, 2)
+    total = 0.0
+    for ch in (fp.get("charges_details") or []):
+        if not isinstance(ch, dict) or ch.get("type") != "fee":
+            continue
+        if (ch.get("name") or "").strip().lower() == "financing_fee":
+            continue
+        acc_from = (ch.get("accounts") or {}).get("from")
+        if acc_from and acc_from != "collector":
+            continue
+        try:
+            total += float((ch.get("amounts") or {}).get("original") or 0.0)
+        except (TypeError, ValueError):
+            pass
+    return round(total, 2) if total > 0.0 else 0.0

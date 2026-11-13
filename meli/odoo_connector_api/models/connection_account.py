@@ -21,8 +21,39 @@
 
 from odoo import fields, models, api
 from odoo.tools.translate import _
+from odoo.exceptions import UserError
+from .company import ocapi_hide_secrets, ocapi_strip_secret_export
 import logging
 _logger = logging.getLogger(__name__)
+
+
+# Secretos que NUNCA van en claro al log (mismo criterio que controllers.main._ocapi_redact_post).
+_OCAPI_LOG_SECRET_KEYS = ('access_token', 'refresh_token', 'secret_key', 'app_key', 'client_secret', 'code')
+
+
+try:  # 26.390: Odoo 18+ lo tiene en odoo.tools.json; en 19+ ya no está en date_utils
+    from odoo.tools.json import json_default as _ocapi_json_default
+except ImportError:
+    from odoo.tools.date_utils import json_default as _ocapi_json_default
+
+# 26.390: campos cuyo VALOR nunca sale por un /ocapi/<connector>[/<channel>]/status.
+OCAPI_STATUS_SECRET_SUFFIXES = ('access_token', 'refresh_token', 'secret_key', 'client_secret', 'password')
+
+
+def _ocapi_redact_status(data):
+    """Copia para LOGUEAR: secretos como '****'+ultimos 4, en dicts y listas anidadas."""
+    if isinstance(data, dict):
+        red = {}
+        for k, v in data.items():
+            if k in _OCAPI_LOG_SECRET_KEYS and v:
+                s = str(v)
+                red[k] = '****' + (s[-4:] if len(s) > 8 else '')
+            else:
+                red[k] = _ocapi_redact_status(v)
+        return red
+    if isinstance(data, (list, tuple)):
+        return [_ocapi_redact_status(x) for x in data]
+    return data
 import pdb
 #from .warning import warning
 import requests
@@ -41,6 +72,15 @@ class OcapiConnectionCredential(models.Model):
 
     _name = "ocapi.connection.credential"
     _description = "Odoo Connector Api Credentials"
+
+    # [#caso-K19] Secretos/tokens: sólo un Administrador los ve por pantalla, RPC o exportación.
+    # No se usa `groups=` en el campo: Odoo 19 también lo controla al leer desde Python y el
+    # propio módulo los necesita para publicar en nombre de cualquier usuario.
+    def _read_format(self, fnames, load='_classic_read'):
+        return ocapi_hide_secrets(self, super()._read_format(fnames, load=load))
+
+    def export_data(self, fields_to_export):
+        return super().export_data(ocapi_strip_secret_export(self, fields_to_export))
 
     name = fields.Char(string='Name',index=True, required=True)
 
@@ -65,13 +105,37 @@ class OcapiConnectionAccount(models.Model):
     _description = "Odoo Connector Api Account Credentials and Configuration"
     _inherit = ['portal.mixin', 'mail.thread', 'mail.activity.mixin','image.mixin']
 
+    # [#caso-K19] Secretos/tokens: sólo un Administrador los ve por pantalla, RPC o exportación.
+    # No se usa `groups=` en el campo: Odoo 19 también lo controla al leer desde Python y el
+    # propio módulo los necesita para publicar en nombre de cualquier usuario.
+    def _read_format(self, fnames, load='_classic_read'):
+        return ocapi_hide_secrets(self, super()._read_format(fnames, load=load))
+
+    def export_data(self, fields_to_export):
+        return super().export_data(ocapi_strip_secret_export(self, fields_to_export))
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            company = self.env['res.company'].browse(vals.get('company_id') or self.env.company.id)
+            if not company._ocapi_security_allows('status'):
+                vals['connection_monitor'] = False
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if vals.get('connection_monitor'):
+            for acc in self:
+                if not (acc.company_id or self.env.company)._ocapi_security_allows('status'):
+                    raise UserError(_("Con el Nivel de seguridad Alto de la compañía no se puede activar el Monitoreo."))
+        return super().write(vals)
+
     def get_connector_version(self):
         for acc in self:
             acc.connector_version = ''
             cr = MeliCr( self )
-            version_module_query = """select name, latest_version from ir_module_module where name like '%s'""" % (str("odoo_connector_api"))
             cr = MeliCr( self )
-            resquery = cr.execute(version_module_query)
+            # nombre del modulo como parametro (antes: armado con %); misma consulta (F8b 20.0)
+            resquery = cr.execute("""select name, latest_version from ir_module_module where name like %s""", ("odoo_connector_api",))
             version_module_res = cr.fetchall()
             if version_module_res:
                 acc.connector_version = str(version_module_res[0][1])
@@ -83,9 +147,9 @@ class OcapiConnectionAccount(models.Model):
         for acc in self:
             acc.ocapi_version = ''
             cr = MeliCr( self )
-            version_module_query = """select name, latest_version from ir_module_module where name like '%s'""" % (str("odoo_connector_api"))
             cr = MeliCr( self )
-            resquery = cr.execute(version_module_query)
+            # nombre del modulo como parametro (antes: armado con %); misma consulta (F8b 20.0)
+            resquery = cr.execute("""select name, latest_version from ir_module_module where name like %s""", ("odoo_connector_api",))
             version_module_res = cr.fetchall()
             if version_module_res:
                 acc.ocapi_version = str(version_module_res[0][1])
@@ -108,7 +172,12 @@ class OcapiConnectionAccount(models.Model):
     access_token_date_expiration = fields.Datetime( string="Vencimiento token", index=True )
     state = fields.Boolean( compute='get_connector_state', string='State', help="Estado de la conexión", store=False )
     seller_id = fields.Char(string='App Seller Id', help='App Seller Id',size=128,index=True)
-    connection_monitor = fields.Boolean( string="Monitoreo", help="Monitoreo remoto de status de conexión", default=True )
+    connection_monitor = fields.Boolean( string="Monitoreo", default=True,
+        help="Permite que el centro de soporte de Moldeo consulte desde afuera si esta cuenta está "
+             "conectada (estado y vencimiento del token). Esa consulta no devuelve ventas, clientes ni "
+             "productos, ni la clave secreta. Apagado: la consulta de estado no responde.\n"
+             "Lo demás que se expone hacia afuera lo define el Nivel de seguridad de la compañía: con Alto "
+             "esta casilla queda apagada y no se puede activar." )
 
     def get_messages_brief(self):
 
@@ -157,7 +226,7 @@ class OcapiConnectionAccount(models.Model):
 
             raw_conf = acc.configuration.read(fields_configuration)
 
-            json_conf+= jco + json.dumps( raw_conf[0], indent=2, default=date_utils.json_default)
+            json_conf+= jco + json.dumps( raw_conf[0], indent=2, default=_ocapi_json_default)
             jco = ","
 
 
@@ -197,7 +266,13 @@ class OcapiConnectionAccount(models.Model):
 
         for acc in self:
             if (acc.type == "custom"):
-                fields_credentials+= [ 'client_id', 'secret_key', 'seller_id','access_token', 'refresh_token']
+                # /status nunca devuelve secret_key ni refresh_token: quien consulta ya se
+                # autentico con el access_token, y devolverle la credencial permanente es una
+                # escalada (analisis caso-K52 cliente X, 27-oct-2026). Nadie los consume: el OFF
+                # pide /ocapi/<modulo>/status sin channel.
+                # 26.390: el access_token tampoco (aunque el que pregunta ya lo tenga, un /status
+                # no devuelve valores de secretos): fetch_status informa access_token_present.
+                fields_credentials+= [ 'client_id', 'seller_id']
                 fields_credentials+= [ 'state','access_token_date','access_token_date_expiration']
 
         return fields_credentials
@@ -233,12 +308,17 @@ class OcapiConnectionAccount(models.Model):
             raw_data = acc and acc.read(fields_status)
 
             if raw_data and raw_data[0]:
-                #json_status = json.dumps( raw_data, default=date_utils.json_default)
-                json_status = json.loads( json.dumps( raw_data[0], default=date_utils.json_default) )
+                #json_status = json.dumps( raw_data, default=_ocapi_json_default)
+                json_status = json.loads( json.dumps( raw_data[0], default=_ocapi_json_default) )
+                # 26.390 (seguridad): NUNCA valores de secretos en el /status, aunque un módulo
+                # hijo los agregue a get_fields_credentials. Sólo presencia.
+                for k in [k for k in json_status if k.endswith(OCAPI_STATUS_SECRET_SUFFIXES)]:
+                    json_status.pop(k, None)
+                json_status["access_token_present"] = bool(acc.access_token)
 
             result.append(json_status)
 
-        _logger.info("ocapi.account > fetch_status result: "+str(result))
+        _logger.info("ocapi.account > fetch_status result: "+str(_ocapi_redact_status(result)))
         return result
 
     def fetch_githook( self, **post ):
@@ -275,7 +355,7 @@ class OcapiConnectionAccount(models.Model):
 
     def list_pricestock( self, **post ):
         _logger.info("list_pricestock")
-        _logger.info(post)
+        _logger.info(_ocapi_redact_status(post))
         _logger.info(self)
         result = []
         #catalog = self.env["product.template"].search([('ocapi_connection_bindings','in',self.ids)])

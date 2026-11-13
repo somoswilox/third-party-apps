@@ -7,6 +7,7 @@
 ##############################################################################
 
 from . import company
+from . import ir_http
 from . import versions
 from . import warning
 from . import product

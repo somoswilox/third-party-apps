@@ -27,7 +27,6 @@ from .meli_oerp_config import *
 from .warning import warning
 
 import requests
-#from ..melisdk.meli import Meli
 
 # MULTIGET: Cache de categorías en RAM — evita search() por cada binding en importación masiva
 # {(db_name, meli_category_id): (ml_cat_id, www_cat_id)}
@@ -119,7 +118,7 @@ class product_public_category(models.Model):
 
     _inherit="product.public.category"
 
-    mercadolibre_category = fields.Many2one( "mercadolibre.category", string="Mercado Libre Category")
+    mercadolibre_category = fields.Many2one( "mercadolibre.category", string="Mercado Libre Category", index='btree_not_null')
 
 
 class mercadolibre_category_attribute(models.Model):
@@ -148,6 +147,11 @@ class mercadolibre_category_attribute(models.Model):
         #_logger.info("fix_attribute_create_variant, convierte de no crear variant a instantaneo")
         #Solo borra las lineas de valores de atributos de todos los productos si el atributo esta en modo create_variant
         meli_att_creates_variant = not self.hidden and self.variation_attribute
+        # misma lista negra que meli_default_create_variant: la regla de "esto es
+        # de variacion" vive en DOS lugares y tienen que coincidir, o el boton
+        # vuelve a promover lo que el importador ya dejo bien.
+        if meli_attribute_is_never_variant( self.att_id ):
+            meli_att_creates_variant = False
         #_logger.info("fix_attribute_create_variant, CONVERTIR SE DEBE")
 
         if meli_att_creates_variant:
@@ -174,7 +178,6 @@ class mercadolibre_category_attribute(models.Model):
                         except Exception as E:
                             _logger.error("Error intentando convertir: "+str(E))
                             pass;
-
 
     def fix_products_reimport( self ):
         #_logger.info("fix_products_reimport, reimportar")
@@ -353,8 +356,10 @@ class mercadolibre_category(models.Model):
             if www_cat_id:
                 p_cat_id = www_cats.search([('id','=',www_cat_id)],limit=1)
                 if (len(p_cat_id)):
-                    cat_fields['public_category_id'] = www_cat_id
-                    cat_fields['public_category'] = p_cat_id.id
+                    # C-1: aca quedaban `cat_fields[...] = ...` de cuando este metodo CREABA la categoria (fcd59b15,
+                    # antes de import_category) => NameError. Lo que el camino necesita es dejar la categoria ML
+                    # enlazada a la del sitio, para que la proxima vez salga de ml_cat.public_category_id.
+                    ml_cat.write({'public_category_id': www_cat_id, 'public_category': p_cat_id.id})
 
         # Guardar en cache solo lookups exitosos (mlcatid real). Cachear un mlcatid
         # vacio (login pendiente / categoria inexistente en ML / fallo transitorio)
@@ -375,6 +380,11 @@ class mercadolibre_category(models.Model):
         meli = self.get_meli(meli=meli)
 
         for category in self:
+            # Los dos campos computados por este método se asignan siempre: sin esto, una categoría
+            # nueva (form en blanco) o una raíz (path_from_root < 2) rompe con "Compute method failed
+            # to assign" (visto en el smoke de UI de 20.0; el mismo código está en 16–19).
+            category.meli_category_url = False
+            category.meli_father_category_id = False
             if (category and category.meli_category_id):
                 #_logger.info("_get_category_url:"+str(category.meli_category_id))
                 response_cat = meli.get("/categories/"+str(category.meli_category_id), {'access_token':meli.access_token})
@@ -406,6 +416,8 @@ class mercadolibre_category(models.Model):
         meli = self.get_meli(meli=meli)
 
         for category in self:
+            # Igual que en _get_category_url: el computado se asigna siempre (categoría nueva / rama).
+            category.meli_category_attributes = False
             if (category.meli_category_id
                 and category.is_branch==False
                 and ( 1==1 or category.meli_category_attribute_ids==None or len(category.meli_category_attribute_ids)==0 )):
@@ -470,7 +482,10 @@ class mercadolibre_category(models.Model):
 
                                 prod_att = {
                                     'name': att['name'],
-                                    'create_variant': self.env["product.attribute"].meli_default_create_variant(meli_attribute=attrs_field),
+                                    # att_id explicito: attrs_field solo lo trae en la rama
+                                    # de create, y sin el la lista negra no puede decidir.
+                                    'create_variant': self.env["product.attribute"].meli_default_create_variant(
+                                        meli_attribute=dict(attrs_field, att_id=att['id'])),
                                     'meli_default_id_attribute': attrs[0].id,
                                     #'meli_id': attrs[0].att_id
                                 }
@@ -537,7 +552,7 @@ class mercadolibre_category(models.Model):
         ml_cat_id = None
         www_cat_id = None
 
-        # FIX #532 (perf): camino LIVIANO para PREDICCIÓN/sugerencia de categorías. Para mostrar
+        # FIX un caso (perf): camino LIVIANO para PREDICCIÓN/sugerencia de categorías. Para mostrar
         # las opciones en el wizard alcanza id + nombre: NO importamos atributos (_get_attributes),
         # ni grid charts (get_search_chart_filters), ni catalog_domain_json, ni la categoría web.
         # Todo eso se difiere a la SELECCIÓN/publicación (apply_category hace un import completo de
@@ -612,10 +627,10 @@ class mercadolibre_category(models.Model):
                 #_logger.info(cat_fields)
                 ml_cat_id = ml_cat_id.create((cat_fields))
                 if (ml_cat_id.id and is_branch==False):
-                  # [solsun-local->source] Savepoints: los except desnudos de _get_attributes /
+                  # [caso de un cliente] Savepoints: los except desnudos de _get_attributes /
                   # get_search_chart_filters se tragan errores SQL y dejan la transaccion PG
                   # abortada; sin savepoint el CREATE de la categoria se iba en el rollback pero
-                  # el id ya estaba cacheado -> FK violation posterior en meli_category (#410 BUG 3).
+                  # el id ya estaba cacheado -> FK violation posterior en meli_category (un caso BUG 3).
                   try:
                       with self.env.cr.savepoint():
                           ml_cat_id._get_attributes(meli=meli)
@@ -659,7 +674,7 @@ class mercadolibre_category(models.Model):
                 ml_cat_id.write((cat_fields))
 
                 if (ml_cat_id.id and is_branch==False):
-                  # [solsun-local->source] Savepoints (2o call-site, camino write): idem create.
+                  # [caso de un cliente] Savepoints (2o call-site, camino write): idem create.
                   try:
                       with self.env.cr.savepoint():
                           ml_cat_id._get_attributes()
@@ -876,7 +891,7 @@ class mercadolibre_grid_value(models.Model):
     meli_id = fields.Char(string="Id",required=True,index=True)
     name = fields.Char(string="Nombre",index=True)
     value = fields.Char(string="Value",index=True)
-    att_id = fields.Many2one("mercadolibre.grid.attribute", string="Attribute")
+    att_id = fields.Many2one("mercadolibre.grid.attribute", string="Attribute", index='btree_not_null')
 
 
     def prepare_vals( self, djson ):
@@ -903,7 +918,7 @@ class mercadolibre_grid_attribute_line(models.Model):
     _name = "mercadolibre.grid.attribute.line"
     _description = "Linea de atributo de Guia de talles de MercadoLibre"
 
-    grid_chart_id = fields.Many2one("mercadolibre.grid.chart", string="row id")
+    grid_chart_id = fields.Many2one("mercadolibre.grid.chart", string="row id", index='btree_not_null')
     att_id = fields.Many2one("mercadolibre.grid.attribute", string="Attribute")
     val_id = fields.Many2one("mercadolibre.grid.value", string="Values")
 
@@ -919,7 +934,7 @@ class mercadolibre_grid_row_col(models.Model):
     _name = "mercadolibre.grid.row.col"
     _description = "Col de atributo de Guia de talles de MercadoLibre"
 
-    grid_row_id = fields.Many2one("mercadolibre.grid.row", string="Row id")
+    grid_row_id = fields.Many2one("mercadolibre.grid.row", string="Row id", index='btree_not_null')
     #att_id = fields.Many2one("mercadolibre.grid.attribute", string="Attribute")
     #val_id = fields.Many2one("mercadolibre.grid.value", string="Values")
     att_id = fields.Char(string="Id",required=True,index=True)
@@ -927,19 +942,6 @@ class mercadolibre_grid_row_col(models.Model):
     value = fields.Char(string="Value",required=True,index=True)
     number = fields.Char(string="Number",required=False,index=True)
     unit = fields.Char(string="Unit",required=False,index=True)
-
-    def name_get(self):
-        """Override because in general the name of the value is confusing if it
-        is displayed without the name of the corresponding attribute.
-        Eg. on product list & kanban views, on BOM form view
-
-        However during variant set up (on the product template form) the name of
-        the attribute is already on each line so there is no need to repeat it
-        on every value.
-        """
-        #if not self._context.get('show_attribute', True):
-        #    return super(mercadolibre_grid_row_col, self).name_get()
-        return [(col.att_id, "%s: %s" % (col.name, col.value)) for col in self]
 
     def prepare_vals( self, djson ):
 
@@ -967,7 +969,7 @@ class mercadolibre_grid_row(models.Model):
     _description = "Fila de guia de talles de MercadoLibre"
 
     row_id = fields.Char(string="Id",required=True,index=True)
-    grid_chart_id = fields.Many2one("mercadolibre.grid.chart", string="Chart id")
+    grid_chart_id = fields.Many2one("mercadolibre.grid.chart", string="Chart id", index='btree_not_null')
     attribute_values = fields.One2many("mercadolibre.grid.row.col", "grid_row_id", string="Attributes Values")
 
     def prepare_vals( self, djson ):

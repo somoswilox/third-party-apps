@@ -4,7 +4,6 @@ import base64
 
 from odoo import http, api
 
-#from ..melisdk.meli import Meli
 
 from odoo import fields
 from odoo.http import Controller, Response, request, route
@@ -14,6 +13,24 @@ from ..models.versions import route_typejson
 import pdb
 import logging
 _logger = logging.getLogger(__name__)
+
+# Seguridad (26.324): los endpoints OCAPI autentican con access_token (y /status con client_id+secret_key)
+# dentro del mismo post. Loguear el post entero dejaba esos secretos en claro en el log de cada cliente.
+_OCAPI_SECRET_KEYS = ('access_token', 'refresh_token', 'secret_key', 'app_key', 'client_secret')
+
+
+def _ocapi_redact_post(post):
+    """Copia del post para loguear: secretos de nivel superior como '****'+ultimos 4."""
+    if not isinstance(post, dict):
+        return post
+    red = {}
+    for k, v in post.items():
+        if k in _OCAPI_SECRET_KEYS and v:
+            s = str(v)
+            red[k] = '****' + (s[-4:] if len(s) > 8 else '')
+        else:
+            red[k] = v
+    return red
 
 
 
@@ -34,7 +51,7 @@ class OcapiAuthorize(http.Controller):
             _logger.info("Trying")
             access_token = a.authorize_token( client_id, secret_key )
             access_tokens.append({ 'client_id': client_id, 'access_token': access_token  })
-        _logger.info(access_tokens)
+        _logger.info("ocapi auth: %s token(s) emitidos", len(access_tokens))
         return access_tokens
 
     @http.route('/ocapi/<string:connector>/status', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
@@ -66,97 +83,54 @@ class OcapiCatalog(http.Controller):
     '/ocapi/<string:connector>/img/<string:productid>/<string:sku>/<string:imgid>/<string:quality>'],
                 auth='public', type='http', methods=['GET'], csrf=False, cors='*')
     def get_ocapi_image( self, connector, productid, sku=None, imgid=None, quality=None ):
-        _logger.info("get_ocapi_image")
-        _logger.info(str(connector))
-        _logger.info(str(productid))
-        _logger.info(str(sku))
-        _logger.info(str(imgid))
-        xmlid = None
-        model = "product.template"
-        id = productid
-        field = "image" #image_medium
+        """Imagen de un producto para los consumidores OCAPI (p.ej. meli_oerp_multiple arma
+        /ocapi/mercadolibre/img/<id>/<sku>/<default|product.image id>).
 
-        product_tmpl = None
-        product = None
-        validity = False
+        [#caso-K14] Antes usaba ir.http.binary_content, que no existe desde Odoo 16 (500 en 16-19), y los
+        campos 'image'/'image_medium', que no existen desde 13. Ahora va por ir.binary. Misma
+        resolucion que antes: plantilla si el sku coincide, si no variante; imgid != default =
+        product.image. Sin imagen => 404 (no placeholder: un consumidor lo subiria como foto).
+        """
+        record, field = self._ocapi_image_record(productid, sku=sku, imgid=imgid, quality=quality)
+        if not record:
+            return request.not_found()
+        stream = request.env['ir.binary']._get_image_stream_from(record, field_name=field)
+        return stream.get_response()
 
-
+    def _ocapi_image_record(self, productid, sku=None, imgid=None, quality=None):
+        """Devuelve (registro, campo) con imagen, o (None, None)."""
+        env = request.env
+        field = 'image_512' if (sku == 'medium' or quality == 'medium') else 'image_1920'
         try:
-            product_tmpl = request.env["product.template"].sudo().browse([productid])
-            validity = product_tmpl and sku and (product_tmpl.default_code==sku or product_tmpl.barcode==sku)
-            _logger.info(product_tmpl.default_code)
-            _logger.info(product_tmpl.barcode)
-            _logger.info("validity product_tmpl:"+str(validity))
-        except:
-            _logger.info("error no valid product for product_tmpl:"+str(product_tmpl))
-            product_tmpl = False
-            validity = False
+            pid = int(productid)
+        except (TypeError, ValueError):
+            return None, None
 
-        try:
-            if not validity:
-                model = "product.product"
-                product = request.env["product.product"].sudo(1).browse([productid])
-                validity = product and sku and (product.default_code==sku or product.barcode==sku)
-                _logger.info(product.default_code)
-                _logger.info(product.barcode)
-                _logger.info("validity product:"+str(validity))
-        except:
-            _logger.info("error no valid product for product:"+str(product))
-            product = False
+        product_tmpl = env['product.template'].sudo().browse(pid).exists()
+        product = env['product.product'].sudo().browse(pid).exists()
+        valid_tmpl = bool(product_tmpl and sku and sku in (product_tmpl.default_code, product_tmpl.barcode))
+        valid_product = bool(product and sku and sku in (product.default_code, product.barcode))
 
-        #if sku==None or sku=="default":
-
-        if imgid and not imgid=="default":
-            model = "product.image"
-            id = imgid
-
-        if sku=="medium" or quality=="medium":
-            field = "image_medium"
-        #unique = random number
-        #filename = None
-        #filename_field = None
-        #download = None
-        #mimetype = None
-        #default_mimetype = 'image/png'
-        #related_id = None
-        #access_mode = None
-        #access_token =
-        #env = env
-
-        #status, headers, content = binary_content(
-        #    xmlid=xmlid, model=model, id=id, field=field, unique=unique, filename=filename,
-        #    filename_field=filename_field, download=download, mimetype=mimetype,
-        #    default_mimetype='image/png', related_id=related_id, access_mode=access_mode, access_token=access_token)
-        #request.registry['ir.http'].binary_content(
-            #xmlid=xmlid, model=model, id=id, field=field, unique=unique, filename=filename,
-            #filename_field=filename_field, download=download, mimetype=mimetype,
-            #default_mimetype=default_mimetype, related_id=related_id, access_mode=access_mode, access_token=access_token,
-            #env=env)
-        #Binary()
-        #/web/image?model=product.template&id=6&field=image_medium&unique=07122020223433
-
-        #status, headers, content = request.registry['ir.http'].binary_content( model=model, id=id, field=field )
-        status, headers, content = request.env['ir.http'].sudo().binary_content( model=model, id=id, field=field )
-        _logger.info("model:"+str(model)+" id:"+str(id)+" field:"+field )
-        _logger.info(str(status))
-        _logger.info(str(headers))
-        #_logger.info(str(content))
-
-        image_base64 = ""
-        if not content and status!=200 and product_tmpl:
-            content = product_tmpl.image
-
-        if status==200 and content:
+        candidates = []
+        if imgid and imgid != 'default':
             try:
-                image_base64 = base64.b64decode(content)
-                headers.append(('Content-Length', len(image_base64)))
-            except:
-                _logger.error("error processing b64decode")
+                candidates.append(env['product.image'].sudo().browse(int(imgid)).exists())
+            except (TypeError, ValueError):
+                return None, None
+        if valid_tmpl:
+            candidates.append(product_tmpl)
+        else:
+            if product:
+                candidates.append(product)
+            if product_tmpl:
+                candidates.append(product_tmpl)
 
-        response = request.make_response(image_base64, headers)
-        response.status_code = status
-
-        return response
+        for rec in candidates:
+            if rec and field in rec._fields and rec[field]:
+                return rec, field
+        _logger.info("get_ocapi_image: sin imagen productid=%s sku=%s imgid=%s (tmpl=%s variante=%s)",
+                     productid, sku, imgid, valid_tmpl, valid_product)
+        return None, None
 
     @http.route('/ocapi/<string:connector>/connection', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
     def get_connection_account( self, connector, **post ):
@@ -181,7 +155,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/<string:channel>/status', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
     def status(self, connector, channel, **post):
         _logger.info("ocapi status: "+str(connector)+" channel: "+str(channel))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         connection = self.get_connection_account(connector,**post)
         if not connection:
             return {}
@@ -193,7 +167,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/githook', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
     def githook(self, connector, **post):
         _logger.info("ocapi githook: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         connection = self.get_connection_account(connector,**post)
         if not connection:
             return {}
@@ -204,7 +178,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/catalog', auth='public', type=route_typejson, methods=['POST','GET'], csrf=False, cors='*')
     def catalog(self, connector, **post):
         _logger.info("catalog: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         connection = self.get_connection_account(connector,**post)
         if not connection:
             return {}
@@ -215,7 +189,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/pricestock', auth='public', type=route_typejson, methods=['POST'], csrf=False, cors='*')
     def pricestock(self, connector, **post):
         _logger.info("pricestock: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         if post.get("sales"):
             return { "error": "bad format" }
         connection = self.get_connection_account(connector,**post)
@@ -226,7 +200,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/pricelist', auth='public', type=route_typejson, methods=['POST'], csrf=False, cors='*')
     def pricelist(self, connector, **post):
         _logger.info("pricelist: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         connection = self.get_connection_account(connector,**post)
         if not connection:
             return {'error': 'no se puede acceder a la cuenta, causa: access_token invalido o vencido! Intente de nuevo con otro access_token.'}
@@ -235,7 +209,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/stock', auth='public', type=route_typejson, methods=['POST'], csrf=False, cors='*')
     def stock(self, connector, **post):
         _logger.info("stock: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         connection = self.get_connection_account(connector,**post)
         if not connection:
             return {}
@@ -244,7 +218,7 @@ class OcapiCatalog(http.Controller):
     @http.route('/ocapi/<string:connector>/sales', auth='public', type=route_typejson, methods=['POST'], csrf=False, cors='*')
     def sales(self, connector, **post):
         _logger.info("sales: "+str(connector))
-        _logger.info(post)
+        _logger.info(_ocapi_redact_post(post))
         if not post.get("sales"):
             _logger.error("no sales order found.")
             return { "error": "no sales order" }

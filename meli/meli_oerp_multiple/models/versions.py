@@ -141,14 +141,30 @@ def ml_datetime(datestr):
         return None
 
 def ml_tax_excluded(self, config=None):
-    #11.0
-    #tax_excluded = self.env.user.has_group('sale.group_show_price_subtotal')
-    #12.0 and 13.0
-    tax_excluded = self.env.user.has_group('account.group_show_line_subtotals_tax_excluded')
+    """[caso-K11/caso-K10] (19-oct-2026) Ver meli_oerp/models/versions.py ml_tax_excluded: `auto` usaba un grupo
+    que existe solo hasta Odoo 16; en 17+ ya resolvia False. Se deja explicito, mismo significado."""
     config = config or self.env.user.company_id
     if (config and config.mercadolibre_tax_included not in ['auto']):
-        tax_excluded = (config.mercadolibre_tax_included in ['tax_excluded'])
-    return tax_excluded
+        return (config.mercadolibre_tax_included in ['tax_excluded'])
+    #11.0: 'sale.group_show_price_subtotal' / 12.0 a 16.0: el grupo de abajo / 17.0+: no existe
+    if self.env.ref('account.group_show_line_subtotals_tax_excluded', raise_if_not_found=False):
+        return self.env.user.has_group('account.group_show_line_subtotals_tax_excluded')
+    return False
+
+def ml_sale_tax_rates(taxes, company=None):
+    """[caso-K10] (19-oct-2026) (porcentaje, fijo) de los impuestos de VENTA no incluidos, SOLO de `company`.
+    Copia de meli_oerp.models.versions.ml_sale_tax_rates (aca para no exigir un meli_oerp nuevo al cargar)."""
+    txpercent = 0.0
+    txfixed = 0.0
+    for txid in (taxes or []):
+        if company and txid.company_id and txid.company_id != company:
+            continue
+        if (txid.type_tax_use == "sale" and not txid.price_include):
+            if (txid.amount_type == "percent"):
+                txpercent = txpercent + txid.amount
+            if (txid.amount_type == "fixed"):
+                txfixed = txfixed + txid.amount
+    return txpercent, txfixed
 
 def get_inventory_fields( product, warehouse ):
     return {
@@ -159,10 +175,76 @@ def get_inventory_fields( product, warehouse ):
             "name": "INV: "+ product.name
             }
 
+def meli_get_delivery_line( sorder ):
+    """Linea de envio de la venta (la que marca is_delivery), o None."""
+    lines = sorder.order_line.filtered(lambda l: l.is_delivery)
+    return lines[0] if lines else None
+
+
 def set_delivery_line( sorder, delivery_price, delivery_message ):
-    oline = sorder.set_delivery_line(sorder.carrier_id, delivery_price)
+    """Setea el precio de la linea de envio SIN riesgo de perderla.
+
+    El core (delivery/models/sale_order.py::set_delivery_line) ejecuta, EN ESTE ORDEN:
+        _remove_delivery_line()  ->  carrier_id = carrier.id  ->  _create_delivery_line(...)
+    Si el carrier viene VACIO, o si la escritura/creacion posterior falla (compania
+    incompatible, orden facturada, impuestos), el BORRADO ya ocurrio: la venta queda sin
+    linea de envio y sin transportista, y el flete no se factura nunca mas. Antes esa
+    excepcion se tragaba con un except pelado y el borrado quedaba hecho.
+
+    Por eso:
+      1) sin carrier valido NO se llama al core -> se actualiza el precio de la linea existente;
+      2) la llamada al core va dentro de un savepoint -> si falla despues del borrado, se
+         deshace el borrado en vez de dejar la venta pelada.
+
+    Caso que lo destapo (un cliente, jul-2026): 47 ordenes quedaron sin flete y 20 se
+    facturaron de menos porque el conector borraba la linea de envio que el mismo habia creado.
+    """
+    carrier = sorder.carrier_id
+
+    if not carrier:
+        # Sin transportista el core borraria la linea y no crearia ninguna.
+        oline = meli_get_delivery_line(sorder)
+        if oline and abs(oline.price_unit - float(delivery_price)) > 0.01:
+            oline.price_unit = delivery_price
+        _logger.warning(
+            "MELI set_delivery_line: venta %s sin transportista; se conserva la linea de envio "
+            "(precio %s) en lugar de recrearla.", sorder.name, delivery_price)
+    else:
+        try:
+            with sorder.env.cr.savepoint():
+                sorder.set_delivery_line(carrier, delivery_price)
+            oline = meli_get_delivery_line(sorder)
+        except Exception as e:
+            # El savepoint deshizo el borrado: la linea previa sigue viva.
+            oline = meli_get_delivery_line(sorder)
+            _logger.warning(
+                "MELI set_delivery_line: no se pudo reescribir la linea de envio de %s (%s); "
+                "se conserva la linea existente.", sorder.name, e)
+
     sorder.write({
     	'recompute_delivery_price': False,
     	'delivery_message': delivery_message,
     })
     return oline
+
+
+def meli_is_auth_error(rjson):
+    """[caso-K11] (19-oct-2026) ¿La respuesta de ML es un rechazo del TOKEN?
+
+    Con el token vencido ML responde HTTP 401 {"code": "unauthorized", "message": "invalid access token"},
+    SIN las claves `error` ni `status` (medido en producto 1 19-oct). Los chequeos de siempre no lo veian:
+    no se refrescaba el token y el barrido de ordenes lo leia como "no hay ordenes nuevas".
+    (Igual a meli_oerp.models.meli_util.meli_is_auth_error; copia para no exigir un meli_oerp nuevo.)
+    """
+    if not isinstance(rjson, dict):
+        return False
+    code = str(rjson.get("code") or rjson.get("error") or "").lower()
+    message = str(rjson.get("message") or "").lower()
+    status = rjson.get("status")
+    try:
+        status = int(status) if status not in (None, "") else 0
+    except (TypeError, ValueError):
+        status = 0
+    if status == 401 or code in ("unauthorized", "invalid_token", "expired_token", "invalid_grant"):
+        return True
+    return ("access token" in message or "access_token" in message) and ("invalid" in message or "expired" in message)

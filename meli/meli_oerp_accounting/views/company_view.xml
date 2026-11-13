@@ -24,6 +24,8 @@
                       <field name="mercadolibre_process_payments_customer" invisible="0"/>
                       <field name="mercadolibre_process_payments_supplier_fea" invisible="0"/>
                       <field name="mercadolibre_process_payments_supplier_shipment" invisible="0"/>
+                      <field name="meli_supplier_fee_mode" invisible="0"/>
+                      <field name="meli_supplier_fee_exclude_charges" invisible="meli_supplier_fee_mode != 'charges_only'"/>
                       <!--field name="mercadolibre_account_payment_receiptbook_id"/>
                       <field name="mercadolibre_account_payment_supplier_receiptbook_id"/-->
                       <!--
@@ -43,6 +45,15 @@
                       <field name="mercadolibre_post_invoice" invisible="0"/>
                       <field name="mercadolibre_post_invoice_dont_send" invisible="0"/>
                       <field name="mercadolibre_invoice_cancel_mode" invisible="0"/>
+                    </group>
+                    <!-- un caso - Red de seguridad de re-facturacion. El cron
+                         'MELI: reintentar facturas que quedaron sin emitir' nace
+                         DESACTIVADO: hay que activarlo a mano por instancia. -->
+                    <group string="Reintento de facturas fallidas" name="meli_invoice_requeue">
+                      <field name="mercadolibre_invoice_requeue" invisible="0"/>
+                      <field name="mercadolibre_invoice_requeue_days" invisible="0"/>
+                      <field name="mercadolibre_invoice_requeue_limit" invisible="0"/>
+                      <field name="mercadolibre_invoice_requeue_max_retries" invisible="0"/>
                     </group>
                   </group>
                </xpath>

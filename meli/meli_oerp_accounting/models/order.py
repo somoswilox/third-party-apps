@@ -21,11 +21,112 @@
 
 from odoo import fields, models, api
 from odoo.tools.translate import _
+from odoo.exceptions import UserError
+import re
 import logging
 _logger = logging.getLogger(__name__)
+
+try:
+    from psycopg2 import errors as psycopg2_errors
+    from psycopg2.extensions import TransactionRollbackError
+except ImportError:  # pragma: no cover
+    psycopg2_errors = None
+    TransactionRollbackError = None
+
+
+def _meli_is_retriable_db_error(e):
+    """[un caso] True si el error es un choque entre procesos, no un error de datos.
+
+    Postgres corre en REPEATABLE READ: dos procesos tocando la misma fila dan
+    'could not serialize access due to concurrent update' (o un deadlock). Eso
+    ABORTA la transaccion entera y NO se arregla reintentando adentro: hay que
+    reintentar desde una transaccion NUEVA (snapshot fresco).
+    """
+    if TransactionRollbackError is not None and isinstance(e, TransactionRollbackError):
+        return True
+    if psycopg2_errors is not None and isinstance(
+            e, (psycopg2_errors.SerializationFailure, psycopg2_errors.DeadlockDetected)):
+        return True
+    # La transaccion ya envenenada por un error anterior tambien tiene que subir:
+    # seguir escribiendo sobre ella solo multiplica el destrozo.
+    if psycopg2_errors is not None and isinstance(e, psycopg2_errors.InFailedSqlTransaction):
+        return True
+    return False
+
+
+def _meli_db_tx_already_aborted(e):
+    """153: la transaccion venia abortada de ANTES del savepoint (no se puede ni abrir uno)."""
+    return psycopg2_errors is not None and isinstance(e, psycopg2_errors.InFailedSqlTransaction)
+
+
+def _meli_is_concurrency_db_error(e):
+    """153: choque con OTRO proceso (serializacion, deadlock, lock ocupado). Se resuelve con una
+    transaccion nueva, no con la misma. P.ej. una migracion que carga asientos/pagos en paralelo."""
+    if _meli_db_tx_already_aborted(e):
+        return False
+    if _meli_is_retriable_db_error(e):
+        return True
+    return psycopg2_errors is not None and isinstance(e, psycopg2_errors.LockNotAvailable)
+
+
+def _meli_replay_customer_payment_after_commit(payment, config=None):
+    """153: reintenta UNA vez el cobro de cliente DESPUES del commit de la venta, en un cursor nuevo
+    (snapshot fresco). create_payment es idempotente (lock de fila + 'Pago ya creado'). Si la
+    transaccion de la venta hace rollback, Odoo descarta el callback."""
+    cr = payment.env.cr
+    pending = cr.postcommit.data.setdefault('meli_153_replay_payments', set())
+    if payment.id in pending:
+        return
+    pending.add(payment.id)
+    registry, uid, ctx = payment.env.registry, payment.env.uid, dict(payment.env.context)
+    pid, cfg = payment.id, (config and (config._name, config.id))
+
+    @cr.postcommit.add
+    def _replay():
+        try:
+            with registry.cursor() as cr2:
+                env2 = api.Environment(cr2, uid, ctx)
+                pay2 = env2['mercadolibre.payments'].browse(pid).exists()
+                if pay2 and not pay2.account_payment_id and pay2.status == 'approved':
+                    pay2.create_payment(config=cfg and env2[cfg[0]].browse(cfg[1]))
+                    _logger.info("confirm_ml: cobro ML %s reintentado tras el commit de la venta: %s",
+                                 pay2.payment_id, pay2.account_payment_id)
+        except Exception as e:
+            _logger.error("confirm_ml: reintento post-commit del cobro (mercadolibre.payments %s) fallo; "
+                          "se reintenta en la proxima actualizacion de la orden: %s", pid, e, exc_info=True)
+
+
+def _meli_payment_step_failed(so, payment, e, what, config=None, replay=False):
+    """caso-K52 (31-oct-2026): manejo UNICO del fallo de un cobro/pago de confirm_ml.
+
+    El paso corrio en `cr.savepoint()`: ya se revirtio lo parcial (incluido el vinculo
+    account_payment_id) y la transaccion de la VENTA sigue usable. Nunca se pierde la venta por un
+    cobro. Se registra el error RAIZ (antes: 'current transaction is aborted' tapaba el original).
+    - transaccion ya abortada antes del paso: se propaga (seguir sobre ella no tiene sentido);
+    - choque concurrente: WARNING + (cobro de cliente) reintento post-commit en transaccion nueva;
+    - resto (IntegrityError de numeracion, UserError, etc.): ERROR con traceback.
+    """
+    if _meli_db_tx_already_aborted(e):
+        raise e
+    if _meli_is_concurrency_db_error(e):
+        _logger.warning(
+            "confirm_ml: choque concurrente creando %s de la orden %s (pago ML %s) — revertido, la venta "
+            "sigue%s: %s", what, so.name, payment.payment_id,
+            replay and "; se reintenta tras el commit" or "; se reintenta en la proxima actualizacion", e)
+        if replay:
+            _meli_replay_customer_payment_after_commit(payment, config=config)
+    else:
+        _logger.error(
+            "confirm_ml: error creando %s de la orden %s (pago ML %s) — revertido, la venta sigue: %s",
+            what, so.name, payment.payment_id, e, exc_info=True)
+    meli_message_post(so, "Error creando %s: %s" % (what, e), config=config)
+
+
+
 import traceback
 import pdb
 import requests
+from datetime import timedelta
 from odoo.addons.meli_oerp.models.versions import *
 from odoo.addons.meli_oerp_accounting.models.versions import *
 
@@ -36,27 +137,38 @@ class SaleOrder(models.Model):
 
     _inherit = "sale.order"
 
+    # 26.309 (#caso-K45 cliente S, MX): venta cancelada en ML cuya factura ya fue informada al fisco
+    # (CFDI timbrado / documento EDI enviado). Odoo no la deja volver a borrador: hay que pedir la
+    # cancelacion ante el SAT o emitir una nota de credito. La venta queda MARCADA para revision en
+    # vez de reintentar button_draft (y loguear ERROR) en cada pasada. Se limpia sola cuando ya no
+    # queda ninguna factura en esa situacion. Ver _meli_cancel_invoices.
+    meli_cancel_fiscal_review = fields.Boolean(
+        string="Cancelación ML: revisar factura fiscal", copy=False, default=False, index=True,
+        help="La orden fue cancelada en MercadoLibre pero su factura ya está timbrada/informada al "
+             "fisco y no puede volver a borrador. Hay que solicitar la cancelación fiscal (SAT) o "
+             "emitir una nota de crédito, y luego cancelar la venta.")
+
     def action_invoice_create(self, grouped=False, final=False, date=None):
 
         return super(SaleOrder,self)._create_invoices(grouped=grouped, final=final, date=date)
 
     def _meli_invoice_conditions( self, meli=None, config=None ):
-        _logger.info("meli_oerp_accounting _meli_invoice_conditions")
+        _logger.debug("meli_oerp_accounting _meli_invoice_conditions")
         so = self
         mo = so and so.meli_order
         config = config or (so.meli_order and so.meli_order._get_config())
         default_condition = True
 
         if hasattr(self, '_get_dc_ids'):
-            _logger.info("_get_dc_ids")
+            _logger.debug("_get_dc_ids")
             val = self._get_dc_ids()
             
         if hasattr(self, '_default_journal_document_class_id'):
-            _logger.info("_default_journal_document_class_id")
+            _logger.debug("_default_journal_document_class_id")
             val = self._default_journal_document_class_id()
 
         if hasattr(self, '_default_use_documents'):
-            _logger.info("_default_use_documents")
+            _logger.debug("_default_use_documents")
             val = self._default_use_documents()
         
         if (mo and mo.buyer and mo.shipment_logistic_type != "fulfillment" and mo.buyer.billing_info_economic_activity):
@@ -69,17 +181,173 @@ class SaleOrder(models.Model):
         
         return default_condition
 
-    def _meli_cancel_invoices(self, config=None):
-        """Handle invoices when MeLi cancels the order, based on config mode."""
+    @api.model
+    def _meli_invoice_cancelled_never_authorized(self, inv):
+        """True si la factura esta cancelada y NUNCA se autorizo: sin CAE/autorizacion AFIP, sin numero
+        (name vacio o '/') y sin haber sido posteada antes. Ante cualquier duda => False (bloquea).
+        Esas canceladas no cuentan para meli_create_invoice: no hay riesgo de duplicar ante AFIP.
+        (cliente E #caso-K15, SO 9242/9818: una cancelada asi frenaba la facturacion en silencio.)"""
+        if inv.state != 'cancel' or inv.move_type != 'out_invoice':
+            return False
+        if (getattr(inv, 'l10n_ar_afip_auth_mode', False)
+                or getattr(inv, 'l10n_ar_afip_cae', False)
+                or getattr(inv, 'l10n_ar_afip_auth_code', False)):
+            return False
+        if getattr(inv, 'posted_before', False):
+            return False
+        return (inv.name or '/') == '/'
+
+    def _meli_invoice_blocked_report(self, so, config, reason):
+        """Deja en el chatter de la venta el motivo concreto por el que NO se factura."""
+        reason = "No se factura: %s." % reason
+        try:
+            meli_message_post(so, reason, config=config)
+        except Exception as E:
+            _logger.error("meli_create_invoice > no se pudo postear el motivo en el chatter: %s", E)
+
+    # ------------------------------------------------------------------ #
+    #  26.309 (#caso-K45): factura ya informada al fisco en una cancelacion ML #
+    # ------------------------------------------------------------------ #
+    @api.model
+    def _meli_invoice_needs_fiscal_cancel(self, inv):
+        """True si `inv` ya fue informada al fisco y el core NO la deja volver a borrador
+        (hay que pedir la cancelacion fiscal). Cubre:
+          - 17/18/19: hook `_need_cancel_request()` del core (lo prende l10n_mx_edi con CFDI timbrado,
+            y cualquier otra localizacion que implemente `_need_cancel_request`).
+          - 16: `account_edi` (`_edi_allow_button_draft` False = documento EDI enviado).
+          - MX explicito: `l10n_mx_edi_cfdi_state` firmado / firmado global / cancelacion pedida.
+        Ante un error leyendo los campos devuelve False (= comportamiento anterior)."""
+        # El hook, no el campo computado `need_cancel_request` (sin depends: queda cacheado).
+        if hasattr(inv, '_need_cancel_request'):
+            try:
+                if inv._need_cancel_request():
+                    return True
+            except Exception as e:
+                _logger.debug("_need_cancel_request fallo en %s: %s", inv.display_name, e)
+        if hasattr(inv, '_edi_allow_button_draft'):
+            try:
+                if not inv._edi_allow_button_draft():
+                    return True
+            except Exception as e:
+                _logger.debug("_edi_allow_button_draft fallo en %s: %s", inv.display_name, e)
+        return getattr(inv, 'l10n_mx_edi_cfdi_state', False) in ('sent', 'global_sent', 'cancel_requested')
+
+    @api.model
+    def _meli_sat_cancel_request_on(self):
+        """Parametro `meli_oerp_accounting.mx_sat_cancel_request` (default OFF). Con '1'/'true',
+        ademas de marcar la venta se PIDE la cancelacion del CFDI ante el SAT (motivo
+        `meli_oerp_accounting.mx_sat_cancel_reason`, default '03' = no se llevo a cabo la operacion).
+        Nunca para facturas globales: cancelar un CFDI global anula todas sus ventas."""
+        val = self.env['ir.config_parameter'].sudo().get_param('meli_oerp_accounting.mx_sat_cancel_request', '')
+        return str(val or '').strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+
+    def _meli_request_fiscal_cancel(self, inv, config=None):
+        """Pide UNA vez por factura la cancelacion del CFDI ante el SAT (opt-in). True si se pidio.
+        Usa la API de l10n_mx_edi: 17/18/19 `_l10n_mx_edi_cfdi_invoice_try_cancel(document, motivo)`
+        (lo mismo que el wizard 'Solicitar cancelacion'); 16 `button_cancel_posted_moves()`
+        (account_edi; el cron EDI hace el pedido). Sin l10n_mx_edi, o factura global => False."""
+        self.ensure_one()
+        once_key = "sat-cancel-request-%s" % inv.id
+        if meli_message_already_posted(inv, once_key):
+            return False
+        if getattr(inv, 'l10n_mx_edi_cfdi_state', False) not in ('sent', False) or \
+                not getattr(inv, 'l10n_mx_edi_cfdi_uuid', False):
+            return False
+        reason = self.env['ir.config_parameter'].sudo().get_param(
+            'meli_oerp_accounting.mx_sat_cancel_reason', '03') or '03'
+        try:
+            with self.env.cr.savepoint():
+                if hasattr(inv, '_l10n_mx_edi_cfdi_invoice_try_cancel') and 'l10n_mx_edi_document_ids' in inv._fields:
+                    docs = inv.l10n_mx_edi_document_ids.filtered(
+                        lambda d: d.attachment_uuid == inv.l10n_mx_edi_cfdi_uuid and d.state == 'invoice_sent')
+                    if not docs:
+                        return False
+                    inv._l10n_mx_edi_cfdi_invoice_try_cancel(docs[0], reason)
+                elif hasattr(inv, 'button_cancel_posted_moves'):
+                    inv.button_cancel_posted_moves()
+                else:
+                    return False
+        except Exception as e:
+            _logger.warning("MELI_CANCEL_FISCAL_REVIEW: no se pudo pedir la cancelacion SAT de %s (venta %s): %s",
+                            inv.name, self.name, e)
+            meli_message_post(inv, "No se pudo solicitar la cancelación del CFDI ante el SAT: %s. "
+                              "Solicitarla manualmente desde la factura." % e,
+                              config=config, once_key=once_key, force_chatter=True)
+            return False
+        meli_message_post(inv, "Cancelación del CFDI solicitada ante el SAT (motivo %s) porque la orden "
+                          "fue cancelada en MercadoLibre." % reason,
+                          config=config, once_key=once_key, force_chatter=True)
+        return True
+
+    def _meli_fiscal_cancel_hold(self, inv, mode, config=None):
+        """La factura `inv` no puede volver a borrador (ya informada al fisco). En lugar de intentar
+        button_draft y loguear ERROR en cada pasada: marca la venta para revision (flag + actividad +
+        aviso en el chatter UNA vez) y, si el parametro esta prendido, pide la cancelacion SAT."""
+        self.ensure_one()
+        first = not self.meli_cancel_fiscal_review
+        if first:
+            self.write({'meli_cancel_fiscal_review': True})
+            _logger.warning("MELI_CANCEL_FISCAL_REVIEW: venta %s cancelada en ML; factura %s ya informada al fisco "
+                            "(CFDI %s): no se pasa a borrador (modo '%s'). Venta marcada para revision.",
+                            self.name, inv.name, getattr(inv, 'l10n_mx_edi_cfdi_state', '-'), mode)
+            try:
+                with self.env.cr.savepoint():
+                    self.activity_schedule(
+                        'mail.mail_activity_data_todo',
+                        summary="Cancelación ML: factura %s ya timbrada" % inv.name,
+                        note="La orden fue cancelada en MercadoLibre y la factura %s ya fue informada al fisco. "
+                             "Solicitar la cancelación del CFDI ante el SAT (o emitir nota de crédito) y "
+                             "luego cancelar la venta." % inv.name,
+                        user_id=(self.user_id or self.env.user).id)
+            except Exception as e:
+                _logger.info("MELI_CANCEL_FISCAL_REVIEW: sin actividad para %s: %s", self.name, e)
+        else:
+            _logger.debug("MELI_CANCEL_FISCAL_REVIEW: venta %s ya marcada (factura %s)", self.name, inv.name)
+        meli_message_post(
+            self,
+            "⚠️ Orden cancelada en MercadoLibre, pero la factura %s ya está timbrada/informada al fisco y no "
+            "puede volver a borrador. La venta queda marcada para revisión (Cancelación ML: revisar factura "
+            "fiscal). Pasos: solicitar la cancelación del CFDI ante el SAT desde la factura (o emitir una nota "
+            "de crédito) y luego cancelar la venta." % inv.name,
+            config=config, once_key="cancel-fiscal-review-%s" % inv.id, force_chatter=True)
+        if self._meli_sat_cancel_request_on():
+            return self._meli_request_fiscal_cancel(inv, config=config)
+        return False
+
+    def _meli_cancel_invoices(self, config=None, mode=None):
+        """Handle invoices when MeLi cancels the order, based on config mode.
+
+        :param mode: (26.162) modo EXPLICITO ('manual'|'draft'|'cancel'|'credit_note'). Lo pasa
+            meli_oerp con `mercadolibre_cancel_mode = 'por_estado_ml'`, que decide la accion con
+            la foto fresca de ML (p. ej. NC cuando el pago fue reintegrado). Sin `mode`, el
+            comportamiento es el historico: el modo sale de `config` (o de la compania del usuario).
+        """
         config = config or self.env.user.company_id
-        mode = 'manual'
-        if 'mercadolibre_invoice_cancel_mode' in config._fields:
-            mode = config.mercadolibre_invoice_cancel_mode or 'manual'
+        if not mode:
+            mode = 'manual'
+            if 'mercadolibre_invoice_cancel_mode' in config._fields:
+                mode = config.mercadolibre_invoice_cancel_mode or 'manual'
 
         if mode == 'manual':
             return
 
-        invoices = self.invoice_ids.filtered(lambda inv: inv.state == 'posted' and inv.move_type == 'out_invoice')
+        # IDEMPOTENCIA: la factura revertida sigue en state='posted'. Sin excluirla, cada
+        # re-importacion de la orden cancelada (confirm_ml, update_order_status) emite OTRA
+        # nota de credito por la misma factura. Medido en Odoo 18: 3 pasadas = 3 NC.
+        # Campo del core: reversal_move_id (16/17) | reversal_move_ids (18+).
+        def _already_reversed(inv):
+            if inv.payment_state == 'reversed':
+                return True
+            for _f in ('reversal_move_ids', 'reversal_move_id'):
+                # 26.372 (#caso-K73): una NC en BORRADOR tambien cuenta (con `meli_refund_credit_note_draft` la NC
+                # nace en borrador; contar solo las posteadas creaba otra en cada pasada).
+                if _f in inv._fields and inv[_f].filtered(lambda r: r.state not in ('cancel',)):
+                    return True
+            return False
+
+        invoices = self.invoice_ids.filtered(
+            lambda inv: inv.state == 'posted' and inv.move_type == 'out_invoice'
+            and not _already_reversed(inv))
 
         # Also warn about already-cancelled invoices that have a CAE (were cancelled in error —
         # cannot create a credit note from state='cancel', needs manual restoration to draft first).
@@ -104,6 +372,13 @@ class SaleOrder(models.Model):
                 "'Nota de crédito'." % _cinv.name,
                 config=config,
             )
+
+        # 26.309 (#caso-K45): la marca de revision se limpia sola cuando ya no queda ninguna factura
+        # informada al fisco sin resolver (se cancelo ante el SAT, o se emitio la NC).
+        if 'meli_cancel_fiscal_review' in self._fields and self.meli_cancel_fiscal_review and \
+                not invoices.filtered(lambda i: self._meli_invoice_needs_fiscal_cancel(i)):
+            self.write({'meli_cancel_fiscal_review': False})
+            _logger.info("MELI_CANCEL_FISCAL_REVIEW: venta %s sin facturas fiscales pendientes: marca limpiada", self.name)
 
         if not invoices:
             return
@@ -145,6 +420,14 @@ class SaleOrder(models.Model):
                         )
                         _effective_mode = 'credit_note'
 
+                # 26.309 (#caso-K45 cliente S): CFDI timbrado (o EDI enviado) => el core no deja volver a
+                # borrador ("You can't reset to draft ... request a cancellation instead"). Antes se
+                # intentaba igual: ERROR + traceback + aviso sin once_key en cada pasada, y la venta
+                # quedaba aprobada sin ninguna marca. Ahora: revision (flag + actividad + aviso una vez).
+                if _effective_mode in ('cancel', 'draft') and self._meli_invoice_needs_fiscal_cancel(inv):
+                    self._meli_fiscal_cancel_hold(inv, _effective_mode, config=config)
+                    continue
+
                 if _effective_mode == 'draft':
                     # Remove reconciliation first
                     reconciled_lines = inv.line_ids.filtered(lambda l: l.account_id.reconcile and l.reconciled)
@@ -173,8 +456,12 @@ class SaleOrder(models.Model):
                     reversal = move_reversal.refund_moves()
                     if reversal and isinstance(reversal, dict) and reversal.get('res_id'):
                         credit_note = self.env['account.move'].browse(reversal['res_id'])
-                        credit_note.action_post()
-                        meli_message_post(self, "Nota de crédito %s creada y validada (orden cancelada por MeLi)." % credit_note.name, config=config)
+                        # 26.372 (#caso-K73): con `meli_refund_credit_note_draft` la NC queda EN BORRADOR (la valida el usuario).
+                        if self._meli_718_nc_draft(config=config):
+                            meli_message_post(self, "Nota de crédito %s creada EN BORRADOR (orden cancelada por MeLi): revisar y validar." % (credit_note.name or credit_note.id), config=config)
+                        else:
+                            credit_note.action_post()
+                            meli_message_post(self, "Nota de crédito %s creada y validada (orden cancelada por MeLi)." % credit_note.name, config=config)
                     else:
                         meli_message_post(self, "Nota de crédito creada para factura %s (orden cancelada por MeLi)." % inv.name, config=config)
 
@@ -300,6 +587,184 @@ class SaleOrder(models.Model):
             _logger.warning("_diagnose_afip_10016 failed: %s", diag_err)
             return ""
 
+    def _meli_invoice_blocked_cancelled(self):
+        """[un caso, 26.223] True si la venta esta cancelada en MercadoLibre y no hay nada cobrado
+        que facturar: meli_status == 'cancelled' y TODAS sus ordenes ML canceladas. En un carrito
+        meli_status es el de la PRIMERA orden; si otra del carrito sigue pagada, NO se bloquea."""
+        self.ensure_one()
+        if ("meli_status" not in self._fields) or self.meli_status != 'cancelled':
+            return False
+        morders = ("meli_orders" in self._fields and self.meli_orders) or False
+        if morders:
+            return all((mo.status or '') == 'cancelled' for mo in morders)
+        return True
+
+    def _meli_invoice_journal_same_company(self, journal):
+        """Devuelve `journal` si es de la compania de la venta (o de una de sus madres); si no, False.
+        caso-K15 cliente E: la configuracion de DELTA (compania 3) tenia como diario de fulfillment el
+        diario 9 de cliente E (compania 1) y la factura de SO 11554 nacio en la compania 1."""
+        self.ensure_one()
+        if not journal:
+            return journal
+        company = self.company_id
+        if not company or journal.company_id in (company | company.parent_ids):
+            return journal
+        _logger.warning("meli_create_invoice: diario %s (%s) es de la compania %s y la venta %s es de %s;"
+                        " se ignora y se usa el diario por defecto de la venta",
+                        journal.id, journal.display_name, journal.company_id.name, self.name, company.name)
+        return self.env['account.journal'].browse()
+
+    # ------------------------------------------------------------------ #
+    #  26.354 (caso-K52, 2-nov-2026): REEMPLAZO de un pack dividido por ML       #
+    # ------------------------------------------------------------------ #
+    # ML cancela la orden con cancel_detail.code = pack_splitted y la re-crea con otro número
+    # (mismo comprador, mismo ítem, pack nuevo, tag `splitted_order`), segundos después. Si la
+    # original ya estaba facturada, facturar el reemplazo es DOBLE FACTURA (con CAE) al mismo
+    # comprador. ML no da un puntero de una a otra: se empareja con la misma heurística que
+    # meli_oerp._meli_pack_splitted_twins (comprador + ítem en común + la original nace antes).
+    # Nunca se hace nota de crédito automática: es una decisión fiscal del vendedor.
+    _MELI_PACK_SPLIT_INVOICE_SUMMARY = "Factura: venta de reemplazo de un pack dividido"
+    _MELI_PACK_SPLIT_WINDOW_DAYS = 7     # cuánto antes que el reemplazo puede haber nacido la original
+    _MELI_PACK_SPLIT_WAIT_HOURS = 24     # carrera: cuánto se espera a que la original figure cancelada
+
+    def _meli_pack_split_my_orders(self):
+        self.ensure_one()
+        mine = self.env['mercadolibre.orders']
+        if 'meli_orders' in self._fields and self.meli_orders:
+            mine = self.meli_orders
+        elif 'meli_order' in self._fields and self.meli_order:
+            mine = self.meli_order
+        return mine
+
+    def _meli_pack_split_candidates(self, mine, cancelled):
+        """Órdenes ML de OTRA venta, mismo comprador, algún ítem en común, nacidas antes que esta
+        (como mucho _MELI_PACK_SPLIT_WINDOW_DAYS antes). cancelled=True: canceladas; False: vivas."""
+        MO = self.env['mercadolibre.orders']
+        buyers = mine.mapped('buyer')
+        items = set(i for i in mine.mapped('order_items.order_item_id') if i)
+        dates = [d for d in mine.mapped('date_created') if d]
+        if not (buyers and items and dates):
+            return MO
+        hi = max(dates)
+        lo = min(dates) - timedelta(days=self._MELI_PACK_SPLIT_WINDOW_DAYS)
+        dom = [('buyer', 'in', buyers.ids), ('id', 'not in', mine.ids),
+               ('date_created', '<=', hi), ('date_created', '>=', lo),
+               ('status', '=' if cancelled else '!=', 'cancelled')]
+        cands = MO.search(dom, limit=50)
+        return cands.filtered(lambda o: o.sale_order and o.sale_order != self
+                              and items & set(o.order_items.mapped('order_item_id')))
+
+    def _meli_pack_split_invoice_block(self):
+        """None si se puede facturar; si no, (motivo, texto, originales, facturas):
+        - 'meli_pack_split_twin': esta venta reemplaza a una cancelada por pack_splitted que tiene
+          factura publicada sin revertir => no se factura (actividad).
+        - 'meli_pack_split_wait': esta venta trae tag splitted_order y una venta anterior del mismo
+          comprador e ítem, todavía NO cancelada en Odoo, ya tiene factura publicada (la
+          cancelación de la original no llegó aún) => no se factura en esta pasada (el cron o la
+          próxima notificación reintentan). Pasadas _MELI_PACK_SPLIT_WAIT_HOURS => actividad.
+        """
+        self.ensure_one()
+        if self.env.context.get('meli_pack_split_invoice_ok'):
+            return None
+        if not hasattr(self, '_meli_unresolved_posted_invoices'):
+            return None
+        mine = self._meli_pack_split_my_orders()
+        if not mine:
+            return None
+        Inv = self.env['account.move']
+        # 1. La original ya figura cancelada por pack_splitted.
+        dates = [d for d in mine.mapped('date_created') if d]
+        originals = self.env['sale.order']
+        invs = Inv
+        for mo in self._meli_pack_split_candidates(mine, cancelled=True):
+            so = mo.sale_order
+            if so in originals:
+                continue
+            if not (hasattr(so, '_meli_cancel_is_pack_splitted') and so._meli_cancel_is_pack_splitted()):
+                continue
+            cdate = 'meli_cancel_date' in so._fields and so.meli_cancel_date
+            if cdate and dates and min(dates) < cdate - timedelta(days=1):
+                continue    # este reemplazo nació antes de la cancelación: no es su gemela
+            pending = so._meli_unresolved_posted_invoices()
+            if pending:
+                originals |= so
+                invs |= pending
+        if originals:
+            text = ("Pack dividido por MercadoLibre: esta venta reemplaza a %s (orden ML cancelada por "
+                    "pack_splitted), que ya tiene la factura %s publicada. No se factura automáticamente para "
+                    "no duplicar la factura al mismo comprador. Decidir: emitir la nota de crédito sobre %s y "
+                    "facturar esta venta, o conservar %s como la factura de la operación (y no facturar esta)."
+                    % (", ".join(originals.mapped('name')), ", ".join(invs.mapped('name')),
+                       ", ".join(invs.mapped('name')), ", ".join(invs.mapped('name'))))
+            return ('meli_pack_split_twin', text, originals, invs)
+        # 2. Carrera: el reemplazo llegó y la cancelación de la original todavía no.
+        if not any('splitted_order' in (mo.tags or '') for mo in mine):
+            return None
+        for mo in self._meli_pack_split_candidates(mine, cancelled=False):
+            if 'splitted_order' in (mo.tags or ''):
+                continue    # otra hija del mismo split, no la original
+            so = mo.sale_order
+            pending = so._meli_unresolved_posted_invoices()
+            if pending and so not in originals:
+                originals |= so
+                invs |= pending
+        if not originals:
+            return None
+        text = ("Pack dividido por MercadoLibre: esta venta es un reemplazo (tag splitted_order) y %s, del "
+                "mismo comprador e ítem, tiene la factura %s publicada y todavía no figura cancelada. No se "
+                "factura hasta confirmar en MercadoLibre si %s fue cancelada por la división del pack "
+                "(si lo fue: nota de crédito sobre %s y facturar esta venta, o conservar %s y no facturar esta)."
+                % (", ".join(originals.mapped('name')), ", ".join(invs.mapped('name')),
+                   ", ".join(originals.mapped('name')), ", ".join(invs.mapped('name')), ", ".join(invs.mapped('name'))))
+        return ('meli_pack_split_wait', text, originals, invs)
+
+    def _meli_pack_split_invoice_review(self, text, config=None):
+        """Actividad UNA por venta (+ aviso en el chatter una vez)."""
+        self.ensure_one()
+        try:
+            meli_message_post(self, "⚠️ ACCIÓN REQUERIDA (factura): %s" % text, config=config,
+                              once_key="pack-split-invoice-%s" % self.id)
+        except Exception as e:
+            _logger.warning("meli_create_invoice %s: no se pudo postear el aviso de pack dividido: %s", self.name, e)
+        if 'activity_ids' not in self._fields or \
+                self.activity_ids.filtered(lambda a: a.summary == self._MELI_PACK_SPLIT_INVOICE_SUMMARY):
+            return False
+        try:
+            with self.env.cr.savepoint():
+                self.activity_schedule('mail.mail_activity_data_todo',
+                                       summary=self._MELI_PACK_SPLIT_INVOICE_SUMMARY, note=text,
+                                       user_id=(self.user_id or self.env.user).id)
+            return True
+        except Exception as e:
+            _logger.warning("meli_create_invoice %s: no se pudo crear la actividad de pack dividido: %s", self.name, e)
+            return False
+
+    def _meli_pack_split_invoice_guard(self, config=None):
+        """Aplica _meli_pack_split_invoice_block. Devuelve el dict de salida de meli_create_invoice
+        o None si se puede facturar."""
+        self.ensure_one()
+        try:
+            block = self._meli_pack_split_invoice_block()
+        except Exception as e:
+            # La guarda nunca rompe la facturación (es el comportamiento anterior a 26.354).
+            _logger.warning("meli_create_invoice %s: no se pudo evaluar pack dividido: %s", self.name, e)
+            return None
+        if not block:
+            return None
+        reason, text, originals, invs = block
+        if reason == 'meli_pack_split_wait':
+            mine = self._meli_pack_split_my_orders()
+            dates = [d for d in mine.mapped('date_created') if d] or [self.create_date]
+            age = fields.Datetime.now() - max(dates)
+            if age < timedelta(hours=self._MELI_PACK_SPLIT_WAIT_HOURS):
+                _logger.info("meli_create_invoice: SO=%s reemplazo de pack dividido; %s con factura %s no figura "
+                             "cancelada todavía => se reintenta en otra pasada.", self.name,
+                             originals.mapped('name'), invs.mapped('name'))
+                return {'skipped': reason}
+        _logger.warning("meli_create_invoice: SO=%s %s => no se factura. %s", self.name, reason, text)
+        self._meli_pack_split_invoice_review(text, config=config)
+        return {'skipped': reason}
+
     def meli_create_invoice( self, meli=None, config=None):
         _logger.info("meli_oerp_accounting meli_create_invoice started. SO=%s state=%s invoice_status=%s",
                      self.name,
@@ -309,6 +774,31 @@ class SaleOrder(models.Model):
         context = self.env.context
         invoice_force = context.get('invoice_force')
         source = context.get('source')
+
+        # [caso de un cliente] Venta CANCELADA en MercadoLibre: no se crea ni se postea factura.
+        # confirm_ml (cada pasada del cron), el reintento, orders_create_invoice y el drenado de
+        # borradores llegaban aca aunque la cancelacion no hubiera cerrado la venta (retenida,
+        # factura publicada en modo manual, pack dividido entregado) y quedaban reintentando un
+        # borrador por una venta sin cobro. Se corta antes de tocar nada; el boton manual avisa.
+        if self._meli_invoice_blocked_cancelled():
+            if invoice_force and source == 'manual_click':
+                raise UserError(_("La venta %s está CANCELADA en MercadoLibre: no se factura desde "
+                                  "el conector. Si igual corresponde una factura, creala a mano "
+                                  "desde la venta.") % (self.name,))
+            _logger.info("meli_create_invoice: SO=%s cancelada en ML (meli_status=cancelled) "
+                         "=> no se crea ni se postea factura.", self.name)
+            return {'skipped': 'meli_cancelled'}
+
+        # 26.354 (caso-K52): reemplazo de un pack dividido por ML cuya original ya tiene factura
+        # publicada => no se crea ni se postea otra factura (actividad en la venta). Nunca NC
+        # automática. Antes de las condiciones: no se crea ni el borrador.
+        _split = self._meli_pack_split_invoice_guard(config=config)
+        if _split:
+            if invoice_force and source == 'manual_click':
+                raise UserError(_("No se factura %s: %s") % (self.name, self.activity_ids.filtered(
+                    lambda a: a.summary == self._MELI_PACK_SPLIT_INVOICE_SUMMARY)[:1].note
+                    or _("es el reemplazo de un pack dividido por MercadoLibre cuya venta original ya está facturada.")))
+            return _split
 
         so = self
         config = config or (so.meli_order and so.meli_order._get_config())
@@ -409,7 +899,11 @@ class SaleOrder(models.Model):
                 _logger.info("Creating invoice... picking_dones:"+str(picking_dones))
                 #invoices = self.env[acc_inv_model].search( [(invoice_origin,'=',so.name)] )
                 invoices = self.invoice_ids
-                _logger.info("Creating invoice... invoices:"+str(invoices))
+                # Canceladas que NUNCA se autorizaron (sin CAE, sin numero, nunca posteadas) no
+                # cuentan: no hay riesgo de duplicar ante AFIP y no deben frenar la facturacion.
+                _never_auth_cancelled = invoices.filtered(lambda i: self._meli_invoice_cancelled_never_authorized(i))
+                invoices = invoices - _never_auth_cancelled
+                _logger.info("Creating invoice... invoices:"+str(invoices)+" ignored cancelled (never authorized):"+str(_never_auth_cancelled))
 
                 invoice_confirmation = config.mercadolibre_order_confirmation_invoice
                 invoice_confirmation_full = config.mercadolibre_order_confirmation_invoice_full
@@ -426,8 +920,12 @@ class SaleOrder(models.Model):
                 if (so.meli_shipment_logistic_type and "fulfillment" in so.meli_shipment_logistic_type):
                     invoice_create = invoice_creation_full
                     invoice_confirmation = invoice_confirmation_full
-                    journal_id_invoice = journal_id_invoice_full or journal_id_invoice
+                    journal_id_invoice = so._meli_invoice_journal_same_company(journal_id_invoice_full) or journal_id_invoice
                     _logger.info("Creating invoice... invoice_creation_full:"+str(invoice_creation_full))
+                # caso-K15 cliente E (26-oct-2026): un diario de OTRA compania arma la factura en esa compania
+                # (account.move recalcula company_id desde el diario) con cuentas de la venta, y el
+                # post falla "accounts from a different company". Se descarta y queda el de la venta.
+                journal_id_invoice = so._meli_invoice_journal_same_company(journal_id_invoice)
 
                 if (invoice_confirmation and "_delivered" in invoice_confirmation and not picking_dones):
                     invoice_create = False
@@ -449,7 +947,7 @@ class SaleOrder(models.Model):
                     result =  super(SaleOrder,self).with_context({'default_journal_id': default_journal_id })._create_invoices()
                     _logger.info("result:"+str(result))
                     #invoices = self.env[acc_inv_model].search([(invoice_origin,'=',so.name)])
-                    invoices = self.invoice_ids
+                    invoices = self.invoice_ids - _never_auth_cancelled
                     _logger.info("Created invoices: "+str(invoices))
                     #for inv in invoices:
                     #    if inv.journal_id and journal_id_invoice and inv.journal_id.id!=journal_id_invoice.id:
@@ -460,11 +958,14 @@ class SaleOrder(models.Model):
                 if invoices and invoice_create:
                     if len(invoices)>1:
                         _logger.error("meli_create_invoice > more than one invoice document do NOTHING! Wait for manual resolution!")
+                        self._meli_invoice_blocked_report(so, config, "la venta tiene mas de una factura (%s); resolver a mano" % ", ".join(
+                            "%s [%s]" % (_i.name or _i.id, _i.state) for _i in invoices))
                         return {}
 
                     for inv in invoices:
                         if inv.state in ['cancel']:
                             _logger.error("meli_create_invoice > at least one cancelled invoice, do NOTHING! Wait for manual resolution!")
+                            self._meli_invoice_blocked_report(so, config, "la factura %s (id %s) esta CANCELADA y tiene numero/CAE o fue posteada antes: no se crea otra para no duplicar ante AFIP; revisar a mano" % (inv.name or '/', inv.id))
                             return {}
 
                     for inv in invoices:
@@ -686,6 +1187,16 @@ class SaleOrder(models.Model):
                                         meli_message_post(inv, _fiscal_msg, config=config)
                                     draft_validate = False
 
+                            # [caso de un cliente] El control de importe de arriba compara el total de
+                            # la ORDEN contra lo cobrado. Pero la factura sale de _create_invoices(),
+                            # que factura solo lo ENTREGADO: una linea de servicio con politica "por
+                            # entrega" que nunca queda entregada (envio MEL Distribution) queda afuera
+                            # y la factura sale por menos (ML <order_id>: 9.450 vs 16.940
+                            # cobrado). Se compara la FACTURA contra la orden ya conciliada: si
+                            # difiere, NO se postea (no se emite CAE) y queda aviso + actividad.
+                            if draft_validate and not so._meli_invoice_amount_ok(inv, tolerance=_inv_tolerance, received_amount=received_amount, config=config):
+                                draft_validate = False
+
                             if draft_validate:
                                 # Capturar datos fiscales ANTES del commit: el cache ORM aún
                                 # tiene los valores correctos de la escritura al billing child.
@@ -738,7 +1249,9 @@ class SaleOrder(models.Model):
                                     _has_afip_col = 'l10n_ar_afip_responsibility_type_id' in self.env['res.partner']._fields
                                     if _has_afip_col:
                                         _select_cols.append("l10n_ar_afip_responsibility_type_id")
-                                    self.env.cr.execute(
+                                    # _select_cols son literales del codigo (vat, partner_document_type_id |
+                                    # l10n_latam_identification_type_id, l10n_ar_afip_responsibility_type_id); el id va como parametro
+                                    self.env.cr.execute(  # pylint: disable=sql-injection
                                         "SELECT %s FROM res_partner WHERE id = %%s" % ", ".join(_select_cols),
                                         (_partner.id,)
                                     )
@@ -780,7 +1293,8 @@ class SaleOrder(models.Model):
                                             _logger.info("PRE-ACTION_POST: fiscal_pos restaurado por ORM (child id:%s -> %s)",
                                                          _partner.id, _pre_fiscal_pos_id)
                                         if _upd_fields:
-                                            self.env.cr.execute(
+                                            # _upd_fields son literales del codigo ("vat = %s", ...); los valores van como parametros
+                                            self.env.cr.execute(  # pylint: disable=sql-injection
                                                 "UPDATE res_partner SET " + ", ".join(_upd_fields) + " WHERE id = %s",
                                                 tuple(_upd_vals + [_partner.id])
                                             )
@@ -1237,7 +1751,7 @@ class SaleOrder(models.Model):
                                 
 
                         if inv.state in ['posted'] and draft_validate:
-                            so.meli_sign_invoice( invoice=inv )
+                            so.meli_sign_invoice( invoice=inv, config=config )
 
                         if inv.state in posted_statuses and config and config.mercadolibre_post_invoice:
                             _logger.info("Send to MercadoLibre: "+str(inv.name))
@@ -1277,7 +1791,7 @@ class SaleOrder(models.Model):
                               so.amount_total)
         #_logger.info("meli_oerp_accounting meli_create_invoice ended.")
 
-    def meli_sign_invoice( self, invoice ):
+    def meli_sign_invoice( self, invoice, config=None ):
         for so in self:
             if (not invoice):
                 continue
@@ -1291,18 +1805,29 @@ class SaleOrder(models.Model):
                 _logger.info("Signin CFDI posted invoice")
                 # invoice._l10n_mx_edi_cfdi_invoice_try_send()
                 meli_message_post(so, "Meli mandando a firmar CFDI. Estado CFDI: "+str(invoice.l10n_mx_edi_cfdi_state), config=config)
-                if 'account.move.send' in self.env:
-                    with self.env.cr.savepoint():
-                        self.env['account.move.send']\
-                          .sudo().with_user(so.user_id and so.user_id.id)\
-                          .with_context(active_model=invoice._name, active_ids=invoice.ids)\
-                          .create({})\
-                          .action_send_and_print()
+                # El wizard de "Enviar e imprimir" es 'account.move.send' (transient) en 17 y
+                # 'account.move.send.wizard' desde 18 ('account.move.send' pasa a ser abstracto:
+                # create() da AssertionError). Un fallo del envio/PAC no corta la facturacion
+                # (post a ML, invoice_status): el savepoint revierte lo parcial y queda en el chatter.
+                send_model = next((m for m in ('account.move.send.wizard', 'account.move.send')
+                                   if m in self.env and not self.env[m]._abstract), None)
+                if send_model:
+                    try:
+                        with self.env.cr.savepoint():
+                            self.env[send_model]\
+                              .sudo().with_user(so.user_id and so.user_id.id)\
+                              .with_context(active_model=invoice._name, active_ids=invoice.ids)\
+                              .create({})\
+                              .action_send_and_print()
+                    except Exception as e:
+                        _logger.error("Error firmando CFDI de la factura %s: %s", invoice.name, e, exc_info=True)
+                        meli_message_post(so, "Error al mandar a firmar CFDI de la factura %s: %s" % (invoice.name, e), config=config)
                 else:
-                    _logger.warning("Modelo account.move.send no disponible, no se puede firmar la factura %s", invoice.name)
+                    _logger.warning("Wizard de envio de facturas no disponible, no se puede firmar la factura %s", invoice.name)
 
                 # Check for error.
                 errors = []
+                invoice_data = {}
                 for document in invoice.l10n_mx_edi_invoice_document_ids:
                     if document.state == 'invoice_sent_failed':
                         errors.append(document.message)
@@ -1346,17 +1871,23 @@ class SaleOrder(models.Model):
         """
         so = self
         if not so.meli_orders:
-            _logger.info("MELI _apply_meli_taxes: no meli_orders for SO %s", so.name)
+            _logger.debug("MELI _apply_meli_taxes: no meli_orders for SO %s", so.name)
             return
 
         taxes_to_apply = self.env['account.tax']
         for meli_order in so.meli_orders:
             for payment in meli_order.payments:
-                _logger.info(
+                _logger.debug(
                     "MELI _apply_meli_taxes: payment %s has %d charges",
                     payment.payment_id, len(payment.charge_ids),
                 )
                 for charge in payment.charge_ids:
+                    # Brasil A / S3 (26.310): solo los cargos de tipo impuesto (retenciones) van a las
+                    # lineas de venta. Una regla de comision (tarifa de venda) o de envio (frete) mapeada a
+                    # un impuesto NO debe cambiar el total del pedido. Mismo criterio que
+                    # payments.py _prepare_withholding_lines.
+                    if charge.charge_type != 'tax':
+                        continue
                     rule = charge.meli_tax_id
                     if not rule or rule.state != 'confirmed' or not rule.account_tax_id:
                         rule = self.env['mercadolibre.tax'].match_charge(
@@ -1366,18 +1897,18 @@ class SaleOrder(models.Model):
                         )
                     if rule and rule.state == 'confirmed' and rule.account_tax_id:
                         taxes_to_apply |= rule.account_tax_id
-                        _logger.info(
+                        _logger.debug(
                             "MELI _apply_meli_taxes: charge '%s' -> tax '%s' (rule '%s' confirmed)",
                             charge.name, rule.account_tax_id.name, rule.name,
                         )
                     else:
-                        _logger.info(
+                        _logger.debug(
                             "MELI _apply_meli_taxes: charge '%s' -> no confirmed rule found",
                             charge.name,
                         )
 
         if not taxes_to_apply:
-            _logger.info("MELI _apply_meli_taxes: no confirmed taxes to apply for SO %s", so.name)
+            _logger.debug("MELI _apply_meli_taxes: no confirmed taxes to apply for SO %s", so.name)
             return
 
         # If l10n_account_withholding_tax is installed, taxes marked as
@@ -1388,7 +1919,7 @@ class SaleOrder(models.Model):
             withholding_taxes = taxes_to_apply.filtered(lambda t: t.is_withholding_tax_on_payment)
             so_taxes = taxes_to_apply - withholding_taxes
             if withholding_taxes:
-                _logger.info(
+                _logger.debug(
                     "MELI _apply_meli_taxes: withholding-on-payment taxes %s deferred to payment for SO %s",
                     withholding_taxes.mapped('name'), so.name,
                 )
@@ -1406,7 +1937,7 @@ class SaleOrder(models.Model):
         else:
             so_taxes = taxes_to_apply
 
-        _logger.info(
+        _logger.debug(
             "MELI _apply_meli_taxes: will apply taxes %s to SO %s (%d lines)",
             so_taxes.mapped('name'), so.name, len(so.order_line),
         )
@@ -1462,15 +1993,14 @@ class SaleOrder(models.Model):
         if len(approved_with_payment) <= 1:
             return
 
-        try:
-            sorted_pays = sorted(
-                approved_with_payment,
-                key=lambda p: int(p.payment_id or 0),
-                reverse=True,  # más reciente primero
-            )
-        except (ValueError, TypeError):
-            _logger.warning('_cleanup_duplicate_customer_payments: payment_id no numérico en orden %s', meli_order.name)
-            return
+        # Brasil D (26.314): con IDs numericos, mismo orden de siempre (int(payment_id)); con alguno
+        # alfanumerico (Mercado Livre Brasil) se ordena por date_created + ID como texto, en vez de salir.
+        _rkey = self.env['mercadolibre.payments']._meli_payment_recency_key(approved_with_payment)
+        sorted_pays = sorted(
+            approved_with_payment,
+            key=_rkey,
+            reverse=True,  # más reciente primero
+        )
 
         newest = sorted_pays[0]
         newest_amount = newest.account_payment_id.amount if newest.account_payment_id else 0
@@ -1543,19 +2073,20 @@ class SaleOrder(models.Model):
                 newest.payment_id, newest.account_payment_id.name,
             )
             try:
-                dup.cancel_payments(config=config)
-                self.message_post(
-                    body=(
-                        "✅ Pago duplicado de ML cancelado automáticamente:<br/>"
-                        "• Cancelado: <b>%s</b> (OP %s, $%.2f)<br/>"
-                        "• Conservado: <b>%s</b> (OP %s)<br/>"
-                        "Causa: MercadoLibre generó dos operaciones de pago para la misma orden."
-                    ) % (
-                        dup_ap.name, dup.payment_id, dup_ap.amount,
-                        newest.account_payment_id.name, newest.payment_id,
-                    ),
-                    message_type='comment',
-                )
+                with self.env.cr.savepoint():
+                    dup.cancel_payments(config=config)
+                    self.message_post(
+                        body=(
+                            "✅ Pago duplicado de ML cancelado automáticamente:<br/>"
+                            "• Cancelado: <b>%s</b> (OP %s, $%.2f)<br/>"
+                            "• Conservado: <b>%s</b> (OP %s)<br/>"
+                            "Causa: MercadoLibre generó dos operaciones de pago para la misma orden."
+                        ) % (
+                            dup_ap.name, dup.payment_id, dup_ap.amount,
+                            newest.account_payment_id.name, newest.payment_id,
+                        ),
+                        message_type='comment',
+                    )
             except Exception as e:
                 _logger.error(
                     '_cleanup_duplicate_customer_payments: Error cancelando pago duplicado %s: %s',
@@ -1682,123 +2213,139 @@ class SaleOrder(models.Model):
 
                 #process payments
                 for meli_order in self.meli_orders:
+                    _pay_errors = []
 
                     for payment in meli_order.payments:
                         try:
-                            if config.mercadolibre_process_payments_customer:
+                            with self.env.cr.savepoint():
+                                if config.mercadolibre_process_payments_customer:
 
-                                if 1==2 and payment.account_payment_id:
-                                    fix = payment.account_payment_id and (payment.transaction_amount!=payment.total_paid_amount)
-                                    fix = fix and (payment.account_payment_id.amount!=payment.transaction_amount)
-                                    fix = fix and str(payment.account_payment_id.payment_date) == '2021-07-05'
+                                    if 1==2 and payment.account_payment_id:
+                                        fix = payment.account_payment_id and (payment.transaction_amount!=payment.total_paid_amount)
+                                        fix = fix and (payment.account_payment_id.amount!=payment.transaction_amount)
+                                        fix = fix and str(payment.account_payment_id.payment_date) == '2021-07-05'
 
-                                    if (fix):
-                                        _logger.info("payment fixing: "+str(payment.account_payment_id))
-                                        #self.account_payment_id.cancel()
-                                        payment.account_payment_id.action_draft()
-                                        payment.account_payment_id.unlink()
-                                        payment.account_payment_id = False
+                                        if (fix):
+                                            _logger.info("payment fixing: "+str(payment.account_payment_id))
+                                            #self.account_payment_id.cancel()
+                                            payment.account_payment_id.action_draft()
+                                            payment.account_payment_id.unlink()
+                                            payment.account_payment_id = False
 
-                                # Limpiar referencia stale: si account_payment_id apunta a un registro
-                                # eliminado, resetearlo para que el guard no bloquee la creación.
-                                if payment.account_payment_id and not payment.account_payment_id.exists():
-                                    _logger.warning(
-                                        "confirm_ml: account_payment_id %s ya no existe — "
-                                        "reseteando para orden %s / pago %s",
-                                        payment.account_payment_id.id, so.name, payment.payment_id
-                                    )
-                                    payment.sudo().write({'account_payment_id': False})
+                                    # Limpiar referencia stale: si account_payment_id apunta a un registro
+                                    # eliminado, resetearlo para que el guard no bloquee la creación.
+                                    if payment.account_payment_id and not payment.account_payment_id.exists():
+                                        _logger.warning(
+                                            "confirm_ml: account_payment_id %s ya no existe — "
+                                            "reseteando para orden %s / pago %s",
+                                            payment.account_payment_id.id, so.name, payment.payment_id
+                                        )
+                                        payment.sudo().write({'account_payment_id': False})
 
-                                # Recuperar pagos cancelados: si el account.payment existe pero
-                                # está en estado cancelado y el pago ML sigue aprobado, limpiar
-                                # la referencia para que se recree. Esto cubre el caso donde el
-                                # pago se creó a un partner incorrecto y fue cancelado por
-                                # republish_invoice_payments o cleanup_duplicate, pero nunca
-                                # se recreó porque account_payment_id seguía seteado.
-                                if (payment.account_payment_id
-                                        and payment.account_payment_id.exists()
-                                        and payment.account_payment_id.state in cancel_statuses
-                                        and payment.status in ["approved"]):
-                                    _logger.info(
-                                        "confirm_ml: account_payment_id %s está cancelado — "
-                                        "reseteando para recrear pago de orden %s / pago ML %s",
-                                        payment.account_payment_id.name, so.name, payment.payment_id
-                                    )
-                                    payment.sudo().write({'account_payment_id': False})
+                                    # Recuperar pagos cancelados: si el account.payment existe pero
+                                    # está en estado cancelado y el pago ML sigue aprobado, limpiar
+                                    # la referencia para que se recree. Esto cubre el caso donde el
+                                    # pago se creó a un partner incorrecto y fue cancelado por
+                                    # republish_invoice_payments o cleanup_duplicate, pero nunca
+                                    # se recreó porque account_payment_id seguía seteado.
+                                    if (payment.account_payment_id
+                                            and payment.account_payment_id.exists()
+                                            and payment.account_payment_id.state in cancel_statuses
+                                            and payment.status in ["approved"]):
+                                        _logger.info(
+                                            "confirm_ml: account_payment_id %s está cancelado — "
+                                            "reseteando para recrear pago de orden %s / pago ML %s",
+                                            payment.account_payment_id.name, so.name, payment.payment_id
+                                        )
+                                        payment.sudo().write({'account_payment_id': False})
 
-                                if not payment.account_payment_id and payment.status in ["approved"]:
-                                    payment.create_payment( meli=meli, config=config )
-                                elif payment.account_payment_id and payment.status in ["approved"]:
-                                    try:
-                                        payment._patch_withholding_on_existing_payment(config=config)
-                                    except Exception as e:
-                                        _logger.info("Error patching withholding on payment %s: %s", payment.payment_id, e)
-                                    if payment.account_payment_id.state in draft_payment_status:
-                                        payment.post_payment(config=config)
+                                    if not payment.account_payment_id and payment.status in ["approved"]:
+                                        payment.create_payment( meli=meli, config=config )
+                                    elif payment.account_payment_id and payment.status in ["approved"]:
+                                        try:
+                                            payment._patch_withholding_on_existing_payment(config=config)
+                                        except Exception as e:
+                                            _logger.info("Error patching withholding on payment %s: %s", payment.payment_id, e)
+                                        if payment.account_payment_id.state in draft_payment_status:
+                                            payment.post_payment(config=config)
 
-                                # [ctmil #447] 'refunded' NO cancela el pago de ingreso original: el dinero entro y
-                                # luego se devolvio. El ingreso queda posteado+conciliado a la FA; la devolucion es un
-                                # movimiento OUTBOUND aparte contra la NC. Solo cancelar cuando nunca hubo ingreso real.
-                                if (payment.status in ["cancelled","rejected"]):
-                                    payment.cancel_payments(config=config)
-                                    continue;
-                                if (payment.status in ["refunded","partially_refunded"]):
-                                    continue;
+                                    # [ctmil un caso] 'refunded' NO cancela el pago de ingreso original: el dinero entro y
+                                    # luego se devolvio. El ingreso queda posteado+conciliado a la FA; la devolucion es un
+                                    # movimiento OUTBOUND aparte contra la NC. Solo cancelar cuando nunca hubo ingreso real.
+                                    if (payment.status in ["cancelled","rejected"]):
+                                        payment.cancel_payments(config=config)
+                                        continue;
+                                    if (payment.status in ["refunded","partially_refunded"]):
+                                        # [caso de un cliente] EXCEPCION: el PACK PARTIDO de FULL.
+                                        #
+                                        # Cuando MercadoLibre parte un pack (logistica fulfillment) no
+                                        # hay devolucion real: cancela el pack A y devuelve su pago, y
+                                        # crea un pack B con otro order_id y otro pago, por el mismo
+                                        # importe. No existe nota de credito ni un segundo cobro
+                                        # vigente del pack A, asi que el criterio del un caso -que asume
+                                        # ingreso conciliado a la factura y devolucion como movimiento
+                                        # aparte- no aplica: el inbound del pack A queda 'paid' para
+                                        # siempre y en el mayor del cliente figura como saldo a favor,
+                                        # como si hubiera pagado dos veces el mismo monto.
+                                        #
+                                        # Se discrimina por lo que informa ML, no por inferencia: el
+                                        # detalle de estado trae literalmente 'pack_splitted'.
+                                        if payment._meli_is_pack_splitted():
+                                            payment._meli_cancel_payment_of_splitted_pack(config=config)
+                                        continue;
 
-                            else:
-                                # Config desactivada: loggear si hay pagos aprobados sin procesar
-                                if payment.status in ["approved"] and not payment.account_payment_id:
-                                    _logger.info(
-                                        "confirm_ml: proceso de pagos al cliente DESACTIVADO "
-                                        "(mercadolibre_process_payments_customer=False) — "
-                                        "pago %s aprobado NO procesado en orden %s",
-                                        payment.payment_id, so.name
-                                    )
+                                else:
+                                    # Config desactivada: loggear si hay pagos aprobados sin procesar
+                                    if payment.status in ["approved"] and not payment.account_payment_id:
+                                        _logger.info(
+                                            "confirm_ml: proceso de pagos al cliente DESACTIVADO "
+                                            "(mercadolibre_process_payments_customer=False) — "
+                                            "pago %s aprobado NO procesado en orden %s",
+                                            payment.payment_id, so.name
+                                        )
 
                         except Exception as e:
-                            _logger.info("Error creating customer payment")
-                            _logger.info(e, exc_info=True)
-                            meli_message_post(so, "Error creando pago: "+str(e), config=config)
-                            pass;
+                            _pay_errors.append((payment.payment_id, e))
+                            _meli_payment_step_failed(so, payment, e, 'pago', config=config, replay=True)
 
                         # Wrap supplier fee payment in savepoint to isolate ValidationErrors
                         try:
-                            if config.mercadolibre_process_payments_supplier_fea and not payment.account_supplier_payment_id:
-                                payment.create_supplier_payment( meli=meli, config=config )
-                            elif payment.account_supplier_payment_id.state in draft_payment_status:
-                                payment.post_supplier_payment(config=config)
-                            else:
-                                payment.check_supplier_payment(config=config)
+                            with self.env.cr.savepoint():
+                                if config.mercadolibre_process_payments_supplier_fea and not payment.account_supplier_payment_id:
+                                    payment.create_supplier_payment( meli=meli, config=config )
+                                elif payment.account_supplier_payment_id.state in draft_payment_status:
+                                    payment.check_supplier_payment(config=config)  # [26.361] corrige el monto antes de publicar
+                                    payment.post_supplier_payment(config=config)
+                                else:
+                                    payment.check_supplier_payment(config=config)
 
                         except Exception as e:
-                            _logger.info("Error creating supplier fee payment")
-                            _logger.info(e, exc_info=True)
-                            meli_message_post(so, "Error creando pago de comisión: "+str(e), config=config)
-                            pass;
+                            _meli_payment_step_failed(so, payment, e, 'pago de comisión', config=config, replay=False)
 
                         try:
-                            #_logger.info("confirm_ml accounting > create_supplier_payment_shipment")
-                            condition_pay_supplier_shipment = (config.mercadolibre_process_payments_supplier_shipment and not payment.account_supplier_payment_shipment_id 
-                                and (payment.order_id and (payment.order_id.payments_shipment_amount>0.0 or payment.order_id.shipping_seller_cost>0.0)) )
-                            #_logger.info("confirm_ml accounting > create_supplier_payment_shipment condition_pay_supplier_shipment:" +str(condition_pay_supplier_shipment) )
-                            allcond = {
-                                "config.mercadolibre_process_payments_supplier_shipment": config.mercadolibre_process_payments_supplier_shipment,
-                                "payment.account_supplier_payment_shipment_id": payment.account_supplier_payment_shipment_id,
-                                "payment.order_id": payment.order_id,
-                                "payment.order_id.payments_shipment_amount": payment.order_id.payments_shipment_amount,
-                                "payment.order_id.shipping_seller_cost": payment.order_id.shipping_seller_cost
-                            }
-                            #_logger.info("confirm_ml accounting > create_supplier_payment_shipment, allcond:"+str(allcond))
+                            with self.env.cr.savepoint():
+                                #_logger.info("confirm_ml accounting > create_supplier_payment_shipment")
+                                condition_pay_supplier_shipment = (config.mercadolibre_process_payments_supplier_shipment and not payment.account_supplier_payment_shipment_id 
+                                    and (payment.order_id and (payment.order_id.payments_shipment_amount>0.0 or payment.order_id.shipping_seller_cost>0.0)) )
+                                #_logger.info("confirm_ml accounting > create_supplier_payment_shipment condition_pay_supplier_shipment:" +str(condition_pay_supplier_shipment) )
+                                allcond = {
+                                    "config.mercadolibre_process_payments_supplier_shipment": config.mercadolibre_process_payments_supplier_shipment,
+                                    "payment.account_supplier_payment_shipment_id": payment.account_supplier_payment_shipment_id,
+                                    "payment.order_id": payment.order_id,
+                                    "payment.order_id.payments_shipment_amount": payment.order_id.payments_shipment_amount,
+                                    "payment.order_id.shipping_seller_cost": payment.order_id.shipping_seller_cost
+                                }
+                                #_logger.info("confirm_ml accounting > create_supplier_payment_shipment, allcond:"+str(allcond))
 
-                            if ( condition_pay_supplier_shipment ):
-                                payment.create_supplier_payment_shipment( meli=meli, config=config )
-                            elif (payment.account_supplier_payment_shipment_id and payment.account_supplier_payment_shipment_id.state in draft_payment_status):
-                                payment.post_supplier_payment_shipment(config=config)
+                                if ( condition_pay_supplier_shipment ):
+                                    payment.create_supplier_payment_shipment( meli=meli, config=config )
+                                elif (payment.account_supplier_payment_shipment_id and payment.account_supplier_payment_shipment_id.state in draft_payment_status):
+                                    payment.check_supplier_payment_shipment(config=config)  # [26.361]
+                                    payment.post_supplier_payment_shipment(config=config)
+                                elif payment.account_supplier_payment_shipment_id:
+                                    payment.check_supplier_payment_shipment(config=config)  # [26.361] corrige o avisa
                         except Exception as e:
-                            _logger.info("Error creating supplier shipment payment")
-                            _logger.info(e, exc_info=True)
-                            meli_message_post(so, "Error creando pago de costo de envio: "+str(e), config=config)
-                            pass;
+                            _meli_payment_step_failed(so, payment, e, 'pago de costo de envio', config=config, replay=False)
 
                         # Sincronizar charges_details (retenciones ISR/IVA, etc.)
                         # Siempre importar los cargos - no requiere config flag
@@ -1815,11 +2362,13 @@ class SaleOrder(models.Model):
                     # si ambos ya tienen account.payment, cancelamos el más antiguo.
                     if config.mercadolibre_process_payments_customer:
                         try:
-                            self._cleanup_duplicate_customer_payments(meli_order, config=config)
+                            with self.env.cr.savepoint():
+                                self._cleanup_duplicate_customer_payments(meli_order, config=config)
                         except Exception as e:
                             _logger.error(
-                                "confirm_ml: Error en cleanup de pagos duplicados para orden ML %s: %s",
-                                meli_order.name, e, exc_info=True
+                                "confirm_ml: Error en cleanup de pagos duplicados para orden ML %s: %s%s",
+                                meli_order.name, e,
+                                (" (error raiz previo en los cobros: %s)" % _pay_errors) if _pay_errors else "", exc_info=True
                             )
 
 
@@ -1841,9 +2390,16 @@ class SaleOrder(models.Model):
         #_logger.info("meli_oerp_accounting confirm_ml registering payments ended.")
 
 
-        if config and config.mercadolibre_order_confirmation and "_invoice" in config.mercadolibre_order_confirmation:
-            mo = so and so.meli_orders and so.meli_orders[0]
-            if not mo.invoice_posted:
+        # [caso de un cliente] Antes solo se facturaba con "_invoice" en
+        # mercadolibre_order_confirmation. Con la factura configurada en los campos
+        # mercadolibre_order_confirmation_invoice(_full) (p.ej. "Entregado > Facturar") y la
+        # confirmacion en "paid_confirm", NADIE llamaba a meli_create_invoice: las ventas
+        # quedaban entregadas y sin factura. confirm_ml corre en cada actualizacion de la
+        # orden, asi que cuando ML la marca entregada (y meli_oerp_stock valida la entrega)
+        # esta llamada la factura; meli_create_invoice ya espera la entrega en modo "_delivered".
+        if config and so and so.state in ('sale', 'done') and so._meli_invoice_config_enabled(config=config, order=so):
+            mo = so.meli_orders and so.meli_orders[0]
+            if not (mo and mo.invoice_posted):
                 self.meli_create_invoice( meli=meli, config=config )
 
 
@@ -1875,8 +2431,16 @@ class SaleOrder(models.Model):
             for inv in invoices:
                 if config and "mercadolibre_payment_receipt_validation" in config._fields and config.mercadolibre_payment_receipt_validation:
                     if (inv and config.mercadolibre_payment_receipt_validation in ['concile']):
-                        _logger.info("Reconcile MercadoLibre Invoice: "+str(inv.name))
-                        self.meli_reconcile(invoice=inv)
+                        # un cliente (10-oct-2026): una factura GLOBAL (cubre muchas ordenes, partner
+                        # generico) no se concilia desde la notificacion de UNA orden: meli_reconcile
+                        # busca TODOS los pagos pendientes del partner (cientos/miles) y los reconcilia
+                        # de a uno dentro de la transaccion del cron; el cron muere por timeout, hace
+                        # rollback y la notificacion vuelve a quedar viva (bucle sin avance).
+                        if inv.invoice_line_ids.sale_line_ids.order_id - so:
+                            _logger.info("Reconcile MercadoLibre Invoice: %s OMITIDA (factura global, cubre otras ordenes)", inv.name)
+                        else:
+                            _logger.info("Reconcile MercadoLibre Invoice: "+str(inv.name))
+                            self.meli_reconcile(invoice=inv)
 
                 if inv.state in posted_statuses and config and config.mercadolibre_post_invoice:
                     _logger.info("Send to MercadoLibre: "+str(inv.name))
@@ -1893,6 +2457,49 @@ class SaleOrder(models.Model):
 
         #_logger.info("meli_oerp_accounting confirm_ml ended.")
 
+    def _meli_reconcile_sale_scope(self, move):
+        """[#caso-K15 26.267] Venta(s) de la factura y cobros de ML (mercadolibre.payments) de esas ventas."""
+        sales = move.line_ids.sale_line_ids.order_id
+        if self._name == 'sale.order':
+            sales |= self
+        ml_payments = self.env['mercadolibre.payments']
+        for so in sales:
+            for mo in (so.meli_orders if 'meli_orders' in so._fields else []):
+                ml_payments |= mo.payments
+        return sales, ml_payments
+
+    @api.model
+    def _meli_reconcile_ref_tokens(self, move, sales, ref):
+        """[#caso-K15 26.267] Nombres de venta que identifican un credito como propio (token entero)."""
+        tokens = set(sales.mapped('name'))
+        for part in re.split(r'[,;\s]+', ref or ''):
+            if part:
+                tokens.add(part)
+        # 26.386 (#caso-K71 cliente D caso-K07): con la venta renombrada por envio ('ML <id> | <tracking>') el split dejaba
+        # 'ML' y '|' como tokens, y CUALQUIER credito 'ML <otra orden> OP <pid> TOT' del mismo partner pasaba
+        # por propio (vuelve el #caso-K46). Un token identifica algo sólo si tiene >= 3 caracteres, algun
+        # alfanumerico y no es una palabra fija del memo de cobro.
+        return set(t for t in tokens if t and len(t) >= 3 and re.search(r'[0-9A-Za-z]', t)
+                   and t.upper() not in self._MELI_REF_NOISE_TOKENS)
+
+    # 26.386 (#caso-K71): palabras fijas del memo de cobro del modulo ('<SO> OP <pid> TOT|FEE|SHP').
+    _MELI_REF_NOISE_TOKENS = ('ML', 'OP', 'TOT', 'FEE', 'SHP')
+
+    @api.model
+    def _meli_reconcile_credit_belongs(self, payments_val, ml_payments, tokens):
+        """[#caso-K15 26.267] Un credito pendiente es de esta venta si:
+        - es un cobro creado por el modulo (account.payment.meli_payment_id) de un pago ML de la venta; o
+        - no es un cobro de ML y su referencia/memo nombra la venta como TOKEN ENTERO (no subcadena)."""
+        pay = self.env['account.payment'].browse(payments_val.get('account_payment_id') or [])
+        meli_pay = pay and 'meli_payment_id' in pay._fields and pay.meli_payment_id
+        if meli_pay:
+            return meli_pay in ml_payments
+        text = payments_val.get('journal_name') or ''
+        for t in tokens:
+            if re.search(r'(?<![0-9A-Za-z_])%s(?![0-9A-Za-z_])' % re.escape(t), text):
+                return True
+        return False
+
     def meli_reconcile(self, invoice=None):
         move = invoice
         if not move:
@@ -1901,7 +2508,7 @@ class SaleOrder(models.Model):
         pay_term_lines = move.line_ids\
             .filtered(lambda line: line.account_id.account_type in ('asset_receivable', 'liability_payable'))
 
-        _logger.info("Conciliar factura mercadolibre pay_term_lines:"+str(pay_term_lines))
+        _logger.debug("Conciliar factura mercadolibre pay_term_lines:"+str(pay_term_lines))
 
         if not pay_term_lines:
             return
@@ -1912,7 +2519,7 @@ class SaleOrder(models.Model):
             return
 
         #TODO es que si la factura esta a nombre de un usuario generico, como se debita el pago, el pago tambien debe hacerse al usuario generico....
-        # #447: el filtrado por referencia de orden/factura (PR-XXXXX-ML-YYYYY) se
+        # un caso: el filtrado por referencia de orden/factura (PR-XXXXX-ML-YYYYY) se
         # aplica en el loop de conciliacion (ver _ref mas abajo).
         domain = [
                 ('account_id', 'in', pay_term_lines.account_id.ids),
@@ -1959,22 +2566,33 @@ class SaleOrder(models.Model):
             })
 
 
-        _logger.info("Conciliar factura MercadoLibre payments_widget_vals:"+str(payments_widget_vals))
+        _logger.debug("Conciliar factura MercadoLibre payments_widget_vals:"+str(payments_widget_vals))
         if not payments_widget_vals['content']:
             return
 
         #based on def js_assign_outstanding_line(self, line_id):
-        # #447: hardening defensivo del ping-pong de pagos (payment_receipt_validation='concile').
+        # un caso: hardening defensivo del ping-pong de pagos (payment_receipt_validation='concile').
         # _ref = referencia de la orden ML (invoice_origin o nombre de la SO). Con ella:
         #  - cortamos en cuanto la factura deja de estar impaga (no sobre-conciliar), y
         #  - salteamos los creditos cuyo memo/journal NO contenga la referencia (no robar
         #    el pago a una factura hermana del mismo partner).
         _ref = move.invoice_origin or (move.line_ids.sale_line_ids.order_id[:1].name)
+        # [#caso-K15 cliente E 26.267] Acotado a la VENTA de la factura. El filtro #caso-K46 comparaba por subcadena
+        # (S10000 "matchea" S100001) y, sin referencia, aceptaba cualquier credito pendiente del
+        # partner: un cobro suelto de un comprador que repite terminaba aplicado a otra factura suya.
+        _sales, _ml_payments = self._meli_reconcile_sale_scope(move)
+        _tokens = self._meli_reconcile_ref_tokens(move, _sales, _ref)
+        if not _ml_payments and not _tokens:
+            _logger.info("Conciliar factura MercadoLibre %s: sin venta ni referencia, no se concilia contra "
+                         "creditos de otras ventas del partner", move.name)
+            return
         for payments_val in payments_widget_vals['content']:
             move.invalidate_recordset(['payment_state', 'amount_residual'])
             if move.payment_state not in ('not_paid', 'partial'):
                 break
-            if _ref and _ref not in (payments_val.get('journal_name') or ''):
+            if not self._meli_reconcile_credit_belongs(payments_val, _ml_payments, _tokens):
+                _logger.info("Conciliar factura MercadoLibre %s: credito %s (%s) de OTRA venta, se saltea",
+                             move.name, payments_val.get('id'), payments_val.get('journal_name'))
                 continue
             line_id = payments_val['id']
             lines = self.env['account.move.line'].browse(line_id)
@@ -1991,14 +2609,14 @@ class SaleOrder(models.Model):
                 #ord.invoice_type = ord.meli_orders[0].invoice_type
 
     def search_invoice_posted(self, operator, value):
-        _logger.info("search_invoice_posted")
-        _logger.info(operator)
-        _logger.info(value)
+        _logger.debug("search_invoice_posted")
+        _logger.debug(operator)
+        _logger.debug(value)
         if operator == '=':
             #name = self.env.context.get('name', False)
             #if name is not False:
             id_list = []
-            _logger.info(self.env.context)
+            _logger.debug(self.env.context)
             #name = self.env.context.get('name', False)
             meli_orders = self.env['mercadolibre.orders'].search([('invoice_posted','=',value)], limit=10000)
             if (meli_orders):
@@ -2009,7 +2627,7 @@ class SaleOrder(models.Model):
             return [('id', 'in', id_list)]
         elif operator == '!=':
             id_list = []
-            _logger.info(self.env.context)
+            _logger.debug(self.env.context)
             #name = self.env.context.get('name', False)
             meli_orders = self.env['mercadolibre.orders'].search([('invoice_posted','!=',value)], limit=10000)
             if (meli_orders):
@@ -2117,3 +2735,429 @@ class SaleOrder(models.Model):
                 len(incomplete),
                 "; ".join("%s(%s)=%s" % (n, mid, st) for n, mid, st in incomplete[:50]))
         return {'total': len(orders), 'by_status': summary, 'incomplete': len(incomplete)}
+
+    # ------------------------------------------------------------------ #
+    #  un cliente — RED DE SEGURIDAD de re-facturacion       #
+    #                                                                    #
+    #  PROBLEMA (verificado en prod, ago-2026): la factura se dispara     #
+    #  desde confirm_ml -> meli_create_invoice y puede FALLAR al postear  #
+    #  (falta el tipo de documento, rechazo de ARCA, 503 del webservice,  #
+    #  datos fiscales del comprador que llegan tarde). El error queda en  #
+    #  el chatter y la venta vuelve a quedar SIN factura... y NADIE la    #
+    #  vuelve a intentar:                                                 #
+    #    - el cron de importacion (orders_query_iterate, sort=date_desc)  #
+    #      con `mercadolibre_cron_orders_limit` seteado NO pagina         #
+    #      (offset_next=0, es un TOPE deliberado): solo toca las N mas    #
+    #      nuevas. Con limit=10 y 25-35 ventas/dia la ventana es de ~6-10 #
+    #      horas; pasada esa ventana la venta no se vuelve a mirar NUNCA. #
+    #    - orders_resync_status (un caso) tampoco la rescata: solo mira      #
+    #      pedidos in-flight y solo actua si CAMBIO el estado en ML.      #
+    #  Medido en un cliente: de 10 ventas jul/ago con        #
+    #  "ERROR VALIDANDO FACTURA", 9 terminaron posteadas de casualidad    #
+    #  (por caer dentro de la ventana en el reintento siguiente) y 1      #
+    #  quedo con la factura en borrador para siempre. Que 9 zafaran fue   #
+    #  AZAR, no un mecanismo.                                             #
+    #                                                                    #
+    #  SOLUCION: un barrido propio que RE-ENCOLA la facturacion de las    #
+    #  ventas ML pagadas que quedaron sin factura posteada, con backoff   #
+    #  exponencial, tope por ciclo, marca durable del ultimo error y      #
+    #  aviso (mail.activity) cuando se agotan los reintentos.            #
+    #                                                                    #
+    #  El cron nace DESACTIVADO (active=False): activarlo es una decision #
+    #  por instancia. Postear una factura electronica emite un CAE real e #
+    #  irreversible — esto no se enciende solo por actualizar el modulo.  #
+    # ------------------------------------------------------------------ #
+    meli_invoice_retry_count = fields.Integer(
+        string="Reintentos de facturacion ML", default=0, copy=False, readonly=True,
+        help="Cuantas veces el barrido de re-facturacion de MercadoLibre intento emitir "
+             "la factura de esta venta sin conseguirlo. Se resetea a 0 cuando la factura "
+             "se postea.")
+    meli_invoice_last_error = fields.Text(
+        string="Ultimo error de facturacion ML", copy=False, readonly=True,
+        help="Texto del ultimo error al intentar emitir la factura de esta venta de "
+             "MercadoLibre (rechazo de ARCA, tipo de documento faltante, webservice caido...).")
+    meli_invoice_last_retry = fields.Datetime(
+        string="Ultimo reintento de facturacion ML", copy=False, readonly=True,
+        help="Momento del ultimo intento del barrido de re-facturacion. Se usa para el "
+             "backoff: no se vuelve a intentar antes de que pase la espera correspondiente.")
+    meli_invoice_stranded = fields.Boolean(
+        string="Factura ML trabada", default=False, index=True, copy=False, readonly=True,
+        help="La venta agoto los reintentos automaticos de facturacion y necesita "
+             "intervencion manual. El barrido deja de tocarla hasta que alguien la destrabe.")
+
+    # Espera (en horas) antes del reintento numero N. El primer reintento no espera
+    # (ya paso, como minimo, un ciclo de cron desde el fallo); despues duplica hasta
+    # el techo de 24 h para no martillar a ARCA ni al webservice del cliente.
+    _MELI_INVOICE_BACKOFF_CAP_HOURS = 24
+    _MELI_INVOICE_ACTIVITY_SUMMARY = "MercadoLibre: no se pudo emitir la factura"
+
+    def _meli_invoice_backoff_hours(self):
+        """Horas a esperar antes del PROXIMO intento, segun cuantos van fallando."""
+        self.ensure_one()
+        count = self.meli_invoice_retry_count or 0
+        if count <= 0:
+            return 0
+        return min(2 ** (count - 1), self._MELI_INVOICE_BACKOFF_CAP_HOURS)
+
+    def _meli_invoice_backoff_ready(self, now=None):
+        """True si ya paso la espera del backoff y se puede reintentar."""
+        from datetime import timedelta
+        self.ensure_one()
+        if not self.meli_invoice_last_retry:
+            return True
+        now = now or fields.Datetime.now()
+        return (now - self.meli_invoice_last_retry) >= timedelta(hours=self._meli_invoice_backoff_hours())
+
+    def _meli_invoice_requeue_enabled(self, config=None):
+        """Gate del barrido para ESTA venta/config. Dos condiciones:
+        1) la config tiene activada la re-facturacion automatica, y
+        2) la config factura desde MercadoLibre (`_invoice` en mercadolibre_order_confirmation).
+           Sin (2) el conector nunca factura, asi que re-encolar no tendria sentido y ademas
+           recorreria todas las ventas ML sin factura de la instancia."""
+        if config is None:
+            return False
+        if "mercadolibre_invoice_requeue" in config._fields and not config.mercadolibre_invoice_requeue:
+            return False
+        # [caso de un cliente] Antes exigia "_invoice" en mercadolibre_order_confirmation.
+        # Pero quien decide si se factura es mercadolibre_order_confirmation_invoice(_full)
+        # (meli_create_invoice no factura con 'manual' aunque la confirmacion diga
+        # "_with_invoice"). Con la factura configurada en esos campos y la confirmacion en
+        # "paid_confirm" (un cliente) el barrido devolvia {'skipped': 'disabled'}: un NO-OP.
+        return self._meli_invoice_config_enabled(config=config)
+
+    @api.model
+    def _meli_invoice_config_enabled(self, config=None, order=None):
+        """True si la config FACTURA ventas ML. Dos formas equivalentes de pedirlo:
+        1) la confirmacion incluye la factura ("_invoice" en mercadolibre_order_confirmation
+           o, para Full, en mercadolibre_order_confirmation_full), o
+        2) el campo de facturacion (mercadolibre_order_confirmation_invoice / _full) esta
+           EXPLICITAMENTE en un modo que factura (no vacio y no 'manual').
+        Con `order` se mira solo la rama de su logistica (Full o no); sin `order`, alcanza
+        con que cualquiera de las dos facture (gate de modelo del barrido)."""
+        if config is None:
+            return False
+        is_full = None
+        if order is not None:
+            is_full = bool(order.meli_shipment_logistic_type
+                           and "fulfillment" in order.meli_shipment_logistic_type)
+        conf_fields = []
+        inv_fields = []
+        if is_full is None or not is_full:
+            conf_fields.append('mercadolibre_order_confirmation')
+            inv_fields.append('mercadolibre_order_confirmation_invoice')
+        if is_full is None or is_full:
+            conf_fields.append('mercadolibre_order_confirmation_full')
+            inv_fields.append('mercadolibre_order_confirmation_invoice_full')
+        for fname in conf_fields:
+            val = fname in config._fields and config[fname]
+            if val and "_invoice" in val:
+                return True
+        for fname in inv_fields:
+            val = fname in config._fields and config[fname]
+            if val and "manual" not in val:
+                return True
+        return False
+
+    _MELI_INVOICE_AMOUNT_SUMMARY = "MercadoLibre: la factura no coincide con lo cobrado"
+
+    def _meli_invoice_amount_ok(self, inv, tolerance=1.0, received_amount=None, config=None):
+        """True si la factura borrador `inv` factura lo mismo que la orden (que ya paso el
+        control contra lo cobrado). Si no coincide deja un aviso UNICO en el chatter y una
+        actividad, y devuelve False para que NO se postee."""
+        self.ensure_one()
+        try:
+            inv_total = inv.amount_total
+            so_total = self.amount_total
+            if inv.currency_id and self.currency_id and inv.currency_id != self.currency_id:
+                return True  # monedas distintas: no hay comparacion directa, comportamiento previo
+            tol = max(float(tolerance or 1.0), 1.0)
+            if abs(inv_total - so_total) <= tol:
+                return True
+            missing = self.order_line.filtered(
+                lambda l: not l.display_type and (l.product_uom_qty or 0) > (l.qty_invoiced or 0) + 1e-6
+                and abs(l.price_total) > 0.01)
+            detail = ", ".join("%s (%s de %s, politica %s)" % (
+                l.product_id.display_name or l.name, l.qty_to_invoice, l.product_uom_qty,
+                getattr(l.product_id, 'invoice_policy', '?')) for l in missing[:5]) or "-"
+            msg = ("Factura NO validada: el borrador %s suma %.2f y la venta %.2f (cobrado ML: %s). "
+                   "No se emite para no facturar distinto de lo cobrado. Lineas sin facturar: %s. "
+                   "Revisar (p.ej. una linea de servicio con politica 'por entrega' que nunca se "
+                   "entrega) y volver a facturar.") % (
+                inv.name or inv.id, inv_total, so_total,
+                ("%.2f" % received_amount) if received_amount is not None else "?", detail)
+            _logger.warning("MELI invoice amount guard %s: %s", self.name, msg)
+            meli_message_post(self, msg, config=config, once_key="meli-invoice-amount-%s" % inv.id)
+            if "meli_invoice_last_error" in self._fields:
+                self.sudo().write({'meli_invoice_last_error': msg[:4000]})
+            try:
+                if not self.activity_ids.filtered(lambda a: a.summary == self._MELI_INVOICE_AMOUNT_SUMMARY):
+                    self.activity_schedule(
+                        'mail.mail_activity_data_todo',
+                        summary=self._MELI_INVOICE_AMOUNT_SUMMARY,
+                        note=msg,
+                        user_id=(self.user_id and self.user_id.id) or self.env.uid,
+                    )
+            except Exception as e:
+                _logger.warning("MELI invoice amount guard: no se pudo crear la actividad en %s: %s", self.name, e)
+            return False
+        except Exception as e:
+            _logger.warning("MELI invoice amount guard: fallo el control en %s: %s", self.name, e)
+            return True
+
+    def _meli_invoice_mode(self, config=None):
+        """Modo de facturacion EFECTIVO para esta venta, con la misma regla que
+        meli_create_invoice: para logistica `fulfillment` manda
+        `mercadolibre_order_confirmation_invoice_full`, si no la normal."""
+        self.ensure_one()
+        if config is None:
+            return False
+        mode = getattr(config, 'mercadolibre_order_confirmation_invoice', False)
+        if (self.meli_shipment_logistic_type and "fulfillment" in self.meli_shipment_logistic_type
+                and 'mercadolibre_order_confirmation_invoice_full' in config._fields):
+            mode = config.mercadolibre_order_confirmation_invoice_full or mode
+        return mode
+
+    def _meli_invoice_should_post(self, config=None):
+        """True si, para ESTA venta y ESTA config, el conector tiene que llegar a una
+        factura POSTEADA. Falso cuando el cliente eligio 'No facturar' (manual) o
+        'Factura borrador' (`_draft`): ahi la factura en borrador es el final esperado,
+        no un fallo, y reintentar seria acumular ruido y marcar como trabadas ventas
+        que estan como el cliente quiere."""
+        self.ensure_one()
+        mode = self._meli_invoice_mode(config=config)
+        if mode and ("manual" in mode or "_draft" in mode):
+            return False
+        # Modo "Entregado > Facturar": mientras el albaran no este hecho, la venta NO
+        # esta esperando factura — todavia no le toca. Contarla como fallo la marcaria
+        # trabada por algo que no es un error (mismo criterio que usa meli_create_invoice
+        # para decidir invoice_create=False).
+        if mode and "_delivered" in mode:
+            pickings = self.picking_ids
+            if not pickings:
+                return False
+            done = any(p.state == 'done' for p in pickings)
+            pending = any(p.state not in ('done', 'cancel') for p in pickings)
+            if pending or not done:
+                return False
+        return True
+
+    def _meli_invoice_posted(self):
+        """Facturas de cliente POSTEADAS de esta venta (lo que define 'ya facturada')."""
+        self.ensure_one()
+        return self.invoice_ids.filtered(
+            lambda inv: inv.move_type == 'out_invoice' and inv.state in posted_statuses)
+
+    def _meli_requeue_candidates(self, days=30, limit=20, account=None, company=None, config=None):
+        """Ventas ML pagadas que quedaron SIN factura posteada, mas viejas primero.
+
+        Cubre los DOS finales posibles del fallo de posteo:
+          a) el MeliRollback deshizo la draft -> la venta vuelve a `to invoice` sin factura;
+          b) la draft sobrevivio (hubo commit) y nunca se posteo -> `invoice_status` puede
+             figurar como 'invoiced' (Odoo cuenta las draft en qty_invoiced) pero NO hay
+             ninguna factura posteada. Este es el caso de la SO <n> de un cliente.
+        Por eso el criterio real es "sin out_invoice POSTEADA", no "sin factura".
+        """
+        from datetime import timedelta
+        cutoff = fields.Datetime.now() - timedelta(days=days or 30)
+        domain = [
+            ('meli_order_id', '!=', False),
+            ('state', 'in', ('sale', 'done')),
+            ('meli_status', '=', 'paid'),
+            ('date_order', '>=', fields.Datetime.to_string(cutoff)),
+            ('meli_invoice_stranded', '=', False),
+            '|',
+                ('invoice_status', '=', 'to invoice'),
+                ('invoice_ids.state', 'in', tuple(draft_statuses)),
+        ]
+        if company is not None and 'company_id' in self._fields:
+            domain.append(('company_id', 'in', (company.id, False)))
+        if account is not None and 'connection_account' in self.env['mercadolibre.orders']._fields:
+            # multi-cuenta: scopear por la cuenta ML de la orden vinculada, para no
+            # re-facturar con el token/compania de una cuenta las ventas de otra.
+            domain.append(('meli_order.connection_account', '=', account.id))
+        # Mas VIEJAS primero: son las que el sweep normal (date_desc + tope) ya no cubre.
+        # Se pide un colchon sobre el tope porque despues se filtra en Python.
+        search_limit = max((limit or 20) * 5, 50)
+        candidates = self.search(domain, order='date_order asc, id asc', limit=search_limit)
+        now = fields.Datetime.now()
+        selected = self.browse()
+        for order in candidates:
+            if order._meli_invoice_posted():
+                continue
+            # Mas de una factura de cliente viva: meli_create_invoice no toca ese caso
+            # (espera resolucion manual). No gastar ciclos en el.
+            live = order.invoice_ids.filtered(
+                lambda inv: inv.move_type == 'out_invoice' and inv.state not in cancel_statuses)
+            if len(live) > 1:
+                continue
+            if not order._meli_invoice_should_post(config=config):
+                continue
+            if not order._meli_invoice_backoff_ready(now=now):
+                continue
+            selected |= order
+            if len(selected) >= (limit or 20):
+                break
+        return selected
+
+    def _meli_invoice_bump_retry(self, error_text, max_retries=8):
+        """Anota el intento fallido (contador + ultimo error + fecha). Al agotar los
+        reintentos marca la venta como TRABADA y avisa. Sin esto el barrido martillaria
+        a ARCA para siempre y repetiria el mismo mensaje en el chatter cada ciclo."""
+        self.ensure_one()
+        count = (self.meli_invoice_retry_count or 0) + 1
+        vals = {
+            'meli_invoice_retry_count': count,
+            'meli_invoice_last_retry': fields.Datetime.now(),
+            'meli_invoice_last_error': (error_text or '')[:4000],
+        }
+        if count >= (max_retries or 8):
+            vals['meli_invoice_stranded'] = True
+        self.sudo().write(vals)
+        if vals.get('meli_invoice_stranded'):
+            self._meli_invoice_notify_stranded()
+
+    def _meli_invoice_clear_retry(self):
+        """La factura salio: se limpia la marca para que la proxima falla arranque de cero."""
+        self.ensure_one()
+        if not (self.meli_invoice_retry_count or self.meli_invoice_last_error
+                or self.meli_invoice_stranded or self.meli_invoice_last_retry):
+            return
+        self.sudo().write({
+            'meli_invoice_retry_count': 0,
+            'meli_invoice_last_error': False,
+            'meli_invoice_last_retry': fields.Datetime.now(),
+            'meli_invoice_stranded': False,
+        })
+
+    def _meli_invoice_notify_stranded(self):
+        """Hace VISIBLE el fallo. Hasta ahora una venta ML que no se pudo facturar
+        quedaba `to invoice` como cualquier otra: nadie se enteraba. Deja
+        (a) una actividad To-Do asignada al vendedor de la venta y
+        (b) un aviso unico en el chatter."""
+        self.ensure_one()
+        try:
+            already = self.activity_ids.filtered(
+                lambda a: a.summary == self._MELI_INVOICE_ACTIVITY_SUMMARY)
+            if not already:
+                note = (
+                    "La venta de MercadoLibre <b>%s</b> quedo sin factura despues de %s "
+                    "intentos automaticos.<br/><br/><b>Ultimo error:</b><pre>%s</pre>"
+                    "Revisar y, una vez corregido, volver a facturar a mano (boton "
+                    "<i>Facturar</i>) o destrabar el barrido desmarcando "
+                    "<i>Factura ML trabada</i>."
+                ) % (self.name, self.meli_invoice_retry_count,
+                     (self.meli_invoice_last_error or '')[:1500])
+                self.activity_schedule(
+                    'mail.mail_activity_data_todo',
+                    summary=self._MELI_INVOICE_ACTIVITY_SUMMARY,
+                    note=note,
+                    user_id=(self.user_id and self.user_id.id) or self.env.uid,
+                )
+        except Exception as e:
+            _logger.warning("MELI requeue: no se pudo crear la actividad en %s: %s", self.name, e)
+        try:
+            meli_message_post(
+                self,
+                "No se pudo emitir la factura de esta venta de MercadoLibre despues de "
+                "%s intentos automaticos. Queda pendiente de revision manual. Ultimo error: %s"
+                % (self.meli_invoice_retry_count, (self.meli_invoice_last_error or '')[:500]),
+                once_key="meli-invoice-stranded",
+            )
+        except Exception as e:
+            _logger.warning("MELI requeue: no se pudo postear el aviso en %s: %s", self.name, e)
+
+    @api.model
+    def _meli_requeue_uninvoiced(self, meli=None, config=None, account=None,
+                                 days=None, limit=None, max_retries=None, dry_run=False):
+        """Re-encola la facturacion de las ventas ML pagadas que quedaron sin factura.
+
+        Mono-cuenta: lo llama `res.company.cron_meli_invoice_requeue()`.
+        Multi-cuenta: `meli_oerp_multiple` override el mismo metodo de company y llama
+        aca una vez por `mercadolibre.account`, con SU token, SU compania y `account`.
+
+        `dry_run=True` no toca ninguna factura ni escribe nada: solo lista y loguea los
+        candidatos. Es el modo recomendado para el PRIMER ciclo en un cliente nuevo.
+        """
+        company = self.env.user.company_id
+        if config is None:
+            config = company
+        if config is not None and "company_id" in config._fields and config.company_id:
+            company = config.company_id
+
+        if not self._meli_invoice_requeue_enabled(config=config):
+            return {'skipped': 'disabled'}
+
+        days = days or (config and "mercadolibre_invoice_requeue_days" in config._fields
+                        and config.mercadolibre_invoice_requeue_days) or 30
+        limit = limit or (config and "mercadolibre_invoice_requeue_limit" in config._fields
+                          and config.mercadolibre_invoice_requeue_limit) or 20
+        max_retries = max_retries or (config and "mercadolibre_invoice_requeue_max_retries" in config._fields
+                                      and config.mercadolibre_invoice_requeue_max_retries) or 8
+
+        candidates = self._meli_requeue_candidates(
+            days=days, limit=limit, account=account, company=company, config=config)
+        if not candidates:
+            _logger.info("MELI requeue [%s]: sin ventas para re-facturar (days=%s limit=%s).",
+                         (account and account.name) or (config and config.name) or "-", days, limit)
+            return {'candidates': 0, 'invoiced': 0, 'failed': 0, 'stranded': 0}
+
+        _logger.info("MELI requeue [%s]: %s venta(s) candidata(s)%s: %s",
+                     (account and account.name) or (config and config.name) or "-",
+                     len(candidates), " [DRY-RUN]" if dry_run else "",
+                     ", ".join(candidates.mapped('name')[:50]))
+        if dry_run:
+            return {'candidates': len(candidates), 'invoiced': 0, 'failed': 0,
+                    'stranded': 0, 'dry_run': True,
+                    'orders': candidates.mapped('name')}
+
+        if meli is None:
+            try:
+                meli = self.env['meli.util'].get_new_instance(company)
+            except Exception as e:
+                _logger.warning("MELI requeue: no se pudo instanciar meli.util (%s) — "
+                                "se sigue igual, la facturacion no siempre lo necesita.", e)
+                meli = None
+
+        invoiced = failed = stranded = 0
+        for order in candidates:
+            try:
+                order.with_context(meli_invoice_requeue=True).meli_create_invoice(
+                    meli=meli, config=config)
+                if order._meli_invoice_posted():
+                    order._meli_invoice_clear_retry()
+                    invoiced += 1
+                    _logger.info("MELI requeue: venta %s FACTURADA en el reintento.", order.name)
+                else:
+                    order._meli_invoice_bump_retry(
+                        "El reintento corrio pero la factura sigue sin postearse. "
+                        "Revisar el chatter de la venta y de la factura borrador.",
+                        max_retries=max_retries)
+                    failed += 1
+                    if order.meli_invoice_stranded:
+                        stranded += 1
+                # Commit POR ORDEN: lo que salio bien queda firme aunque la siguiente
+                # explote. Es la misma decision que ya toma meli_create_invoice tras un
+                # posteo exitoso (estado AFIP comprometido > reintento magico).
+                self.env.cr.commit()
+            except Exception as e:
+                _logger.error("MELI requeue: venta %s FALLO: %s", order.name, e, exc_info=True)
+                # La transaccion puede haber quedado abortada: hay que soltarla ANTES
+                # de escribir la marca, si no el UPDATE muere con InFailedSqlTransaction.
+                self.env.cr.rollback()
+                failed += 1
+                try:
+                    order._meli_invoice_bump_retry(str(e), max_retries=max_retries)
+                    if order.meli_invoice_stranded:
+                        stranded += 1
+                    self.env.cr.commit()
+                except Exception as e2:
+                    _logger.error("MELI requeue: tampoco se pudo anotar el fallo en %s: %s",
+                                  order.name, e2)
+                    self.env.cr.rollback()
+
+        _logger.info("MELI requeue [%s]: candidatas=%s facturadas=%s fallidas=%s trabadas=%s "
+                     "(days=%s limit=%s max_retries=%s)",
+                     (account and account.name) or (config and config.name) or "-",
+                     len(candidates), invoiced, failed, stranded, days, limit, max_retries)
+        return {'candidates': len(candidates), 'invoiced': invoiced,
+                'failed': failed, 'stranded': stranded}

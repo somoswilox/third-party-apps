@@ -9,6 +9,14 @@
 					<field name="arch" type="xml">
 						<data>
 								<notebook>
+										<page string="Seguridad de conectores" name="ocapi_security" groups="base.group_system">
+											<group>
+												<field name="ocapi_security_level" widget="radio"/>
+											</group>
+											<div class="text-muted">
+												Predeterminado: como hasta ahora. Bajo: hacia afuera sólo el estado de conexión. Alto: sólo la notificación de Mercado Libre y el inicio de sesión; sin Monitoreo, sin copia de token y sin proxy.
+											</div>
+										</page>
 										<page string="Odoo Connectors" invisible="1">
 											<field name="ocapi_connections" invisible="1" groups="odoo_connector_api.group_ocapi_connectors_manager"
                               readonly="1">

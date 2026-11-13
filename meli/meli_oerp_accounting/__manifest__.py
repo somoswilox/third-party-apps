@@ -1,6 +1,6 @@
 {
     "name": "MercadoLibre Accounting / Mercado Libre Publisher Extension",
-    'version': '18.0.26.44',
+    'version': '18.0.26.394',
     'author': 'Moldeo Interactive',
     'website': 'https://www.moldeointeractive.com',
     'category': 'Sale',
@@ -15,10 +15,12 @@
     'data': [
         'data/account_data.xml',
         'data/pipeline_diagnostic_cron.xml',
+        'data/requeue_invoice_cron.xml',
         'security/ir.model.access.csv',
         'views/meli_view.xml',
         'views/company_view.xml',
         'views/tax_view.xml',
+        'views/mejoras_k73_view.xml',
         'wizard/afip_sequence_sync.xml',
         #'wizard/mercadolibre_public_invoice.xml'
     ],
@@ -29,8 +31,5 @@
     'images': [ 'static/description/main_screenshot.png',
                 'static/description/meli_oerp_accounting_configuration.png',
                 'static/description/moldeo_interactive_logo.png'],
-    'installable': True,
-    'auto_install': False,
-    'application': False,
     'license': 'GPL-3',
 }

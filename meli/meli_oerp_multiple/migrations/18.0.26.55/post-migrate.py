@@ -2,7 +2,7 @@
 """Migración tri-estado del cupón ML: meli_coupon_discount_on_invoice (bool) -> meli_coupon_invoice_mode.
 True  -> 'product_discount'   (comportamiento del flag ON)
 False -> 'full'               (precio pleno; ya es el default del campo nuevo)
-Solo se ajustan los registros que tenían el flag activado. [#433]"""
+Solo se ajustan los registros que tenían el flag activado. [un caso]"""
 import logging
 _logger = logging.getLogger(__name__)
 

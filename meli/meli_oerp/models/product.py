@@ -27,6 +27,7 @@ import logging
 _logger = logging.getLogger(__name__)
 
 import hashlib
+import re
 import math
 import requests
 import base64
@@ -37,7 +38,6 @@ from datetime import datetime
 
 from .meli_oerp_config import *
 
-#from ..melisdk.meli import Meli
 import string
 if (not ('replace' in string.__dict__)):
     string = str
@@ -84,7 +84,7 @@ def _meli_is_valid_gtin(code):
     MercadoLibre acepta como Product Identifier (GTIN) sólo códigos GTIN-8,
     UPC-A (12), EAN-13 (13) o GTIN-14: numéricos, de longitud 8/12/13/14 y con
     dígito verificador correcto (módulo 10, GS1). Un SKU/código interno como
-    'C6536' NO es un GTIN → devuelve False y NO debe mandarse como GTIN.
+    '<SKU>' NO es un GTIN → devuelve False y NO debe mandarse como GTIN.
 
     100% defensivo: cualquier entrada no válida devuelve False.
     """
@@ -374,10 +374,10 @@ class product_template(models.Model):
         HTTP 200 -- that is the OWNING account (a foreign seller's token yields
         403 access_denied, so we move on to the next). This replaces the old
         approach that resolved ownership by pre-scanning each seller's full item
-        list via fetch_list_meli_ids: on LARGE accounts (e.g. DECO ~20.8k items)
+        list via fetch_list_meli_ids: on LARGE accounts (e.g. un cliente ~20.8k items)
         that paged listing does NOT cover every item, so many products were left
         untouched. The direct fetch always reaches the item regardless of catalog
-        size (verified in prod on account 526 / item MLA1685903163).
+        size (verified in prod on an account / item MLA<id>).
 
         The account that last answered OK is remembered and tried first, so a run
         over one seller's catalog does not re-probe every account for each item;
@@ -389,7 +389,7 @@ class product_template(models.Model):
 
         Always ends in a user-facing notification: this runs for minutes over
         thousands of products and used to return silently, so from the UI it was
-        indistinguishable from doing nothing (Deco/KPI ticket #485)."""
+        indistinguishable from doing nothing (un cliente ticket un caso)."""
         # meli_id lives on the variant (product.product), so filter templates by
         # their variants' meli_id (NOT template.meli_id, which does not exist).
         if self:
@@ -853,14 +853,14 @@ class product_template(models.Model):
             'price': self.get_price_for_category_predictor(),
         }]
         #response = meli.post("/sites/"+self.env.user.company_id._get_ML_sites()+"/category_predictor/predict", vals)
-        url = "/sites/"+self.env.user.company_id._get_ML_sites()+"/domain_discovery/search?q="+self.get_title_for_category_predictor()+"&access_token="+str(meli.access_token)
+        url = "/sites/"+self.env.user.company_id._get_ML_sites()+"/domain_discovery/search?q="+self.get_title_for_category_predictor()
         _logger.info(url)
-        response = meli.get(url)
+        response = meli.get(url, {'access_token': meli.access_token})  # un caso: token por header, no en la URL (que además se logueaba)
         rjson = response.json()
         meli_categ = self.env['mercadolibre.category'].sudo()
         _logger.info(rjson)
         _logger.info(isinstance(rjson, list))
-        # FIX #532 (perf): SÓLO sugerir. Limitamos a las 3 primeras opciones de domain_discovery
+        # FIX un caso (perf): SÓLO sugerir. Limitamos a las 3 primeras opciones de domain_discovery
         # e importamos en modo LIVIANO (predict_only=True): id+nombre, sin atributos ni árbol.
         # La hidratación completa (atributos/chart) se hace al SELECCIONAR (wizard.apply_category).
         _MAX_PREDICTOR_SUGGESTIONS = 3
@@ -952,7 +952,7 @@ class product_template(models.Model):
     meli_family_name = fields.Char(string='Nombre de la familia del user product en Mercado Libre',size=256)
     meli_family_id = fields.Char(string='ID de familia ML (user_product_seller)',size=128,index=True)
     meli_description = fields.Text(string='Descripción')
-    meli_category = fields.Many2one("mercadolibre.category","Categoría de MercadoLibre")
+    meli_category = fields.Many2one("mercadolibre.category","Categoría de MercadoLibre", index='btree_not_null')
     meli_buying_mode = fields.Selection( [("buy_it_now","Compre ahora"),("classified","Clasificado")], string='Método de compra')
     meli_price = fields.Char(string='Precio de venta', size=128)
     meli_currency = fields.Selection([("ARS","Peso Argentino (ARS)"),
@@ -1057,7 +1057,7 @@ class product_template(models.Model):
     # the ML product attributes WIDTH/HEIGHT/LENGTH. Numeric value + its unit
     # kept apart on purpose (value as Float so it is directly usable downstream,
     # e.g. copied onto the sale order line; unit kept verbatim as ML sends it,
-    # 'm'/'cm'/... -- we do NOT normalize). [#424 Deco/KPI]
+    # 'm'/'cm'/... -- we do NOT normalize). [caso de un cliente]
     meli_product_width = fields.Float(string="Ancho del producto", help="Atributo WIDTH de la publicación (valor numérico).")
     meli_product_width_unit = fields.Char(string="Unidad ancho", help="Unidad del atributo WIDTH tal como la envía ML (ej. 'm', 'cm').")
     meli_product_height = fields.Float(string="Alto del producto", help="Atributo HEIGHT de la publicación (valor numérico).")
@@ -1066,9 +1066,100 @@ class product_template(models.Model):
     meli_product_length_unit = fields.Char(string="Unidad largo", help="Unidad del atributo LENGTH tal como la envía ML (ej. 'm', 'cm').")
 
     # Taxes brought from ML (VALUE_ADDED_TAX / IMPORT_DUTY). Often mandatory to
-    # publish (#474); imported so they need not be entered by hand. Ej: '21 %'.
+    # publish (un caso); imported so they need not be entered by hand. Ej: '21 %'.
     meli_vat = fields.Char(string="IVA [meli]", help="Atributo VALUE_ADDED_TAX de la publicación (ej. '21 %').")
     meli_import_duty = fields.Char(string="Impuesto interno [meli]", help="Atributo IMPORT_DUTY de la publicación (ej. '0 %').")
+
+    # ------------------------------------------------------------------ 26.352 (caso-K21 C): DATOS AUTOMÁTICOS
+    # IVA desde el impuesto de VENTA del producto, impuesto interno '0 %', Marca desde la marca del
+    # producto (product_brand_id, si el módulo está) y Fabricante desde el proveedor principal. Todo
+    # sólo cuando el dato [meli] está vacío: lo cargado a mano o importado de ML manda siempre.
+    # Formatos verificados contra GET /categories/MLA40513/attributes (2-nov-2026): VALUE_ADDED_TAX
+    # admite 'Exento', '0 %', '10.5 %' (PUNTO), '21 %', '27 %'; IMPORT_DUTY '0 %'.
+    _MELI_VAT_BY_AFIP_CODE = {'2': 'Exento', '3': '0 %', '4': '10.5 %', '5': '21 %', '6': '27 %'}
+    _MELI_VAT_BY_AMOUNT = {0.0: '0 %', 10.5: '10.5 %', 21.0: '21 %', 27.0: '27 %'}
+
+    def _meli_vat_from_taxes(self, company=None):
+        """Valor de VALUE_ADDED_TAX (formato ML Argentina) a partir del impuesto de venta del producto,
+        o False si no hay uno de IVA reconocible. Ignora percepciones y otros impuestos."""
+        self.ensure_one()
+        company = company or self.company_id or self.env.company
+        taxes = self.sudo().taxes_id.filtered(
+            lambda t: (not t.company_id or t.company_id == company or t.company_id == company.parent_id)
+            and t.amount_type == 'percent' and t.type_tax_use == 'sale')
+        for tax in taxes.sorted(lambda t: (t.sequence, t.id)):
+            grp = tax.tax_group_id
+            if grp and 'l10n_ar_vat_afip_code' in grp._fields:
+                val = self._MELI_VAT_BY_AFIP_CODE.get(grp.l10n_ar_vat_afip_code or '')
+                if val:
+                    return val
+                continue  # grupo sin código de IVA = percepción / otro impuesto
+            val = self._MELI_VAT_BY_AMOUNT.get(round(tax.amount, 2))
+            if val:
+                return val
+        return False
+
+    def _meli_brand_auto(self):
+        """Marca para ML: meli_brand, si no la marca del producto (product_brand_id, OCA brand)."""
+        self.ensure_one()
+        if self.meli_brand:
+            return self.meli_brand
+        brand = 'product_brand_id' in self._fields and self.product_brand_id
+        name = brand and brand.name
+        return (name or '').strip() or False
+
+    # S.A., S. A, SA, S.R.L., SRL, S.A.S., S.A.C.I., S.A.C.I.F., S.A.U., S.C.A., S.H., LTDA, INC, LLC
+    _MELI_SOCIETY_SUFFIX_RE = re.compile(
+        r"[\s,]+(S\.?\s?A\.?\s?C\.?\s?I\.?(\s?F\.?)?(\s?I\.?)?(\s?(Y|E)\s?A\.?)?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?S\.?"
+        r"|S\.?\s?A\.?\s?U\.?|S\.?\s?C\.?\s?A\.?|S\.?\s?A\.?|S\.?\s?H\.?|LTDA\.?|INC\.?|LLC\.?)\s*$", re.IGNORECASE)
+
+    @api.model
+    def _meli_strip_society_suffix(self, name):
+        name = (name or '').strip()
+        clean = self._MELI_SOCIETY_SUFFIX_RE.sub('', name).strip(' ,.-')
+        return clean or name
+
+    def _meli_main_supplier_name(self, variant=None, company=None):
+        """Proveedor principal (primera línea de compra por secuencia) sin el sufijo societario."""
+        self.ensure_one()
+        company = company or self.company_id or self.env.company
+        sellers = self.sudo().seller_ids.filtered(
+            lambda s: (not s.company_id or s.company_id == company)
+            and (not variant or not s.product_id or s.product_id == variant))
+        seller = sellers.sorted(lambda s: (s.sequence, s.id))[:1]
+        partner = seller and seller.partner_id
+        if not partner:
+            return False
+        partner = partner.commercial_partner_id or partner
+        return self._meli_strip_society_suffix(partner.name) or False
+
+    def _meli_manufacturer_auto(self, config=None, variant=None):
+        """Fabricante: según la configuración de la cuenta (proveedor principal por defecto), con la
+        Marca como respaldo."""
+        self.ensure_one()
+        mode = (config is not None and 'mercadolibre_manufacturer_source' in config._fields
+                and config.mercadolibre_manufacturer_source) or 'supplier'
+        if mode == 'supplier':
+            company = (config is not None and 'company_id' in config._fields and config.company_id) or None
+            if config is not None and config._name == 'res.company':
+                company = config
+            name = self._meli_main_supplier_name(variant=variant, company=company)
+            if name:
+                return name
+        return self._meli_brand_auto()
+
+    def _meli_publish_site(self, config=None):
+        """Sitio de ML de la publicación: prefijo de la categoría ML; si no hay, MLA si la compañía es
+        argentina. Sólo informa (los defaults de impuestos aplican únicamente a MLA)."""
+        self.ensure_one()
+        cat = 'meli_category' in self._fields and self.meli_category
+        cid = (cat and cat.meli_category_id or '').upper()
+        if len(cid) >= 3 and cid[:2] == 'ML':
+            return cid[:3]
+        company = (config is not None and config._name == 'res.company' and config) or \
+                  (config is not None and 'company_id' in config._fields and config.company_id) or \
+                  self.company_id or self.env.company
+        return 'MLA' if (company.country_id.code or '') == 'AR' else False
 
 class product_product(models.Model):
 
@@ -1087,7 +1178,7 @@ class product_product(models.Model):
         "BRAND":  "meli_brand",
         "MODEL":  "meli_model",
         "GENDER": "meli_gender",
-        # Taxes: often MANDATORY to publish (see #474). Bring them from ML so the
+        # Taxes: often MANDATORY to publish (see un caso). Bring them from ML so the
         # client does not have to re-enter them by hand. ML value like '21 %'.
         "VALUE_ADDED_TAX": "meli_vat",
         "IMPORT_DUTY":     "meli_import_duty",
@@ -1114,13 +1205,13 @@ class product_product(models.Model):
         "meli_seller_package_length",
         "meli_seller_package_weight",
         # Taxes: ML authoritative -> keep synced on every import (mandatory
-        # attributes, avoid manual drift). [#474]
+        # attributes, avoid manual drift). [un caso]
         "meli_vat",
         "meli_import_duty",
     }
     # Product dimensions (item, not package): ML attribute id -> (value field,
     # unit field). Value goes to a Float, unit kept verbatim in a Char. ML is
-    # authoritative -> overwrite when it sends a numeric value. [#424 Deco/KPI]
+    # authoritative -> overwrite when it sends a numeric value. [caso de un cliente]
     _MELI_PRODUCT_DIM_MAP = {
         "WIDTH":  ("meli_product_width",  "meli_product_width_unit"),
         "HEIGHT": ("meli_product_height", "meli_product_height_unit"),
@@ -1193,7 +1284,7 @@ class product_product(models.Model):
         SELLER_PACKAGE_* is present. Bare WIDTH/HEIGHT/LENGTH (the *product*
         dimensions, distinct from the package) go to the numeric
         meli_product_{width,height,length} + their *_unit Char via
-        _MELI_PRODUCT_DIM_MAP (ML authoritative -> overwrite). [#424]
+        _MELI_PRODUCT_DIM_MAP (ML authoritative -> overwrite). [un caso]
         Writes the template and EVERY variant of the publication (all the
         variants sharing `self.meli_id`), not just `self` -- the item-level
         values (size/taxes/package) are common to all colour variants. `self`
@@ -1243,7 +1334,7 @@ class product_product(models.Model):
                 ml_prod_vals[field] = val
         # Product dimensions (WIDTH/HEIGHT/LENGTH) -> Float value + unit Char, on
         # BOTH template and variant. ML is authoritative -> overwrite when it
-        # sends a numeric value; a missing/blank one is left untouched. [#424]
+        # sends a numeric value; a missing/blank one is left untouched. [un caso]
         dim_map = self._MELI_PRODUCT_DIM_MAP
         for att in attributes:
             if not isinstance(att, dict):
@@ -1267,7 +1358,7 @@ class product_product(models.Model):
         # Write to EVERY variant of this publication, not just `self`. These are
         # item-level fields (size/taxes/package are the same for all the colour
         # variants), and the backfill used to pass only the first variant, so the
-        # rest stayed empty -- the "solo toma la primera variante" report. [#424]
+        # rest stayed empty -- the "solo toma la primera variante" report. [un caso]
         if ml_prod_vals and self:
             siblings = self.product_tmpl_id.product_variant_ids.filtered(
                 lambda v: v.meli_id and v.meli_id == self.meli_id
@@ -1294,15 +1385,8 @@ class product_product(models.Model):
 
         if ( tax_excluded and product_template.taxes_id ):
             _logger.info("Adjust taxes")
-            txfixed = 0
-            txpercent = 0
-            #_logger.info("Adjust taxes")
-            for txid in product_template.taxes_id:
-                if (txid.type_tax_use=="sale" and not txid.price_include):
-                    if (txid.amount_type=="percent"):
-                        txpercent = txpercent + txid.amount
-                    if (txid.amount_type=="fixed"):
-                        txfixed = txfixed + txid.amount
+            # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+            txpercent, txfixed = ml_sale_tax_rates(product_template.taxes_id, company)
             if (txfixed>0 or txpercent>0):
                 #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                 ml_price_converted = txfixed + ml_price_converted / (1.0 + txpercent*0.01)
@@ -1321,15 +1405,8 @@ class product_product(models.Model):
 
         if ( tax_excluded and product_template.taxes_id ):
             _logger.info("Adjust taxes")
-            txfixed = 0
-            txpercent = 0
-            #_logger.info("Adjust taxes")
-            for txid in product_template.taxes_id:
-                if (txid.type_tax_use=="sale" and not txid.price_include):
-                    if (txid.amount_type=="percent"):
-                        txpercent = txpercent + txid.amount
-                    if (txid.amount_type=="fixed"):
-                        txfixed = txfixed + txid.amount
+            # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+            txpercent, txfixed = ml_sale_tax_rates(product_template.taxes_id, company)
             if (txfixed>0 or txpercent>0):
                 #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                 ml_price_converted = txfixed + ml_price_converted / (1.0 + txpercent*0.01)
@@ -1399,6 +1476,32 @@ class product_product(models.Model):
                 _logger.info("_meli_set_product_price lst_price<1.0: "+str(ml_price_converted))
                 product_template.write({'lst_price': ml_price_converted})
 
+    def _meli_price_decimals( self, meli_currency, config=None ):
+        """Decimales con los que se publica un precio en MercadoLibre (un caso P5).
+
+        Sale de res.currency.decimal_places, que es el dato del sistema — no de una
+        constante nuestra. Orden de resolucion:
+          1. la moneda que el producto declara para ML (meli_currency, ej. 'ARS'),
+          2. la de la lista de precios de ML configurada,
+          3. la de la compania.
+        Si ninguna resuelve, 2 decimales (el round(new_price, 2) que ya se aplico
+        aguas arriba). Devolver 0 significa "moneda sin decimales" y conserva el
+        redondeo hacia arriba historico.
+        """
+        currency = False
+        if meli_currency:
+            currency = self.env['res.currency'].with_context(active_test=False).search(
+                [('name', '=', meli_currency)], limit=1)
+        if not currency and config:
+            pl = ('mercadolibre_pricelist' in config._fields and config.mercadolibre_pricelist) or False
+            currency = (pl and pl.currency_id) or False
+        if not currency:
+            company = (config and 'company_id' in config._fields and config.company_id) or self.env.user.company_id
+            currency = company and company.currency_id
+        if not currency:
+            return 2
+        return currency.decimal_places
+
     def set_meli_price( self, meli=None, config=None, plist=None ):
         company = self.env.user.company_id
         config = config or company
@@ -1408,7 +1511,9 @@ class product_product(models.Model):
         #_logger.info("set_meli_price: "+str(product_tmpl.list_price)+ " >> "+str(product_tmpl.display_name)+": "+str(product_tmpl.meli_price)+" | "+str(product.display_name)+": "+str(product.meli_price) )
 
         pl = (product.meli_currency and product.meli_currency in ["USD"] and "mercadolibre_pricelist_usd" in config._fields and config.mercadolibre_pricelist_usd and config.mercadolibre_pricelist_usd.currency_id.name=="USD" and config.mercadolibre_pricelist_usd)
-        pl = pl or config.mercadolibre_pricelist or plist
+        # [26.334] una lista EXPLICITA (p.ej. «Nueva Lista de Precios» del asistente de publicar) gana
+        # sobre la de la configuracion de la cuenta. Antes `plist` iba ultima y nunca se usaba.
+        pl = plist or pl or config.mercadolibre_pricelist
 
 
         # NEW OR NULL
@@ -1434,7 +1539,10 @@ class product_product(models.Model):
         else:
             #_logger.info( "new_price: " +str(new_price))
             if ( product.meli_price_fixed and product.meli_price):
-                new_price = int(float(product.meli_price)) or int(float(product_tmpl_id.meli_price)) or 0
+                # un caso P5: era int(float(...)) -> un precio fijo de 495.69 se publicaba 495.
+                # Ademas `product_tmpl_id` no existe en este ambito (la local es `product_tmpl`):
+                # con meli_price fijo == 0 esta linea levantaba NameError.
+                new_price = float(product.meli_price) or float(product_tmpl.meli_price or 0.0) or 0.0
             else:
                 if ( product.lst_price ):
                     new_price = product.lst_price
@@ -1442,15 +1550,8 @@ class product_product(models.Model):
         tax_excluded = ml_tax_excluded(self, config=config)
         if ( price_list_apply_tax and tax_excluded and product_tmpl.taxes_id ):
             _logger.info("Adjust taxes for publish")
-            txfixed = 0
-            txpercent = 0
-            #_logger.info("Adjust taxes")
-            for txid in product_tmpl.taxes_id:
-                if (txid.type_tax_use=="sale" and not txid.price_include):
-                    if (txid.amount_type=="percent"):
-                        txpercent = txpercent + txid.amount
-                    if (txid.amount_type=="fixed"):
-                        txfixed = txfixed + txid.amount
+            # [caso-K10] solo los impuestos de la compania de la config (antes sumaba los de todas: /1,42 con dos)
+            txpercent, txfixed = ml_sale_tax_rates(product_tmpl.taxes_id, company)
             if (txfixed>0 or txpercent>0):
                 #_logger.info("Tx Total:"+str(txtotal)+" to Price:"+str(ml_price_converted))
                 new_price = txfixed + new_price * (1.0 + txpercent*0.01)
@@ -1464,8 +1565,18 @@ class product_product(models.Model):
         elif (product_tmpl.meli_currency and product_tmpl.meli_currency == 'CLP'):
             new_price = str( int( int( math.floor(int(new_price) / 100 ) * 100 + 90 ) ) )
         else:
-            new_price = math.ceil(new_price)
-            new_price = str(int(float(new_price)))
+            # un caso P5: antes esta rama hacia SIEMPRE math.ceil() -> entero. Alcanzaba a
+            # toda moneda distinta de MXN/USD/CLP y, sobre todo, al caso de
+            # meli_currency VACIO, que es por donde caen los productos sin moneda
+            # cargada: un precio de 495.69 se publicaba como 496.
+            # Ahora los decimales salen de la moneda (res.currency.decimal_places).
+            # Las monedas SIN decimales conservan el redondeo hacia arriba de siempre.
+            _decimals = product._meli_price_decimals(product_tmpl.meli_currency, config=config)
+            if _decimals > 0:
+                new_price = str(float(round(new_price, _decimals)))
+            else:
+                new_price = math.ceil(new_price)
+                new_price = str(int(float(new_price)))
 
         product_tmpl.meli_price = new_price
         product.meli_price = product_tmpl.meli_price
@@ -2365,7 +2476,7 @@ class product_product(models.Model):
                             upids.append(vupid)
 
             if (not meli_id_variation):
-                # A2 fix (ticket #425): do NOT return the list-string str(upids)
+                # A2 fix (ticket un caso): do NOT return the list-string str(upids)
                 # (e.g. "['MLMU123']"). It used to be persisted verbatim into
                 # meli_user_product_id, which broke the user-products stock push
                 # (degraded to standard -> not_modifiable -> stranded, the
@@ -2471,7 +2582,7 @@ class product_product(models.Model):
         #    product._meli_set_images(product_template=product_template, pictures=pictures, rjson=rjson)
 
         #categories
-        # [solsun-local->source] Savepoint: un fallo SQL en _meli_set_category abortaba la tx y
+        # [caso de un cliente] Savepoint: un fallo SQL en _meli_set_category abortaba la tx y
         # TODO lo posterior de la sync (precio, posting.search, ...) caia con InFailedSqlTransaction.
         try:
             with self.env.cr.savepoint():
@@ -2486,9 +2597,19 @@ class product_product(models.Model):
         if "variations" in rjson and len(rjson["variations"])>1:
             force_price_for_variant = False
 
+        # [caso-K20] Con una oferta activa ML devuelve en 'price' el precio CON DESCUENTO y en
+        # 'original_price' el de lista. Al importar, el precio de Odoo es el de LISTA: la oferta
+        # es de ML y vence; si se copia a la lista de precios, Odoo queda con el precio rebajado.
+        meli_list_price = rjson.get('price')
+        try:
+            if rjson.get('original_price') and float(rjson['original_price']) > float(rjson['price'] or 0):
+                meli_list_price = rjson['original_price']
+        except Exception:
+            meli_list_price = rjson.get('price')
+
         try:
             if (float(rjson['price'])>=0.0):
-                product._meli_set_product_price( product_template, rjson['price'], force_variant=force_price_for_variant, config=config )
+                product._meli_set_product_price( product_template, meli_list_price, force_variant=force_price_for_variant, config=config )
         except Exception as e:
             _logger.info(e, exc_info=True)
             rjson['price'] = 0.0
@@ -2505,7 +2626,7 @@ class product_product(models.Model):
 
         try:
             if (float(rjson['price'])>=0.0):
-                product._meli_set_product_price( product_template, rjson['price'] )
+                product._meli_set_product_price( product_template, meli_list_price )
         except:
             _logger.info(e, exc_info=True)
             rjson['price'] = 0.0
@@ -2595,7 +2716,8 @@ class product_product(models.Model):
         product._meli_import_template_attributes( product_template, rjson )
         meli_available_quantity = rjson.get('available_quantity', 0)
         if (meli_available_quantity >=0):
-            UpdateProductType(product_template)
+            # ERROR-012: `config` (= company aca) decide la politica de facturacion.
+            UpdateProductType(product_template, config=config)
             #TODO: agregar parametro para esto: ml_auto_website_published_if_available  default true
             if (1==1 and meli_available_quantity >0):
                 product_template.website_published = True
@@ -2878,7 +3000,11 @@ class product_product(models.Model):
                 product._meli_set_images_x(product_template=product_template, pictures=pictures, rjson=rjson)
 
         if (company.mercadolibre_update_local_stock):
-            product_template.write( ProductType() )
+            # ERROR-012: ProductTypeWrite devuelve {} si no hay nada que cambiar, para no
+            # disparar el recalculo de invoice_policy con un write inutil.
+            _vals_type = ProductTypeWrite( product_template, config=company )
+            if _vals_type:
+                product_template.write( _vals_type )
 
             if (len(product_template.product_variant_ids)):
                 for variant in product_template.product_variant_ids:
@@ -3381,7 +3507,7 @@ class product_product(models.Model):
                     ML_status = rjson["status"]
                 if "permalink" in rjson:
                     ML_permalink_edit = company.get_ML_LINK_URL(meli=meli)+str("publicaciones/")+str(product.meli_id)+str("/modificar")
-                    ML_permalink_api = str("https://api.mercadolibre.com/items/")+str(product.meli_id)+str("?include_attributes=all&access_token="+str(meli and meli.access_token))
+                    ML_permalink_api = "/meli/item_api/%s" % product.meli_id  # un caso: sin token, lo resuelve Odoo
                 if "error" in rjson:
                     ML_status = rjson["error"]
                 if "sub_status" in rjson:
@@ -3572,25 +3698,6 @@ class product_product(models.Model):
 
     def _validate_category_settings( self, body ):
         return body
-        for product in self:
-            if (product.meli_category and
-                str(product.meli_category.meli_father_category_id) in ["MLA122201","MLA1540"]):
-                body["price"] = None
-                body["currency_id"] = None
-                body["condition"] = None
-                body["location"] = {
-                    "address_line": "mi direccion 1111",
-                    "city": {
-                        "name": "Capital Federal"
-                    },
-                    "state": {
-                        "name": "Capital Federal"
-                    },
-                    "country": {
-                        "name": "Argentina"
-                    }
-                }
-                return body
 
     def product_post_variant(self,variant_principal):
 
@@ -3833,6 +3940,59 @@ class product_product(models.Model):
             res.append(product._product_post())
 
         return res
+
+    def _meli_attr_manufacturer_from_brand(self, attributes, attributes_ids):
+        """26.339 W5 (caso-K21): MANUFACTURER = Marca cuando falta (muta las listas).
+        Se conserva por compatibilidad; desde 26.352 el armado usa `_meli_attr_auto_fill`."""
+        self.ensure_one()
+        if "MANUFACTURER" in attributes_ids:
+            return False
+        _brand = attributes_ids.get("BRAND") or self.meli_brand or self.product_tmpl_id._meli_brand_auto()
+        if not _brand:
+            return False
+        attribute = {"id": "MANUFACTURER", "value_name": str(_brand)}
+        attributes_ids["MANUFACTURER"] = _brand
+        attributes.append(attribute)
+        _logger.info("manufacturer attribute added from brand: " + str(attribute))
+        return True
+
+    def _meli_attr_auto_fill(self, attributes, attributes_ids, config=None, product_tmpl=None):
+        """26.352 (caso-K21 C): completa lo que el usuario no tiene que cargar a mano (muta las listas).
+        Nunca pisa un atributo ya armado (línea de atributo, campo [meli] o importado de ML):
+          BRAND           <- meli_brand, si no la marca del producto (product_brand_id)
+          VALUE_ADDED_TAX <- meli_vat, si no el IVA del impuesto de venta, si no '21 %'   (sólo MLA)
+          IMPORT_DUTY     <- meli_import_duty, si no '0 %'                              (sólo MLA)
+          MANUFACTURER    <- proveedor principal (o Marca, según la cuenta), si no la Marca
+        `product_tmpl` puede ser un binding de plantilla (multi-cuenta): los campos [meli] se leen de
+        ahí primero y los datos de Odoo (impuestos, proveedores, marca) de la plantilla real."""
+        self.ensure_one()
+        tmpl = self.product_tmpl_id
+        added = []
+
+        def _first(field):
+            for obj in (self, product_tmpl, tmpl):
+                if obj is not None and obj and field in obj._fields and obj[field]:
+                    return obj[field]
+            return False
+
+        def _add(att_id, val):
+            if att_id in attributes_ids or not val:
+                return
+            attributes.append({"id": att_id, "value_name": str(val)})
+            attributes_ids[att_id] = val
+            added.append(att_id)
+
+        _add("BRAND", _first("meli_brand") or tmpl._meli_brand_auto())
+        if tmpl._meli_publish_site(config) == 'MLA':
+            _add("VALUE_ADDED_TAX", _first("meli_vat") or tmpl._meli_vat_from_taxes() or '21 %')
+            _add("IMPORT_DUTY", _first("meli_import_duty") or '0 %')
+        if "MANUFACTURER" not in attributes_ids:
+            _add("MANUFACTURER", tmpl._meli_manufacturer_auto(config=config, variant=self)
+                 or attributes_ids.get("BRAND"))
+        if added:
+            _logger.info("auto-fill de atributos ML (%s): %s", self.id,
+                         {k: attributes_ids[k] for k in added})
+        return added
 
     def _product_post( self, meli=None, config=None ):
 
@@ -4091,7 +4251,7 @@ class product_product(models.Model):
         if (product.barcode and not product_tmpl.meli_pub_as_variant and not "GTIN" in attributes_ids):
             # category-aware: solo mandar GTIN si el barcode es un EAN/GTIN válido
             # (evita el 400 'Product Identifier [GTIN] invalid format' cuando el
-            #  barcode es en realidad un SKU interno, p.ej. koreautos 'C6536').
+            #  barcode es en realidad un SKU interno, p.ej. un cliente '<SKU>').
             attribute = product._meli_gtin_attribute(product.barcode, product.meli_category)
             if attribute:
                 attributes_ids[attribute["id"]] = attribute["value_name"]
@@ -4156,7 +4316,7 @@ class product_product(models.Model):
                     _logger.info("seller_package attribute added: "+str(attribute))
 
         # Product dimensions (item) -> ML WIDTH/HEIGHT/LENGTH, rebuilt as
-        # "<number> <unit>" from the Float value + unit Char. [#424 Deco/KPI]
+        # "<number> <unit>" from the Float value + unit Char. [caso de un cliente]
         _prod_dim_fields = [
             ("meli_product_width",  "meli_product_width_unit",  "WIDTH"),
             ("meli_product_height", "meli_product_height_unit", "HEIGHT"),
@@ -4174,9 +4334,9 @@ class product_product(models.Model):
                     attributes.append(attribute)
                     _logger.info("product dimension attribute added: "+str(attribute))
 
-        # Taxes (often MANDATORY to publish, see #474) -> ML VALUE_ADDED_TAX /
+        # Taxes (often MANDATORY to publish, see un caso) -> ML VALUE_ADDED_TAX /
         # IMPORT_DUTY. Sending them from the imported fields avoids the "missing
-        # conditional required attribute" publish error. [#474 Deco/KPI]
+        # conditional required attribute" publish error. [caso de un cliente]
         _tax_fields = [
             ("meli_vat", "VALUE_ADDED_TAX"),
             ("meli_import_duty", "IMPORT_DUTY"),
@@ -4189,6 +4349,13 @@ class product_product(models.Model):
                     attributes_ids[_att_id] = _val
                     attributes.append(attribute)
                     _logger.info("tax attribute added: "+str(attribute))
+
+        # 26.339 W5 (caso-K21): «Fabricante» (MANUFACTURER) obligatorio en muchas
+        # categorías; si falta, se completa con la Marca en vez de cortar la
+        # publicación con "faltan atributos obligatorios: Fabricante".
+        # 26.352 (caso-K21 C): además Marca desde la marca del producto, IVA desde el impuesto de venta,
+        # impuesto interno '0 %' y Fabricante desde el proveedor principal (ver _meli_attr_auto_fill).
+        product._meli_attr_auto_fill(attributes, attributes_ids, config=config, product_tmpl=product_tmpl)
 
         #_product_post_set_category
         if www_cats:
@@ -4218,8 +4385,12 @@ class product_product(models.Model):
             #"warranty": product.meli_warranty or '',
             "sale_terms": product._update_sale_terms( meli=meli, productjson=productjson, config=config ),
             #"pictures": [ { 'source': product.meli_imagen_logo} ] ,
-            "video_id": product.meli_video  or '',
         }
+        # video_id: solo si tiene valor. ML rechaza la cadena vacia
+        # ('The field video_id must have at least 3 characters') y omitir la
+        # clave ademas evita pisar un video cargado desde el panel de ML.
+        if product.meli_video and product.meli_video.strip():
+            body["video_id"] = product.meli_video.strip()
         if (config and "mercadolibre_user_product_seller" in config._fields ):
             if (config.mercadolibre_user_product_seller):
                 body["family_name"] = product.meli_family_name or product.meli_title or ''
@@ -4285,8 +4456,12 @@ class product_product(models.Model):
                 "sale_terms": product._update_sale_terms( meli=meli, productjson=productjson, config=config ),
 
                 "pictures": [],
-                "video_id": product.meli_video or '',
             }
+            # video_id: solo si tiene valor. ML rechaza la cadena vacia
+            # ('The field video_id must have at least 3 characters') y omitir la
+            # clave ademas evita pisar un video cargado desde el panel de ML.
+            if product.meli_video and product.meli_video.strip():
+                body["video_id"] = product.meli_video.strip()
             if (config and "mercadolibre_user_product_seller" in config._fields ):
                 if (config.mercadolibre_user_product_seller):
                     body["family_name"] = product.meli_family_name or product.meli_title or ''
@@ -4365,7 +4540,7 @@ class product_product(models.Model):
                 else:
                     body["pictures"] = multi_images_ids
 
-            if product.meli_imagen_logo:
+            if product.meli_imagen_logo and product.meli_imagen_logo not in ('None', 'False', False, ''):
                 if 'pictures' in body.keys():
                     body["pictures"]+= [ { 'source': product.meli_imagen_logo} ]
                 else:
@@ -4797,7 +4972,7 @@ class product_product(models.Model):
                             var = {
                                 #"id": str( product.meli_id_variation ),
                                 "available_quantity": product.meli_available_quantity,
-                                #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                                #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
                             }
                             varias["variations"].append(var)
                             #_logger.info(varias)
@@ -4871,7 +5046,7 @@ class product_product(models.Model):
                     var = {
                         #"id": str( product.meli_id_variation ),
                         "available_quantity": product.meli_available_quantity,
-                        #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                        #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
                     }
                     responsevar = meli.put_mini("/items/"+product.meli_id+'/variations/'+str( product.meli_id_variation ), var, {'access_token':meli.access_token})
                     if (responsevar):
@@ -5011,7 +5186,7 @@ class product_product(models.Model):
                     var = {
                         "id": varx["id"],
                         "price": meli_price,
-                        #"picture_ids": ['806634-MLM28112717071_092018', '928808-MLM28112717068_092018', '643737-MLM28112717069_092018', '934652-MLM28112717070_092018']
+                        #"picture_ids": ['806634-MLM<id>_092018', '928808-MLM<id>_092018', '643737-MLM<id>_092018', '934652-MLM<id>_092018']
                     }
                     vars.append(var)
                 _logger.info("product_post_price (variations):"+str(vars))
@@ -5150,7 +5325,7 @@ class product_product(models.Model):
     meli_max_purchase_quantity = fields.Integer(string='Max Compra', help='Cantidad maxima por compra en ML')
     meli_manufacturing_time = fields.Char(string='Manufacturing time', help='Tiempo de fabricacion (30 días)')
 
-    meli_imagen_logo = fields.Char(string='Imagen Logo', default='None')
+    meli_imagen_logo = fields.Char(string='Imagen Logo', default=False)
     meli_imagen_id = fields.Char(string='Imagen Id', size=256)
     meli_imagen_link = fields.Char(string='Imagen Link', size=256)
     meli_imagen_hash = fields.Char(string='Imagen Hash')
@@ -5193,7 +5368,7 @@ class product_product(models.Model):
     meli_seller_package_weight = fields.Char(string="Peso del paquete [vendedor]", help="SELLER_PACKAGE_WEIGHT: Peso del paquete a enviar. Ej: '500 g'")
 
     # Product dimensions (item, NOT package) from ML WIDTH/HEIGHT/LENGTH. Mirror
-    # of the same fields on product.template; the import fills both. [#424 Deco/KPI]
+    # of the same fields on product.template; the import fills both. [caso de un cliente]
     meli_product_width = fields.Float(string="Ancho del producto", help="Atributo WIDTH de la publicación (valor numérico).")
     meli_product_width_unit = fields.Char(string="Unidad ancho", help="Unidad del atributo WIDTH tal como la envía ML (ej. 'm', 'cm').")
     meli_product_height = fields.Float(string="Alto del producto", help="Atributo HEIGHT de la publicación (valor numérico).")
@@ -5217,7 +5392,7 @@ class product_product(models.Model):
     #
     # ANTES se usaba MAX(stock_move.create_date). Eso es un BUG: create_date es
     # la fecha en que se CREO la fila, no en que el stock cambio. Consecuencias
-    # medidas en produccion (OrgVit 475, 28-jul-2026):
+    # medidas en produccion (un cliente, 28-jul-2026):
     #
     #   * El maximo SE CONGELA en cuanto deja de crearse movimientos nuevos.
     #     Como `stock_update` se sella en CADA push, la condicion de cola
@@ -5262,7 +5437,8 @@ class product_product(models.Model):
                 ['product_id', 'state', 'date', 'write_date', 'create_date'])
         except Exception:
             pass
-        self.env.cr.execute(
+        # _MELI_MOVE_STAMP_SQL es una constante de la clase; el dato (ids) va como parámetro
+        self.env.cr.execute(  # pylint: disable=sql-injection
             "SELECT product_id, MAX(" + self._MELI_MOVE_STAMP_SQL + ") "
             "FROM stock_move WHERE product_id IN %s GROUP BY product_id",
             (ids,)

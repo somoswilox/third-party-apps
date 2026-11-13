@@ -15,6 +15,23 @@
 						<field name="priority">1000</field>
 		</record>
 
+		<!-- FIX un caso: red de contención del cierre de entregas ML.
+		     Cierra las salidas que quedaron abiertas después de que ML marcó el
+		     envío como `delivered` (el pipeline normal no las vuelve a mirar:
+		     orders_resync_status excluye `delivered` por diseño, un caso).
+		     NO consulta la API de ML — sólo datos ya en Odoo.
+		     Respeta la config del cliente: si entrega a mano, no hace nada. -->
+		<record id="ir_cron_meli_close_delivered_pickings" model="ir.cron">
+						<field name="name">Cron Meli Cerrar Entregas Entregadas</field>
+						<field name="active">True</field>
+						<field name="user_id" ref="base.user_root" />
+						<field name="interval_number">4</field>
+						<field name="interval_type">hours</field>
+						<field ref="model_sale_order" name="model_id" />
+						<field name="state">code</field>
+						<field name="code">model.cron_meli_close_delivered_pickings()</field>
+						<field name="priority">1000</field>
+		</record>
 
 	</data>
 </odoo>

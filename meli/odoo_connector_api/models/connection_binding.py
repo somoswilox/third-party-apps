@@ -102,7 +102,7 @@ class OcapiConnectionBindingProductTemplate(models.Model):
 
     attributes = fields.Char(string="Attributes")
 
-    product_tmpl_id = fields.Many2one("product.template",string="Product Template", help="Product Template")
+    product_tmpl_id = fields.Many2one("product.template",string="Product Template", help="Product Template", index='btree_not_null')
     variant_bindings = fields.One2many("ocapi.connection.binding.product","binding_product_tmpl_id",string="Variant Bindings",help="Variant Bindings")
 
     image_bindings = fields.One2many('ocapi.product.image', "binding_product_tmpl_id", string="Product Template Images")
@@ -117,7 +117,7 @@ class OcapiConnectionBindingProductVariant(models.Model):
     _description = "Ocapi Product Binding Product"
     _inherit = "ocapi.connection.binding.product_template"
 
-    binding_product_tmpl_id = fields.Many2one("ocapi.connection.binding.product_template",string="Product Template Binding")
+    binding_product_tmpl_id = fields.Many2one("ocapi.connection.binding.product_template",string="Product Template Binding", index='btree_not_null')
     product_id = fields.Many2one("product.product",string="Product Binding", help="Product Binding", index=True)
 
     image_bindings = fields.One2many('ocapi.product.image', "binding_product_variant_id", string="Product Variant Images")

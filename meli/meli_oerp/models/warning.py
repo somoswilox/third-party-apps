@@ -33,7 +33,7 @@ meli_errors = {
 #
 # La API de ML devuelve, en el 400 de validación, una lista `cause` con
 # mensajes CRUDOS en inglés (ej: "Product Identifier [GTIN] contains values
-# with invalid format: [C6536]"). Estos llegaban tal cual al usuario, resultando
+# with invalid format: [<SKU>]"). Estos llegaban tal cual al usuario, resultando
 # ILEGIBLES. Acá los mapeamos a un texto claro, en español y accionable.
 #
 # Cada entrada = (regex, plantilla). La plantilla puede ser:
@@ -43,7 +43,7 @@ meli_errors = {
 # original de ML (defensivo: no perder información). Extensible: agregar filas.
 # ---------------------------------------------------------------------------
 MELI_PUBLISH_ERROR_PATTERNS = [
-    # --- GTIN/EAN/UPC: los más comunes e ilegibles (koreautos, catálogo) ---
+    # --- GTIN/EAN/UPC: los más comunes e ilegibles (un cliente, catálogo) ---
     # GTIN con formato inválido (típico: barcode = SKU interno, no un EAN real)
     (r"Product Identifier\s*\[?\s*(GTIN|EAN|UPC)\s*\]?.*?invalid format\s*:?\s*\[?\s*([^\]\.]+?)\s*\]?\s*$",
      lambda m: ("El código de barras / %s '%s' no tiene un formato válido para MercadoLibre "
@@ -62,8 +62,9 @@ MELI_PUBLISH_ERROR_PATTERNS = [
     # Llega como message STRING: "...resource /decorations/build-title... message:attributes are required"
     # (también cubre el "attributes are required" pelado que puede venir en `cause`).
     (r"(?:build-title.*?)?\battributes?\s+are\s+required\b",
-     "Faltan atributos obligatorios de la categoría. Completá la ficha técnica del producto "
-     "(marca, modelo, código universal, etc.) en la pestaña MercadoLibre para poder publicar en MercadoLibre."),
+     "Faltan atributos obligatorios de la categoría. Marca, modelo y medidas del paquete van en la "
+     "pestaña MercadoLibre del producto; el código universal, en Código de barras; los demás (p.ej. "
+     "Fabricante) como línea en la pestaña «Atributos y variantes». Después volvé a publicar."),
     # --- Catálogo: falta family_name (u otras propiedades del body del catálogo) ---
     (r"body\s+does\s+not\s+contains?\s+some\s+or\s+none\s+of\s+the\s+following\s+properties\s*\[?\s*family_name",
      "Falta el Nombre de la familia (Family Name) del producto, requerido para publicar en el "
@@ -456,7 +457,7 @@ class warning(models.TransientModel):
         }
         return res
 
-    def copy(self):
+    def copy(self, default=None):
         self.ensure_one()
         _logger.info("copy_error:"+str(self.copy_error))
         return {'type': 'ir.actions.act_window_close'}

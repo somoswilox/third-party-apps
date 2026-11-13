@@ -5,6 +5,8 @@
 			<record model="ir.ui.view" id="view_connection_account_mercadolibre">
 					<field name="name">mercadolibre.account.form</field>
 					<field name="model">mercadolibre.account</field>
+					<!-- 26.360 (OFF 719): explicito para que el -u lo reactive si quedo inactivo (p.ej. tras migrar de version) -->
+					<field name="active" eval="True"/>
 					<field name="arch" type="xml">
 
 						<form string="MercadoLibre Account">
@@ -135,8 +137,8 @@
                           <field name="type"/>
                           <field name="meli_login_id"/>
                           <field name="client_id"/>
-                          <field name="secret_key"/>
-                          <field name="seller_id"/>
+                          <field name="secret_key" password="True" groups="base.group_system"/>
+                          <field name="seller_id" placeholder="Se completa solo al Iniciar sesión"/>
                           <field name="user_product_seller"/>
                           <field name="multiwarehouse"/>
                           <field name="connector_version"/>
@@ -151,14 +153,51 @@
                           <field name="brand"/>
                           <field name="country_id"/>
                           <field name="company_id"/>
-                          <field name="access_token" readonly="0"/>
-                          <field name="refresh_token" readonly="0"/>
+                          <!-- [26.393] access_token es fields.Text (odoo_connector_api) y el widget de Text IGNORA password => se veía en claro.
+                               widget="char" sí lo respeta (16-18 lo acepta sobre Text; 19+ lo declara soportado). -->
+                          <field name="access_token" readonly="0" password="True" widget="char" groups="base.group_system"/>
+                          <field name="refresh_token" readonly="0" password="True" groups="base.group_system"/>
                       </group>
                     </group>
                     <group groups="base.group_system">
                       <group string="Rescate (solo administrador técnico)">
-                          <field name="http_proxy"
-                                 placeholder="https://proxy.example.com"/>
+                          <field name="meli_api_url"
+                                 placeholder="https://api.mercadolibre.com"/>
+                      </group>
+                      <group string="Token desde Producción (sólo instancias de TEST)">
+                          <div colspan="2" class="text-muted o_form_label mb-2">
+                              Una instancia de test no puede renovar el token por sí misma: se le
+                              vacía el Refresh Token a propósito, porque si lo usara le invalidaría
+                              el token a producción. Con esto, el cron de estado le copia el
+                              Access Token vigente desde la instancia de producción.
+                              <b>No activar en producción.</b>
+                          </div>
+                          <field name="meli_produccion_enabled"/>
+                          <field name="meli_produccion_uri"
+                                 placeholder="https://micliente.odoo.com"
+                                 required="meli_produccion_enabled"/>
+                          <field name="meli_produccion_connector"
+                                 required="meli_produccion_enabled"/>
+                          <field name="meli_produccion_channel"
+                                 required="meli_produccion_enabled"/>
+                          <field name="meli_produccion_client_id"
+                                 required="meli_produccion_enabled"/>
+                          <field name="meli_produccion_secret_key" password="True"
+                                 required="meli_produccion_enabled"/>
+                          <field name="meli_produccion_last_sync"/>
+                          <field name="meli_produccion_last_result"/>
+                          <button name="action_pull_token_from_produccion" type="object"
+                                  string="Traer token de producción ahora"
+                                  class="btn-secondary" icon="fa-download"
+                                  invisible="not meli_produccion_enabled"/>
+                      </group>
+                      <group string="Copia del token hacia test (sólo instancias de PRODUCCION)">
+                          <div colspan="2" class="text-muted o_form_label mb-2">
+                              Apagado, el estado de esta cuenta por OCAPI informa sólo si hay token y cuándo
+                              vence, nunca su valor. Tildarlo sólo si una instancia de test de este mismo
+                              cliente copia el token desde acá.
+                          </div>
+                          <field name="meli_token_copy_allowed"/>
                       </group>
                     </group>
                   </page>
@@ -265,7 +304,8 @@
                          </div>
                      </group>
                      <group string="Depósitos ML (stock_location)" invisible="not multiwarehouse">
-                         <field name="meli_stock_location_ids" nolabel="1">
+                         <field name="meli_stock_by_location_mapping"/>
+                         <field name="meli_stock_location_ids" nolabel="1" colspan="2">
                              <list string="Depósitos ML" editable="bottom">
                                  <field name="meli_store_id" readonly="1"/>
                                  <field name="name" readonly="1"/>
@@ -495,7 +535,7 @@
                                                          <i class="fa fa-globe"/>
                                                      </button>
                                                  </t>
-                                                 <t t-elif="['orders','stock','stock_rt','products_post','products_get','price'].indexOf(record.cron_type.raw_value) >= 0">
+                                                 <t t-elif="['orders','stock','stock_rt','products_post','products_get'].indexOf(record.cron_type.raw_value) >= 0">
                                                      <button name="action_set_individual" type="object"
                                                              class="btn btn-sm btn-link p-0 text-muted"
                                                              title="Crear CRON exclusivo para esta cuenta">
@@ -588,8 +628,10 @@
                 <group string="Configuración básica" col="2">
                   <group>
                     <field name="mercadolibre_pricelist" invisible="0"/>
+                    <field name="mercadolibre_product_invoice_policy" invisible="0"
+                           placeholder="Heredar de la compania"/>
                     <field name="mercadolibre_pricelist_usd" invisible="0"/>
-                    <field name="mercadolibre_tax_included" invisible="0" groups="base.group_no_one"/>
+                    <field name="mercadolibre_tax_included" invisible="0" groups="base.group_system"/>
                     <field name="mercadolibre_buying_mode" invisible="0"/>
                     <field name="mercadolibre_currency" invisible="0"/>
                     <field name="mercadolibre_condition" invisible="0"/>
@@ -610,6 +652,7 @@
                            placeholder="XAXX010101000,XEXX010101000"/>
                     <field name="mercadolibre_days_to_availability" invisible="0"/>
                     <field name="mercadolibre_merge_same_name_contacts" invisible="0"/>
+                    <field name="mercadolibre_mx_cfdi_override_default" invisible="0"/>
                     <field name="mercadolibre_skip_same_name_billing_contact" invisible="0"/>
                     <field name="mercadolibre_billing_force_on_main" invisible="0"/>
                     <field name="mercadolibre_set_fiscal_position" invisible="0"/>
@@ -646,13 +689,22 @@
                     <field name="mercadolibre_process_notifications" invisible="0"/>
                     <field name="mercadolibre_cron_get_orders" invisible="0"/>
                     <field name="mercadolibre_cron_orders_limit" invisible="0"/>
+                    <field name="mercadolibre_invoice_requeue" invisible="0"/>
+                    <field name="mercadolibre_invoice_requeue_days" invisible="0"/>
+                    <field name="mercadolibre_invoice_requeue_limit" invisible="0"/>
+                    <field name="mercadolibre_invoice_requeue_max_retries" invisible="0"/>
                     <field name="mercadolibre_filter_order_datetime_start" invisible="0"/>
                     <field name="mercadolibre_filter_order_datetime" invisible="0"/>
                     <field name="mercadolibre_filter_order_datetime_to" invisible="0"/>
                     <field name="mercadolibre_cron_get_orders_shipment" invisible="0"/>
                     <field name="mercadolibre_cron_get_orders_client_set_company" invisible="0"/>
                     <field name="mercadolibre_including_shipping_cost" invisible="0"/>
+                    <field name="mercadolibre_shipping_cost_as_purchase_price" invisible="mercadolibre_including_shipping_cost == 'never'"/>
                     <field name="mercadolibre_use_payment_shipping_amount" invisible="0"/>
+                    <field name="mercadolibre_protect_invoiced_orders" invisible="0"/>
+                    <field name="mercadolibre_return_mode" invisible="0"/>
+                    <field name="mercadolibre_cancel_mode" invisible="0"/>
+                    <field name="mercadolibre_cancel_auto_from" invisible="0"/>
                     <field name="mercadolibre_cron_get_orders_shipment_client" invisible="0"/>
                     <field name="mercadolibre_cron_get_questions" invisible="0"/>
                     <field name="mercadolibre_import_search_sku" invisible="0"/>
@@ -679,7 +731,16 @@
                     <field name="mercadolibre_update_local_stock" invisible="0"/>
                     <field name="mercadolibre_order_confirmation" invisible="0"/>
                     <field name="mercadolibre_order_confirmation_full" invisible="0"/>
+                    <field name="mercadolibre_order_confirm_no_stock_mode" invisible="0"/>
                     <field name="mercadolibre_so_name_tracking" invisible="0"/>
+                    <field name="mercadolibre_post_sale_message" invisible="0"
+                           placeholder="¡Hola, {BUYER}! Gracias por tu compra. Tu factura: {LINK}"/>
+                    <field name="mercadolibre_post_sale_link_field" invisible="0" placeholder="autoinvoice_url"/>
+                    <field name="mercadolibre_post_sale_auto" invisible="0"/>
+                    <field name="mercadolibre_post_sale_auto_rules" invisible="not mercadolibre_post_sale_auto"
+                           placeholder="fulfillment:delivered, xd_drop_off:shipped"/>
+                    <field name="mercadolibre_post_sale_auto_days" invisible="not mercadolibre_post_sale_auto"/>
+                    <field name="mercadolibre_post_sale_auto_since" invisible="not mercadolibre_post_sale_auto"/>
                     <!--
                       <field name="mercadolibre_overwrite_template" invisible="0"/>
                       <field name="mercadolibre_overwrite_variant" invisible="0"/>
@@ -701,11 +762,13 @@
                     <field name="mercadolibre_cron_post_update_products" invisible="0"/>
                     <field name="mercadolibre_cron_post_new_products" invisible="0"/>
                     <field name="mercadolibre_cron_post_update_stock" invisible="0"/>
+                    <field name="mercadolibre_stock_diag_reactivate"/>
                     <field name="mercadolibre_cron_post_update_price" invisible="0"/>
                   </group>
                   <group>
                     <field name="mercadolibre_post_default_code" invisible="0"/>
                     <field name="mercadolibre_post_barcode" invisible="0"/>
+                    <field name="mercadolibre_manufacturer_source"/>
                     <field name="mercadolibre_product_template_override_variant" invisible="0"/>
                     <field name="mercadolibre_product_template_override_method" invisble="0"/>
                     <hr/>
@@ -735,6 +798,10 @@
                     <field name="mercadolibre_stock_update_mode"/>
                     <field name="mercadolibre_stock_update_type" invisible="mercadolibre_stock_update_mode != 'user_product_type'"/>
                   </group>
+                  <!-- 26.87 (F1d): red de seguridad del sincronizado de stock -->
+                  <group string="Resincronización de stock">
+                    <field name="mercadolibre_stock_resync_days"/>
+                  </group>
                   <group>
                     <field name="mercadolibre_stock_warehouse_full" invisible="0"/>
                     <field name="mercadolibre_stock_location_to_post_full" invisible="0"/>
@@ -753,6 +820,10 @@
                         <field name="type"/>
                         <field name="name"/>
                         <field name="sku"/>
+                        <field name="meli_stock_rule_mode" optional="show" invisible="type != 'stock'"/>
+                        <field name="meli_stock_location_ids" widget="many2many_tags" optional="show"
+                               invisible="type != 'stock'" options="{'no_create': True}"
+                               domain="[('account_id.configuration', '=', parent.id)]"/>
                         <field name="security_virtual_stock_to_pause"/>
                         <field name="security_quantity_stock_to_pause"/>
                       </list>
@@ -804,6 +875,10 @@
                     <field name="mercadolibre_shipment_print_guide" invisible="0"/>
                     <field name="mercadolibre_shipment_print_guide_mode" invisible="0"/>
                     <field name="mercadolibre_shipment_printer_name" invisible="0" placeholder="Ej: Zebra ZD421 - Despacho"/>
+                    <field name="mercadolibre_cron_shipment_label_retry" invisible="not mercadolibre_shipment_print_guide"/>
+                    <field name="mercadolibre_cron_shipment_label_retry_days" invisible="not (mercadolibre_shipment_print_guide and mercadolibre_cron_shipment_label_retry)"/>
+                    <field name="mercadolibre_cron_shipment_label_retry_limit" invisible="not (mercadolibre_shipment_print_guide and mercadolibre_cron_shipment_label_retry)"/>
+                    <field name="mercadolibre_cron_shipment_label_retry_max" invisible="not (mercadolibre_shipment_print_guide and mercadolibre_cron_shipment_label_retry)"/>
                     <field name="mercadolibre_post_invoice" invisible="0"/>
                     <field name="mercadolibre_post_invoice_dont_send" invisible="0"/>
                   </group>
@@ -818,6 +893,8 @@
       <record model="ir.ui.view" id="view_mercadolibre_account_json_popup">
           <field name="name">mercadolibre.account.json.popup</field>
           <field name="model">mercadolibre.account</field>
+          <!-- 26.360 (OFF 719): solo se abre con view_id explicito; nunca debe ser el form por defecto -->
+          <field name="priority">99</field>
           <field name="arch" type="xml">
               <form string="JSON Usuario ML">
                   <sheet>

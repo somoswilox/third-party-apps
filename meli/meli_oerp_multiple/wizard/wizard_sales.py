@@ -108,7 +108,9 @@ class mercadolibre_orders_import(models.TransientModel):
             rec.import_incomplete_count = len(lines.filtered(lambda l: l.import_status == 'warning'))
 
     @api.model
-    def default_get(self, fields_list):
+    def default_get(self, fields):
+        # parametro `fields` como el ORM desde 19 (F8b 20.0); el cuerpo sigue usando `fields_list`
+        fields_list = fields
         res = super().default_get(fields_list)
         # Prefill "Block Date" (order_date_block) from the MeLi
         # configuration so users don't have to re-type it every time the
@@ -182,6 +184,10 @@ class mercadolibre_orders_import(models.TransientModel):
         domain = [
             ('connection_account', '=', account.id),
             ('sale_order', '!=', False),
+            # 26.229: sólo ventas SIN confirmar. Una venta ya confirmada (o entregada) no
+            # está "incompleta" aunque el importe no cuadre: listarla la hacía ver atorada (en el caso
+            # real, todas confirmadas y la mayoria entregadas).
+            ('sale_order.state', 'in', ('draft', 'sent')),
             ('status', '!=', 'cancelled'),
             ('date_closed', '>=', self.order_date_from),
             ('date_closed', '<=', self.order_date_to),

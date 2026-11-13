@@ -2434,7 +2434,7 @@ msgstr ""
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_binder_wiz__meli_id
 msgid ""
-"Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123456789, "
+"Ingresar uno o varios separados por coma: (MLXYYYYYYY: MLA123912281, "
 "MLA458..., ML...., ... )"
 msgstr ""
 
@@ -3236,7 +3236,7 @@ msgstr ""
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_variant_binder_wiz__meli_id
-msgid "MercadoLibre Product Id (MLXYYYYYYY: MLA123456789 )"
+msgid "MercadoLibre Product Id (MLXYYYYYYY: MLA123912281 )"
 msgstr ""
 
 #. module: meli_oerp_multiple
@@ -3277,7 +3277,7 @@ msgstr ""
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_variant_binder_wiz__meli_id_variation
-msgid "MercadoLibre Product Variation Id ( ZZZZZZZZZ: 123456789 )"
+msgid "MercadoLibre Product Variation Id ( ZZZZZZZZZ: 123912281 )"
 msgstr ""
 
 #. module: meli_oerp_multiple
@@ -4499,11 +4499,6 @@ msgstr ""
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_fea
 msgid "Product Fea"
-msgstr ""
-
-#. module: meli_oerp_multiple
-#: model:ir.model.fields,field_description:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_confirmation_hook
-msgid "Product Hook"
 msgstr ""
 
 #. module: meli_oerp_multiple
@@ -6178,7 +6173,6 @@ msgstr ""
 
 #. module: meli_oerp_multiple
 #: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_order_confirmation_hook
-#: model:ir.model.fields,help:meli_oerp_multiple.field_mercadolibre_configuration__mercadolibre_product_confirmation_hook
 msgid "https://www.hookserver.com/app"
 msgstr ""
 

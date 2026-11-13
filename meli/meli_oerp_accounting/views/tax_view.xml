@@ -385,6 +385,7 @@
         <field name="arch" type="xml">
             <xpath expr="//group[@name='automatic_payment']" position="inside">
                 <field name="mercadolibre_process_charges"/>
+                <field name="mercadolibre_ar_withholding_on_payment"/>
             </xpath>
         </field>
     </record>

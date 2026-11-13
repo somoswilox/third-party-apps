@@ -19,10 +19,11 @@
 #
 ##############################################################################
 
-from odoo import fields, models, api
+from odoo import fields, models, api, _
 from datetime import datetime, timedelta
 from .versions import *
 import logging
+from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class MercadolibreCronExecution(models.Model):
         ("process", "Cron Process"),
         ("batch_update", "Cron Batch Update Marked Orders"),
         ("stock_diagnostic", "Cron Stock Diagnostic"),
+        ("shipments_label", "Cron Reintento Etiquetas"),
     ], string="Tipo de CRON", required=True, index=True)
 
     state = fields.Selection([
@@ -204,6 +206,7 @@ class MercadolibreCronExecution(models.Model):
             'process': 'Proceso',
             'batch_update': 'Batch Update',
             'stock_diagnostic': 'Stock Diagnostic',
+            'shipments_label': 'Reintento Etiquetas',
         }
         for rec in self:
             label = cron_labels.get(rec.cron_type, rec.cron_type)
@@ -385,6 +388,7 @@ class MercadolibreCronStatus(models.Model):
         ("process", "Cron Process"),
         ("batch_update", "Cron Batch Update Marked Orders"),
         ("stock_diagnostic", "Cron Stock Diagnostic"),
+        ("shipments_label", "Cron Reintento Etiquetas"),
     ], string="Tipo de CRON", required=True, index=True)
 
     cron_name = fields.Char(
@@ -583,7 +587,11 @@ class MercadolibreCronStatus(models.Model):
                 rec.price_batch_progress = ''
 
     # Cron types que soportan account_id (pueden tener modo Individual)
-    INDIVIDUAL_SUPPORTED = {'orders', 'stock', 'stock_rt', 'products_post', 'products_get', 'price'}
+    # 26.248 (#caso-K29): 'price' fuera. Los wrappers globales no miran cron_mode,
+    # así que un clon individual de precios NO reemplaza al global: lo DUPLICA
+    # (dos crons publicando la misma cuenta, sin lock compartido). Las tarjetas
+    # que ya estén en Individual conservan el botón para volver a Global.
+    INDIVIDUAL_SUPPORTED = {'orders', 'stock', 'stock_rt', 'products_post', 'products_get'}
 
     # Mapeo cron_type → xmlid del ir.cron global en el sistema.
     # Usamos xmlid y NO el name porque ir.cron.name es traducible — buscar por
@@ -601,6 +609,7 @@ class MercadolibreCronStatus(models.Model):
         'process':          'meli_oerp.ir_cron_module_cron_meli_process',
         'batch_update':     'meli_oerp_multiple.ir_cron_meli_batch_update_marked_orders',
         'stock_diagnostic': 'meli_oerp_multiple.ir_cron_meli_stock_diagnostic',
+        'shipments_label':  'meli_oerp_multiple.ir_cron_meli_shipment_label_retry',
     }
 
     # Mapeo cron_type → nombre del ir.cron (fallback, solo para instalaciones
@@ -619,6 +628,7 @@ class MercadolibreCronStatus(models.Model):
         'process':          'Cron Meli Process',
         'batch_update':     'Meli Batch Update Marked Orders',
         'stock_diagnostic': 'Meli Stock Diagnostic',
+        'shipments_label':  'Meli Reintento Etiquetas',
     }
 
     # Mapeo cron_type → código Python con account_id para ir.cron individual
@@ -887,7 +897,7 @@ class MercadolibreCronStatus(models.Model):
         code_template = self.IR_CRON_CODE_MAP.get(self.cron_type)
         individual_code = code_template % account.id
 
-        # Clonar el ir.cron — numbercall=-1 para ejecución indefinida
+        # Clonar el ir.cron
         clone_name = '%s [%s]' % (global_cron.name, account.name or str(account.id))
         clone_vals = {
             'name': clone_name,
@@ -900,8 +910,13 @@ class MercadolibreCronStatus(models.Model):
             'state': global_cron.state,
             'user_id': global_cron.user_id.id,
             'priority': global_cron.priority,
-            'numbercall': -1,
         }
+        # un caso: 'numbercall' se ELIMINO de ir.cron en Odoo 18 (en 16/17 existe y
+        # -1 significa "indefinido", que ya es el unico comportamiento en 18). Escribirlo
+        # donde no existe hace fallar el boton "Modo Individual" entero. Se pregunta por
+        # el campo en vez de por la version: asi el mismo codigo sirve en 16/17/18/19.
+        if 'numbercall' in IrCron._fields:
+            clone_vals['numbercall'] = -1
         new_cron = IrCron.create(clone_vals)
         self.write({'cron_mode': 'individual', 'individual_cron_id': new_cron.id})
         return self._notify(
@@ -963,8 +978,22 @@ class MercadolibreCronStatus(models.Model):
             'context': {'active_test': False},
         }
 
+    # Tipos cuyo método de cuenta ya registra su propia ejecución
+    # (_start_cron_execution adentro): run_now no la duplica.
+    RUN_NOW_SELF_TRACKED = {'orders', 'internal_jobs', 'process'}
+
     def action_run_now(self):
-        """Manually trigger this CRON for the account."""
+        """Manually trigger this CRON for the account.
+
+        26.248 (#caso-K29 cliente M): antes llamaba al método directo, sin lock y sin
+        registro => podía correr en paralelo con el cron programado (los dos
+        tomando, p.ej., las mismas publicaciones de precio) y la corrida no
+        quedaba en el historial. Ahora:
+        - lock del ir.cron (global + individual) sostenido toda la corrida:
+          si ya está corriendo, avisa y no duplica (como "Ejecutar de forma
+          manual" de ir.cron);
+        - registra la ejecución (mercadolibre.cron.execution) y lastcall.
+        """
         self.ensure_one()
         account = self.connection_account
 
@@ -981,9 +1010,48 @@ class MercadolibreCronStatus(models.Model):
         }
 
         method_name = method_map.get(self.cron_type)
-        if method_name and hasattr(account, method_name):
-            method = getattr(account, method_name)
-            method()
+        if not method_name or not hasattr(account, method_name):
+            return self._notify(
+                'No disponible',
+                'El CRON "%s" no se puede ejecutar manualmente desde acá.' % self.cron_name,
+                'warning')
+
+        if self.cron_type == 'price' and account.meli_cron_price_batch_running:
+            raise UserError(_(
+                'Hay una actualización masiva de precios en curso. '
+                'Esperá a que termine (o detenela en la configuración de CRONs).'))
+
+        from odoo.modules import module as _odoo_module
+        # En tests no se commitea (el runner lo prohíbe); en producción sí,
+        # como el cron: la ejecución queda visible como 'running'.
+        auto_commit = not getattr(_odoo_module, 'current_test', False)
+
+        with account._meli_cron_lock(self.cron_type, self.cron_name):
+            execution = False
+            if self.cron_type not in self.RUN_NOW_SELF_TRACKED:
+                execution = account._start_cron_execution(self.cron_type)
+                if auto_commit:
+                    self.env.cr.commit()
+            _logger.info('Ejecutar ahora [%s] cuenta %s (uid %s)',
+                         self.cron_type, account.name, self.env.uid)
+            try:
+                res = getattr(account, method_name)()
+            except Exception as e:
+                if execution:
+                    if auto_commit:
+                        self.env.cr.rollback()
+                    account._end_cron_execution(execution, state='error', error_message=str(e))
+                    if auto_commit:
+                        self.env.cr.commit()
+                raise
+            if execution:
+                d = res if isinstance(res, dict) else {}
+                account._end_cron_execution(
+                    execution, state='success',
+                    items_processed=d.get('items_processed', 0),
+                    items_success=d.get('items_success', 0),
+                    items_error=d.get('items_error', 0),
+                )
 
         return {
             'type': 'ir.actions.client',

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- 26.372 (#caso-K73): devoluciones FEE/SHP + NC en borrador. Solo xpath por campo:
+         la misma vista sirve en 16.0 (tree) y 17.0+ (list). -->
+    <record id="view_meli_payments_charges_form_718" model="ir.ui.view">
+        <field name="name">mercadolibre.payments.form.charges.718</field>
+        <field name="model">mercadolibre.payments</field>
+        <field name="inherit_id" ref="meli_oerp_accounting.view_meli_payments_charges_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='account_supplier_payment_shipment_id']" position="after">
+                <field name="account_supplier_payment_rev_id"/>
+                <field name="account_supplier_payment_shipment_rev_id"/>
+            </xpath>
+            <xpath expr="//field[@name='charge_ids']//field[@name='amount_original']" position="after">
+                <field name="amount_refunded" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mercadolibre_payment_charge_search_718" model="ir.ui.view">
+        <field name="name">mercadolibre.payment.charge.search.718</field>
+        <field name="model">mercadolibre.payment.charge</field>
+        <field name="inherit_id" ref="meli_oerp_accounting.view_mercadolibre_payment_charge_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <filter name="refunded_718" string="Con devolución" domain="[('amount_refunded', '&gt;', 0)]"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_company_page_mercadolibre_accounting_718" model="ir.ui.view">
+        <field name="name">res.company.form.meli.accounting.718</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="meli_oerp_accounting.view_company_page_mercadolibre_accounting"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='automatic_payment']" position="inside">
+                <field name="meli_refund_revert_charges"/>
+                <field name="meli_refund_credit_note_draft"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

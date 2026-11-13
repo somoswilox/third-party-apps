@@ -20,6 +20,7 @@
 ##############################################################################
 
 from odoo import fields, models, api
+from odoo.exceptions import AccessError, UserError
 from odoo.tools.translate import _
 import logging
 _logger = logging.getLogger(__name__)
@@ -29,12 +30,118 @@ import requests
 from .versions import *
 import os
 
+# Nivel de seguridad de las integraciones (auditoría caso-K14 cliente W, #caso-K19).
+# Predeterminado = el comportamiento de siempre. Bajo = sólo el estado de conexión desde afuera.
+# Alto = ninguna consulta ni acción desde afuera: quedan sólo los webhooks y el login del canal.
+OCAPI_SECURITY_LEVELS = [
+    ('default', 'Predeterminado'),
+    ('low', 'Bajo'),
+    ('high', 'Alto'),
+]
+_OCAPI_SECURITY_RANK = {'default': 0, 'low': 1, 'high': 2}
+# Funcionalidad -> nivel MÁS ALTO en el que todavía está permitida.
+_OCAPI_FEATURE_MAX_LEVEL = {
+    'status': 'low',            # estado de conexión de la cuenta (monitoreo)
+    'data': 'default',          # KPIs, exportación, catálogo, stock, precios, ventas, conectores
+    'actions': 'default',       # acciones remotas: rebind, publicar stock, publicar precio
+    'token_copy': 'default',    # copia de token entre producción y testing
+    'token_in_chatter': 'default',  # token ENMASCARADO en chatter/log (nunca completo)
+    'proxy': 'low',             # host alternativo a la API oficial (reverse proxy)
+}
+
+
+def ocapi_can_see_secrets(env):
+    """Sólo superusuario o Administrador ven secretos y tokens (pantalla, RPC, exportación)."""
+    return env.su or env.user.has_group('base.group_system')
+
+
+_OCAPI_SECRET_SUFFIXES = ('secret_key', 'access_token', 'refresh_token', 'client_secret')
+
+
+def ocapi_secret_fields(records):
+    """Campos con secretos/tokens del modelo, reconocidos por el nombre.
+
+    Por nombre y no por una lista declarada en cada módulo: así cubre también los campos que
+    agregan módulos que no dependen de este (meli_oerp en res.company), sin depender del orden
+    de carga.
+    """
+    return [f for f in records._fields if f.endswith(_OCAPI_SECRET_SUFFIXES)]
+
+
+def ocapi_strip_secret_export(records, fields_to_export):
+    if ocapi_can_see_secrets(records.env):
+        return fields_to_export
+    secret = set(ocapi_secret_fields(records))
+    return [f for f in fields_to_export if f.split('/')[0] not in secret]
+
+
+def ocapi_hide_secrets(records, vals_list):
+    """Vacía los campos secretos en el resultado de un read para quien no es Administrador."""
+    if ocapi_can_see_secrets(records.env):
+        return vals_list
+    secret = ocapi_secret_fields(records)
+    if not secret:
+        return vals_list
+    for vals in vals_list:
+        for f in secret:
+            if f in vals:
+                vals[f] = False
+    return vals_list
+
+
 class ResCompany(models.Model):
 
     _name = "res.company"
     _inherit = "res.company"
 
     ocapi_connections = fields.One2many( "ocapi.connection.account", "company_id", string="Connection Accounts", help="Odoo Connector Api Connection Accounts" )
+
+    ocapi_security_level = fields.Selection(
+        OCAPI_SECURITY_LEVELS, string="Nivel de seguridad", default='default', required=True,
+        help="Qué se puede consultar o hacer desde afuera de Odoo en las integraciones.\n"
+             "Predeterminado: como hasta ahora: estado de conexión (en las cuentas con Monitoreo), "
+             "indicadores, acciones remotas y copia de token entre producción y testing.\n"
+             "Bajo: sólo el estado de conexión (sin datos de ventas, clientes ni acciones); sin copia de "
+             "token; los tokens no se registran en el chatter.\n"
+             "Alto: ninguna consulta ni acción desde afuera; quedan sólo las notificaciones y el login del "
+             "canal. La casilla Monitoreo queda apagada y sólo se usa la dirección oficial de la API.\n"
+             "En todos los niveles: los tokens nunca se muestran completos y los secretos sólo los ve un "
+             "Administrador.")
+
+    @api.model
+    def _ocapi_security_level_effective(self):
+        """El nivel MÁS restrictivo entre las compañías (para rutas que no saben de qué compañía son)."""
+        levels = self.sudo().search([]).mapped('ocapi_security_level') or ['default']
+        return max(levels, key=lambda l: _OCAPI_SECURITY_RANK.get(l, 0))
+
+    def _ocapi_security_allows(self, feature):
+        """True si `feature` está permitida en el nivel de esta compañía (o el global si no hay compañía)."""
+        level = (self and self.sudo()[:1].ocapi_security_level) or self._ocapi_security_level_effective()
+        max_level = _OCAPI_FEATURE_MAX_LEVEL.get(feature, 'default')
+        return _OCAPI_SECURITY_RANK.get(level, 0) <= _OCAPI_SECURITY_RANK[max_level]
+
+    def _read_format(self, fnames, load='_classic_read'):
+        return ocapi_hide_secrets(self, super()._read_format(fnames, load=load))
+
+    def export_data(self, fields_to_export):
+        return super().export_data(ocapi_strip_secret_export(self, fields_to_export))
+
+    def write(self, vals):
+        if 'ocapi_security_level' in vals:
+            if not ocapi_can_see_secrets(self.env):
+                raise AccessError(_("Sólo un Administrador puede cambiar el Nivel de seguridad."))
+            for company in self:
+                if company.ocapi_security_level != vals['ocapi_security_level']:
+                    _logger.warning("OCAPI nivel de seguridad: compañía %s %s -> %s (usuario %s)",
+                                    company.id, company.ocapi_security_level,
+                                    vals['ocapi_security_level'], self.env.user.login)
+        res = super().write(vals)
+        if vals.get('ocapi_security_level') == 'high':
+            accounts = self.env['ocapi.connection.account'].sudo().search(
+                [('company_id', 'in', self.ids), ('connection_monitor', '=', True)])
+            if accounts:
+                accounts.write({'connection_monitor': False})
+        return res
 
 
 class IrAttachment(models.Model):

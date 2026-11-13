@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 26.375 (caso-K10 cliente G): Stock por depósito, Odoo vs Mercado Libre -->
+<odoo>
+  <data>
+
+    <!-- Asistente -->
+    <record id="view_mercadolibre_product_wh_stock_form" model="ir.ui.view">
+      <field name="name">mercadolibre.product.wh.stock.form</field>
+      <field name="model">mercadolibre.product.wh.stock</field>
+      <field name="arch" type="xml">
+        <form string="Stock en depósitos: Odoo vs Mercado Libre">
+          <sheet>
+            <div class="alert alert-danger" role="alert" invisible="not error">
+              <strong>No se pudo leer el stock de Mercado Libre: </strong><field name="error" readonly="1" nolabel="1"/>
+            </div>
+            <div class="alert alert-warning" role="alert" invisible="by_mapping or error">
+              Esta cuenta publica el <strong>total</strong> y lo reparte en proporción a lo que cada depósito ya
+              tenía: «Publicar stock» no deja cada depósito igual a su ubicación. Para publicar depósito por depósito,
+              activá «Publicar stock por depósito (según mapeo)» en la cuenta (Depósitos ML).
+            </div>
+            <group>
+              <group>
+                <field name="product_id" readonly="1"/>
+                <field name="conn_id" readonly="1"/>
+                <field name="user_product_id" readonly="1"/>
+              </group>
+              <group>
+                <field name="account_id" readonly="1"/>
+                <field name="by_mapping" readonly="1"/>
+                <field name="state" widget="badge" readonly="1"
+                       decoration-success="state == 'ok'"
+                       decoration-warning="state in ('diff', 'unmapped')"
+                       decoration-danger="state == 'error'"/>
+                <field name="read_date" readonly="1"/>
+              </group>
+            </group>
+            <field name="line_ids" readonly="1" nolabel="1">
+              <list create="0" delete="0" edit="0"
+                    decoration-success="state == 'ok'"
+                    decoration-warning="state == 'diff'"
+                    decoration-info="state in ('unmapped_ml', 'missing_ml', 'unmapped_odoo')"
+                    decoration-muted="state == 'ml_managed'">
+                <field name="sequence" column_invisible="1"/>
+                <field name="has_odoo" column_invisible="1"/>
+                <field name="has_ml" column_invisible="1"/>
+                <field name="state" column_invisible="1"/>
+                <field name="diff" column_invisible="1"/>
+                <field name="name"/>
+                <field name="logistic" widget="badge" decoration-success="logistic == 'FLEX'"/>
+                <field name="store_id" optional="hide"/>
+                <field name="network_node_id" optional="hide"/>
+                <field name="loc_type" optional="hide"/>
+                <field name="odoo_location_id"/>
+                <field name="qty_odoo" string="Odoo" invisible="not has_odoo"/>
+                <field name="qty_ml" string="ML" invisible="not has_ml"
+                       decoration-danger="has_ml and qty_ml == 0 and state != 'ml_managed'"/>
+                <field name="state_label"/>
+              </list>
+            </field>
+            <div class="mt-2 fw-bold text-end">
+              <field name="total_label" readonly="1" nolabel="1"/>
+            </div>
+          </sheet>
+          <footer>
+            <button name="action_publish" type="object" string="Publicar stock por depósito" class="btn-primary"
+                    invisible="not by_mapping"
+                    confirm="Se publica en Mercado Libre el stock de cada depósito según su ubicación Odoo. ¿Seguir?"/>
+            <button name="action_publish" type="object" string="Publicar stock" class="btn-secondary"
+                    invisible="by_mapping"
+                    confirm="La cuenta publica el total repartido en proporción (no por depósito). ¿Seguir?"/>
+            <button name="action_reload" type="object" string="Releer desde ML" class="btn-secondary" icon="fa-refresh"/>
+            <button name="action_edit_mapping" type="object" string="Editar mapeo" class="btn-secondary" icon="fa-map-marker"/>
+            <button string="Cerrar" special="cancel" class="btn-secondary"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+    <!-- Vinculación de variante: smart button -->
+    <record id="mercadolibre_product_form_view_wh_stock" model="ir.ui.view">
+      <field name="name">mercadolibre.product.form.wh.stock</field>
+      <field name="model">mercadolibre.product</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.mercadolibre_product_form_view"/>
+      <field name="arch" type="xml">
+        <xpath expr="//div[@name='button_box_mel']" position="inside">
+          <field name="meli_wh_state" invisible="1"/>
+          <button name="action_meli_wh_stock_open" type="object" class="oe_stat_button text-success" icon="fa-cubes"
+                  title="Stock por depósito: Odoo y Mercado Libre coinciden"
+                  invisible="not meli_user_product_id or meli_wh_state != 'ok'">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" class="oe_stat_button text-warning" icon="fa-cubes"
+                  title="Stock por depósito: Odoo y Mercado Libre NO coinciden (o hay depósitos sin mapeo)"
+                  invisible="not meli_user_product_id or meli_wh_state not in ('diff', 'unmapped', 'error')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" class="oe_stat_button" icon="fa-cubes"
+                  title="Comparar el stock por depósito con Mercado Libre"
+                  invisible="not meli_user_product_id or meli_wh_state not in (False, 'none')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+        </xpath>
+      </field>
+    </record>
+
+    <!-- Vinculaciones: columna -->
+    <record id="view_mercadolibre_bindings_product_tree_wh_stock" model="ir.ui.view">
+      <field name="name">mercadolibre.product.tree.wh.stock</field>
+      <field name="model">mercadolibre.product</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.view_mercadolibre_bindings_product_tree"/>
+      <field name="arch" type="xml">
+        <xpath expr="//field[@name='meli_stock_status']" position="after">
+          <field name="meli_wh_state" widget="badge" optional="show"
+                 decoration-success="meli_wh_state == 'ok'"
+                 decoration-warning="meli_wh_state in ('diff', 'unmapped')"
+                 decoration-danger="meli_wh_state == 'error'"
+                 decoration-muted="meli_wh_state == 'none'"/>
+          <field name="meli_wh_diff_count" optional="hide"/>
+          <field name="meli_wh_qty_odoo" optional="hide"/>
+          <field name="meli_wh_qty_ml" optional="hide"/>
+          <field name="meli_wh_date" optional="hide"/>
+        </xpath>
+      </field>
+    </record>
+
+    <!-- Vinculaciones: filtros -->
+    <record id="mercadolibre_bindings_product_search_view_wh_stock" model="ir.ui.view">
+      <field name="name">mercadolibre.product.search.wh.stock</field>
+      <field name="model">mercadolibre.product</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.mercadolibre_bindings_product_search_view"/>
+      <field name="arch" type="xml">
+        <xpath expr="//filter[@name='binding_stock_needs_update']" position="before">
+          <filter string="Con diferencias en depósitos" name="binding_wh_diff"
+                  domain="[('meli_wh_state', '=', 'diff')]"
+                  help="Odoo y Mercado Libre no coinciden en al menos un depósito (última comparación o publicación)"/>
+          <filter string="Depósito ML sin mapeo" name="binding_wh_unmapped"
+                  domain="[('meli_wh_state', '=', 'unmapped')]"/>
+          <filter string="Depósitos sin comparar" name="binding_wh_none"
+                  domain="[('meli_user_product_id', '!=', False), ('meli_wh_state', 'in', ('none', False))]"/>
+          <separator/>
+        </xpath>
+      </field>
+    </record>
+
+    <!-- Ficha de producto (variante) -->
+    <record id="product_normal_mercadolibre_form_view_wh_stock" model="ir.ui.view">
+      <field name="name">product.normal.mercadolibre.form.wh.stock</field>
+      <field name="model">product.product</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.product_normal_mercadolibre_form_view"/>
+      <field name="arch" type="xml">
+        <xpath expr="//div[@name='button_box_mel']" position="inside">
+          <field name="meli_wh_state" invisible="1"/>
+          <field name="meli_wh_binding_count" invisible="1"/>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button text-success" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state != 'ok'">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button text-warning" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state not in ('diff', 'unmapped', 'error')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state not in (False, 'none')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+        </xpath>
+      </field>
+    </record>
+
+    <!-- Ficha de producto (plantilla) -->
+    <record id="product_tpl_mercadolibre_form_view_wh_stock" model="ir.ui.view">
+      <field name="name">product.tpl.mercadolibre.form.wh.stock</field>
+      <field name="model">product.template</field>
+      <field name="inherit_id" ref="meli_oerp_multiple.product_tpl_mercadolibre_form_view"/>
+      <field name="arch" type="xml">
+        <xpath expr="//div[@name='button_box_mel']" position="inside">
+          <field name="meli_wh_state" invisible="1"/>
+          <field name="meli_wh_binding_count" invisible="1"/>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button text-success" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state != 'ok'">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button text-warning" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state not in ('diff', 'unmapped', 'error')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+          <button name="action_meli_wh_stock_open" type="object" groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" class="oe_stat_button" icon="fa-cubes"
+                  invisible="not meli_wh_binding_count or meli_wh_state not in (False, 'none')">
+            <field name="meli_wh_badge" nolabel="1" readonly="1"/>
+          </button>
+        </xpath>
+      </field>
+    </record>
+
+  </data>
+</odoo>

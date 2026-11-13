@@ -26,10 +26,35 @@ _logger = logging.getLogger(__name__)
 import pdb
 #from .warning import warning
 import requests
+from .config_account import meli_config_account
+from .meli_util import meli_norm_sku
+from odoo.addons.meli_oerp.models.gtin import meli_gtin_same  # 26.389 (caso-K77)
+import ast
 import json
+import re
 
-from odoo.addons.meli_oerp_stock.models.order import SaleOrder
+# carga de dependencia (el nombre importado lo pisaba la clase de abajo: pylint function-redefined) (F8b 20.0)
+import odoo.addons.meli_oerp_stock.models.order  # noqa: F401
 from odoo.addons.meli_oerp.models.versions import *
+
+
+def _meli_exact_binding_product(binding_obj, meli_id, meli_id_variation, account_filter):
+    """Producto de la vinculacion EXACTA de una publicacion/variacion, o vacio.
+
+    Exacta = binding de esa variacion (si la venta trae variacion) o, si no trae, binding de la
+    publicacion sin variacion; y UN solo producto activo detras. Cualquier otra cosa (sin binding,
+    solo binding de otra variacion, varios productos) devuelve vacio y decide la heuristica.
+    """
+    product_obj = binding_obj.env['product.product']
+    if not meli_id:
+        return product_obj
+    dom = [('conn_id', '=', meli_id)] + list(account_filter or [])
+    if meli_id_variation:
+        dom += [('conn_variation_id', '=', str(meli_id_variation))]
+    else:
+        dom += ['|', ('conn_variation_id', '=', False), ('conn_variation_id', '=', '')]
+    prods = binding_obj.search(dom).mapped('product_id').filtered(lambda p: p.active)
+    return prods if len(prods) == 1 else product_obj
 
 class SaleOrder(models.Model):
 
@@ -38,6 +63,59 @@ class SaleOrder(models.Model):
     #mercadolibre could have more than one associated order... packs are usually more than one order
     mercadolibre_bindings = fields.Many2many( "mercadolibre.sale_order", string="MercadoLibre Connection Bindings",
                                              groups="meli_oerp_multiple.group_mercadolibre_connectors_manager" )
+
+    # Depósito ML de origen VISIBLE en la venta (pestaña MercadoLibre): Many2one al depósito
+    # mercadolibre.account.stock_location, resuelto del node_id/store_id de los ítems de la
+    # orden. INFORMATIVO (se ve aunque el mapeo a ubicación Odoo esté vacío) y NO altera el
+    # ruteo de stock (eso lo hace _meli_get_stock_location_from_mapping en meli_oerp_stock).
+    meli_stock_location_id = fields.Many2one(
+        "mercadolibre.account.stock_location", string="Depósito ML (origen)",
+        compute="_compute_meli_stock_location_id", store=False,
+        help="Depósito logístico de MercadoLibre de donde sale la venta (dominante si hay "
+             "varios), resuelto del node_id/store_id de los ítems. No cambia el almacén.")
+
+    @api.depends('meli_orders.order_items.meli_stock_node_id',
+                 'meli_orders.order_items.meli_stock_store_id')
+    def _compute_meli_stock_location_id(self):
+        Mapping = self.env['mercadolibre.account.stock_location'].sudo()
+        for order in self:
+            depot = False
+            if 'meli_orders' in order._fields and order.meli_orders:
+                try:
+                    mos = order.meli_orders
+                    account = mos[:1].connection_account if 'connection_account' in mos._fields else False
+                    base_dom = [('account_id', '=', account.id)] if account else []
+                    qty_by_rec = {}
+                    for mo in mos:
+                        for item in mo.order_items:
+                            node = ('meli_stock_node_id' in item._fields and item.meli_stock_node_id) or ''
+                            store = ('meli_stock_store_id' in item._fields and item.meli_stock_store_id) or ''
+                            if not node and not store:
+                                continue
+                            key_dom = [('network_node_id', '=', node)] if node else [('meli_store_id', '=', store)]
+                            rec = Mapping.search(base_dom + key_dom, limit=1)
+                            via = 'account'
+                            if not rec and node and store:
+                                rec = Mapping.search(base_dom + [('meli_store_id', '=', store)], limit=1)
+                            if not rec:
+                                # fallback SOLO-display (el ruteo real sí filtra por cuenta)
+                                rec = Mapping.search(key_dom, limit=1)
+                                if not rec and node and store:
+                                    rec = Mapping.search([('meli_store_id', '=', store)], limit=1)
+                                via = 'no-account-filter'
+                            _logger.info("MULTIALMACEN-CMP so=%s ml=%s node=%r store=%r account=%s matched=%r via=%s",
+                                         order.id, order.meli_order_id, node, store,
+                                         (account.id if account else None), (rec.name if rec else None), via)
+                            if rec:
+                                qty_by_rec[rec.id] = qty_by_rec.get(rec.id, 0) + (item.quantity or 1)
+                    if qty_by_rec:
+                        depot = max(qty_by_rec, key=qty_by_rec.get)
+                    _logger.info("MULTIALMACEN-CMP-RESULT so=%s ml=%s depot=%s", order.id, order.meli_order_id, depot)
+                except Exception as e:
+                    _logger.exception("MULTIALMACEN-CMP-ERROR so=%s: %s", order.id, e)
+                    depot = False
+            order.meli_stock_location_id = depot
+
 
     # Rounding adjustment fields
     meli_rounding_adjusted = fields.Boolean(
@@ -263,7 +341,13 @@ class SaleOrder(models.Model):
 
         #seleccionar en la confirmacion del stock.picking la informacion del carrier
         #
-        if "mercadolibre_order_confirmation_hook" in config._fields and config.mercadolibre_order_confirmation_hook and self.state and self.state in ['sale','done']:
+        # el hook manda el id de la venta a una URL libre, sin autenticación. Con el
+        # Nivel de seguridad Alto queda bloqueado (se registra en el log y no sale nada).
+        _hook_url = "mercadolibre_order_confirmation_hook" in config._fields and config.mercadolibre_order_confirmation_hook
+        if _hook_url and "ocapi_security_level" in company._fields and company.sudo().ocapi_security_level == "high":
+            _logger.warning("order_confirmation_hook bloqueado por Nivel de seguridad Alto (compañía %s, venta %s)", company.id, self.id)
+            _hook_url = False
+        if _hook_url and self.state and self.state in ['sale','done']:
             #headers = {'Accept': 'application/json', 'Content-type':'multipart/form-data'}
             try:
                 params = { "target": "order", "id": self.id }
@@ -297,7 +381,7 @@ class MercadoLibreOrder(models.Model):
 
     _inherit = "mercadolibre.orders"
 
-    connection_account = fields.Many2one( "mercadolibre.account", string="MercadoLibre Account" )
+    connection_account = fields.Many2one( "mercadolibre.account", string="MercadoLibre Account", index='btree_not_null' )
 
     meli_pending_batch_update = fields.Boolean(
         string="Pendiente actualización batch",
@@ -305,6 +389,25 @@ class MercadoLibreOrder(models.Model):
         index=True,
         help="Marcado por el wizard para ser procesado en el cron de actualización masiva ML."
     )
+
+    def init(self):
+        super().init()
+        # #caso-K13: red de seguridad contra la orden ML importada dos veces por dos procesos en paralelo
+        # (el arreglo es el lock por orden de meli_oerp/models/import_lock.py; esto es el respaldo).
+        # Indice unico PARCIAL: sólo filas NUEVAS (id > max(id) al crearlo), así los duplicados
+        # históricos que ya existen en las bases no impiden crearlo ni hay que tocarlos.
+        # Se crea una vez (IF NOT EXISTS) y el corte queda fijo en esa primera creación.
+        cr = self.env.cr
+        cr.execute("SELECT 1 FROM pg_indexes WHERE indexname = 'mercadolibre_orders_order_account_uniq_new'")
+        if not cr.fetchone():
+            cr.execute("SELECT COALESCE(MAX(id), 0) FROM mercadolibre_orders")
+            cutoff = int(cr.fetchone()[0])
+            cr.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS mercadolibre_orders_order_account_uniq_new
+                ON mercadolibre_orders (order_id, COALESCE(connection_account, 0))
+                WHERE id > %d AND order_id IS NOT NULL
+            """ % cutoff)
+            _logger.info("meli_oerp_multiple: indice unico parcial mercadolibre_orders(order_id, cuenta) desde id > %s", cutoff)
 
     @api.model
     def cron_batch_update_marked_orders(self, batch_size=20):
@@ -577,8 +680,8 @@ class MercadoLibreOrder(models.Model):
 
         order_fields = super(MercadoLibreOrder, self).prepare_ml_order_vals(meli=meli, order_json=order_json, config=config)
 
-        if config and config.accounts:
-            account = config.accounts[0]
+        account = meli_config_account(config)
+        if account:
             company = account.company_id
 
             order_fields["connection_account"] = account.id
@@ -614,13 +717,13 @@ class MercadoLibreOrder(models.Model):
         binding_obj = self.env['mercadolibre.product']
 
         if not meli_item:
-            return None
+            return product_obj
 
         account = None
         account_filter = []
 
-        if config.accounts:
-            account = config.accounts[0]
+        account = meli_config_account(config, fallback=('connection_account' in self._fields and self[:1].connection_account) or None)
+        if account:
             account_filter = [('connection_account','=',account.id)]
         else:
             _logger.error("search_meli_product (multiple): no account")
@@ -629,6 +732,8 @@ class MercadoLibreOrder(models.Model):
         meli_id = meli_item['id']
         meli_id_variation = ("variation_id" in meli_item and meli_item['variation_id'])
         seller_sku = ('seller_sku' in meli_item and meli_item['seller_sku']) or ('seller_custom_field' in meli_item and meli_item['seller_custom_field'])
+        # 26.363 (caso-K10): SKU con espacios no separables (U+00A0) ⇒ normalizado antes de buscar.
+        seller_sku = meli_norm_sku(seller_sku)
 
         rjson = account.fetch_meli_product( meli_id=meli_id, meli=meli )
         #_logger.info("rjson: " + str(rjson) )
@@ -676,6 +781,22 @@ class MercadoLibreOrder(models.Model):
 
         #_logger.info("search_meli_product (multiple): bindP: "+str(bindP))
 
+        # [#caso-K70 cliente F caso-K21, 29-oct-2026] La vinculacion EXPLICITA gana sobre la heuristica GTIN/SKU.
+        # Antes, un binding encontrado se DESCARTABA si el GTIN de ML no era el barcode del producto
+        # y el SELLER_SKU no era su referencia: la venta caia por SKU en OTRO producto (un combo/kit
+        # vinculado a la publicacion entraba como el articulo suelto que tiene ese GTIN/SKU).
+        # Se respeta solo si el binding es EXACTO y sin ambiguedad: la variacion de la venta (o la
+        # publicacion sin variacion) vinculada a UN solo producto. El fallback por conn_id cuando
+        # la venta trae variacion, o varios productos, siguen verificando GTIN/SKU como antes.
+        bind_exact = _meli_exact_binding_product(binding_obj, meli_id, meli_id_variation, account_filter)
+        if bind_exact:
+            if ((seller_barcode and str(seller_barcode) != str(bind_exact.barcode or ''))
+                    or (seller_sku and str(seller_sku) != str(bind_exact.default_code or ''))):
+                _logger.info("search_meli_product (multiple): %s/%s vinculada a %s [%s]: se respeta la "
+                                "vinculacion aunque ML informa SKU %s / GTIN %s.", meli_id, meli_id_variation or '-',
+                                bind_exact.display_name, bind_exact.default_code or '', seller_sku, seller_barcode)
+            return bind_exact
+
         product_related = (bindP and bindP.product_id)
 
         product_related_barcode = None
@@ -684,7 +805,7 @@ class MercadoLibreOrder(models.Model):
 
             if seller_barcode and check_barcode:
                 if seller_barcode and len(product_related)>0:
-                    if ( str(seller_barcode) != str(product_related and product_related[0].barcode)):
+                    if ( not meli_gtin_same(seller_barcode, product_related and product_related[0].barcode) ):  # 26.389 (caso-K77)
                         #force search by sku
                         #_logger.info("search_meli_product (multiple): binding found, but force check barcode not passed: "+str(seller_barcode))
                         product_related_barcode = []
@@ -724,7 +845,7 @@ class MercadoLibreOrder(models.Model):
         #_logger.info("product_related from product:"+str(product_related))
 
         if check_barcode and seller_barcode and product_related and len(product_related)>0:
-            if ( str(seller_barcode) != str(product_related and product_related[0].barcode)):
+            if ( not meli_gtin_same(seller_barcode, product_related and product_related[0].barcode) ):  # 26.389 (caso-K77)
                 #force search by sku
                 #_logger.info("search_meli_product (multiple): Master founded but force check barcode not passed: "+str(seller_barcode))
                 product_related_barcode = []
@@ -852,7 +973,12 @@ class MercadoLibreOrder(models.Model):
                     _logger.info("TODO: search by attributes")
 
         #_logger.info("search_meli_product (multiple) ended: "+str(meli_item))
-        return product_related
+        # [caso-K15 cliente E] nunca devolver None. Si la creacion del producto desde la orden falla
+        # (savepoint revertido), product_related queda en None y los herederos
+        # (meli_oerp_stock: len(product_related)) rompen con "NoneType has no len()": la
+        # orden no entra nunca y la notificacion se reintenta. Con un recordset vacio sigue
+        # el camino normal (busqueda por SKU / aviso "PRODUCTO NO ENCONTRADO").
+        return product_related or product_obj
 
     def orders_update_order( self, context=None, meli=None, config=None ):
 
@@ -868,7 +994,17 @@ class MercadoLibreOrder(models.Model):
 
         if not account and order.seller:
             #_logger.info( "orders_update_order >> NO ACCOUNT for order, check seller id vs accounts: " + str(order.seller) )
-            sellerjson = eval( order.seller )
+            # order.seller se guarda como str(dict) (repr de Python); nunca eval() (auditoría de seguridad, un caso)
+            sellerjson = None
+            try:
+                sellerjson = ast.literal_eval( order.seller )
+            except (ValueError, SyntaxError):
+                try:
+                    sellerjson = json.loads( order.seller )
+                except ValueError:
+                    sellerjson = None
+            if not isinstance( sellerjson, dict ):
+                sellerjson = None
             if sellerjson and "id" in sellerjson:
                 seller_id = sellerjson["id"]
                 if seller_id:
@@ -951,12 +1087,97 @@ class MercadoLibreOrder(models.Model):
         config = config or (self and self.connection_account and self.connection_account.configuration) or (self and self.company_id)
         return config
 
+    def _meli_cancel_api(self, config=None):
+        """Cliente de ML para leer la foto de una cancelacion con el token de la CUENTA de la
+        orden (sin esto, get_new_instance() elige la primera cuenta conectada del usuario y la
+        foto de otra cuenta vuelve 403/404 => la cancelacion quedaria en espera para siempre)."""
+        self.ensure_one()
+        account = "connection_account" in self._fields and self.connection_account
+        if not account:
+            return super()._meli_cancel_api(config=config)
+        meli = self.env['meli.util'].get_new_instance(account.company_id, account=account)
+        if not meli or getattr(meli, "needlogin_state", False):
+            return None
+        return meli
+
+    def _meli_post_sale_custom_message( self, config=None ):
+        """Mensaje postventa propio de la cuenta (Configuración › «Mensaje postventa»), o None."""
+        config = self._get_config(config=config)
+        if config and 'mercadolibre_post_sale_message' in config._fields:
+            return (config.mercadolibre_post_sale_message or '').strip() or None
+        return None
+
+    def _meli_autofactura_installed( self ):
+        """La plantilla por defecto apunta a /AUTOFACTURA/register, que sólo existe con meli_oerp_autofacturacion."""
+        return bool(self.env['ir.module.module'].sudo().search_count([
+            ('name', '=', 'meli_oerp_autofacturacion'), ('state', '=', 'installed')]))
+
     def send_post_message_inv_link( self ):
-        return self.send_post_message(message=None, config=None, force_send=True)
+        """Botón «Mensaje Postventa (mensaje autofactura)»: manda la liga de facturación al comprador.
+        26.351 (#caso-K68 cliente B1). Texto, en orden: el «Mensaje postventa» de la configuración de la
+        cuenta; el «Mensaje y link autofactura» de meli_oerp_autofacturacion (el mismo de confirm_ml);
+        la plantilla con /AUTOFACTURA/register (sólo con autofacturación instalada). Antes pasaba
+        message=None y salía «Buen día, gracias por su compra» SIN la liga."""
+        res = True
+        for order in self:
+            config = order._get_config()
+            message = order._meli_post_sale_custom_message(config) \
+                or (config and 'autoinvoice_message' in config._fields and config.autoinvoice_message) or None
+            res = order.send_post_message(message=message, config=config, force_send=True)
+        return res
+
+    def action_send_post_message( self ):
+        """Botón «Mensaje Postventa»: con «Mensaje postventa» configurado en la cuenta manda ese mismo
+        texto (#caso-K68: el mismo en los dos botones); sin configurar, como antes, sólo consulta y registra
+        en la venta qué mensajes permite ML, sin escribirle al comprador."""
+        res = True
+        for order in self:
+            config = order._get_config()
+            message = order._meli_post_sale_custom_message(config)
+            res = order.send_post_message(message=message, config=config, force_send=bool(message))
+        return res
+
+    def _meli_post_sale_buyer_name( self ):
+        """Nombre para el saludo: first_name, si no name; nunca el nickname (#caso-K68)."""
+        buyer = 'buyer' in self._fields and self.buyer
+        if not buyer:
+            return ''
+        return (buyer.first_name or '').strip() or (buyer.name or '').strip()
+
+    def _meli_post_sale_invoice_text( self, message=None, base_url=None, config=None ):
+        """Texto de la opción SEND_INVOICE_LINK de ML => (texto, None) o (None, motivo) si NO hay que enviar.
+        26.351 (#caso-K68). Comodines: {BUYER} {ORDERID} {ORDERAMOUNT} {LINK}.
+        {LINK} = el campo de la venta indicado en «Campo de la liga de facturación» (liga propia de cada
+        orden; vacía => no se envía, para no mandar una liga rota) o, sin ese campo, <base_url>/AUTOFACTURA/register.
+        Sin mensaje propio y sin autofacturación instalada no se envía (la liga por defecto daría 404)."""
+        config = self._get_config(config=config)
+        so = self and self.sale_order
+        link_field = (config and 'mercadolibre_post_sale_link_field' in config._fields
+                      and (config.mercadolibre_post_sale_link_field or '').strip()) or ''
+        if link_field:
+            if not so or link_field not in so._fields:
+                return None, "la venta no tiene el campo de liga de facturación «%s»" % link_field
+            link = str(so[link_field] or '').strip()
+            if not link:
+                return None, "la liga de facturación de la venta (campo %s) está vacía" % link_field
+        else:
+            link = str(base_url or '') + "/AUTOFACTURA/register"
+        if not message:
+            if not link_field and not self._meli_autofactura_installed():
+                return None, ("no hay mensaje postventa configurado: cargarlo en la configuración de la cuenta "
+                              "(«Mensaje postventa» y «Campo de la liga de facturación»)")
+            message = "Para obtener su factura por favor acceder a: {LINK} con los siguientes datos: {ORDERID} - {ORDERAMOUNT}"
+        text = message.replace('{LINK}', link)
+        if '{BUYER}' in text:
+            name = self._meli_post_sale_buyer_name()
+            text = text.replace('{BUYER}', name) if name else re.sub(r'[ ,]*\{BUYER\}', '', text)
+        if so and so.name and so.amount_total:
+            text = text.replace('{ORDERID}', str(so.name))
+            text = text.replace('{ORDERAMOUNT}', str(so.amount_total))
+        return text, None
 
     def send_post_message( self, message=None, config=None, force_send=False):
         #_logger.info("send_post_message: "+str(message)+" order:"+str(self.order_id))
-        message = message or "Buen día, gracias por su compra"
         #_logger.info("send_post_message: "+str(message))
         account = self and self.connection_account
         config = self and self._get_config(config=config)
@@ -964,12 +1185,19 @@ class MercadoLibreOrder(models.Model):
         so = self and self.sale_order
 
         #_logger.info("send_post_message: "+str(account and account.name)+" pack_id:"+str(pack_id))
-        message = message or "Buen día, gracias por su compra"
 
         if account:
             #/messages/action_guide/packs/200000000000/caps_available?tag=post_sale
             company = account.company_id
             base_url = company.get_base_url()
+            base_autofac = None
+            if force_send:
+                base_autofac, why = self._meli_post_sale_invoice_text(message=message, base_url=base_url, config=config)
+                if not base_autofac:
+                    _logger.warning("send_post_message %s: no se envia: %s", pack_id, why)
+                    if so:
+                        so.message_post(body="Mensaje postventa NO enviado: "+str(why))
+                    return False
 
             meli = self.env['meli.util'].get_new_instance( account.company_id, account )
             if meli:
@@ -988,7 +1216,7 @@ class MercadoLibreOrder(models.Model):
 
                 # MLA
                 # [{'option_id': 'OTHER', 'cap_available': 1}, {'option_id': 'REQUEST_VARIANTS', 'cap_available': 20}, {'option_id': 'REQUEST_BILLING_INFO', 'cap_available': 20}]
-                #https://api.mercadolibre.com/messages/action_guide/packs/2000000000000000/option
+                #https://api.mercadolibre.com/messages/action_guide/packs/<order_id>/option
                 for res in rjson:
                     #_logger.info("send_post_message res:"+str(res))
                     option = res
@@ -997,20 +1225,13 @@ class MercadoLibreOrder(models.Model):
                         _logger.warning("send_post_message error:"+str(res))
                         break;
 
-                    base_autofac = "Para obtener su factura por favor acceder a: "+str(base_url)+"/AUTOFACTURA/register con los siguientes datos: {ORDERID} - {ORDERAMOUNT}"
-                    base_autofac = message or base_autofac
-                    if (base_autofac):
-                        so = self.sale_order
-                        if so and so.name and so.amount_total:
-                            base_autofac = base_autofac.replace('{ORDERID}', str(so.name))
-                            base_autofac = base_autofac.replace('{ORDERAMOUNT}', str(so.amount_total))
                     #_logger.info("send_post_message base_autofac:"+str(base_autofac) )
 
                     if (force_send and option['option_id']=='SEND_INVOICE_LINK' and option['cap_available']>=1):
                         #_logger.info("send_post_message SEND_INVOICE_LINK")
                         uri = "/messages/action_guide/packs/"+str(pack_id)+"/option"
                         if so:
-                            so.message_post(body="AUTOFACTURA ENVIANDO: "+str(message))
+                            so.message_post(body="AUTOFACTURA ENVIANDO: "+str(base_autofac))
                         response2 = meli.post(uri,body={
                             'option_id': 'SEND_INVOICE_LINK',
                             "text": base_autofac
@@ -1022,6 +1243,8 @@ class MercadoLibreOrder(models.Model):
 
                         rjson2 = response2.json()
                         _logger.info("send_post_message SEND_INVOICE_LINK:"+str(rjson2))
+                        if hasattr(self, '_meli_post_sale_mark_manual'):
+                            self._meli_post_sale_mark_manual(rjson2)  # 26.370 (#caso-K67): el automático no lo repite
 
                     if (1==2 and force_send and option['option_id']=='OTHER' and option['cap_available']==1):
                         #_logger.info("send_post_message OTHER")
@@ -1099,6 +1322,25 @@ class ResPartner(models.Model):
 class mercadolibre_shipment(models.Model):
 
     _inherit = "mercadolibre.shipment"
+
+    # Contador acotado de re-consultas del cron de etiquetas (un caso). Sin tope, un
+    # envio que nunca va a tener etiqueta (retiro en sucursal, flex, cancelado)
+    # se re-consultaria en cada corrida para siempre. Mismo patron que
+    # meli_stock_retry_count (un caso).
+    meli_label_retry_count = fields.Integer(
+        string="Reintentos de etiqueta",
+        default=0,
+        copy=False,
+        help="Cuantas veces el cron de reintento de etiquetas volvio a consultar este envio.")
+
+    def _meli_label_instance(self):
+        """un caso: la etiqueta se baja con el token de la cuenta de la orden (como shipment_print)."""
+        self.ensure_one()
+        order = self.orders and self.orders[0]
+        account = order and order.connection_account
+        if account:
+            return self.env['meli.util'].get_new_instance(account.company_id, account)
+        return super()._meli_label_instance()
 
     def shipment_print( self, meli=None, config=None, include_ready_to_print=None ):
 

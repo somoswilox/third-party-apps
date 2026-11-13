@@ -16,6 +16,22 @@ MELI_BENCHMARK_THRESHOLD = 0.5
 _meli_log_cache = {}
 
 
+
+def _meli_moves_vivos(moves, ret):
+    """[#caso-K65 543, 26.383] moves sobre los que corre el hook de meli DESPUES del super()._action_done.
+
+    mrp (18+: mrp/models/stock_move.py _action_done -> action_explode) explota los moves de KIT
+    que llegan sin explotar y BORRA el move original: `self` queda con un registro inexistente y
+    leerle cualquier campo tira MissingError ("El registro no existe o fue eliminado"), que
+    revierte la validacion del picking entero. Se usan los moves de `self` que siguen existiendo
+    mas los que devolvio el super (los hechos, incluye los componentes del kit). Para productos
+    normales `ret` esta contenido en `self`: el conjunto no cambia.
+    """
+    vivos = moves.exists()
+    if isinstance(ret, models.BaseModel) and ret._name == 'stock.move':
+        vivos |= ret.exists().with_env(moves.env)
+    return vivos
+
 class StockMove(models.Model):
     _inherit = "stock.move"
 
@@ -185,9 +201,13 @@ class StockMove(models.Model):
         skip_stock = str2bool(self.env['ir.config_parameter'].sudo().get_param('meli_skip_stock', 'False'))
         return skip_stock
 
-    def _action_assign(self):
+    def _action_assign(self, force_qty=False):
+        # 26.313: force_qty se pasa a super() SOLO si viene con valor. Un override ajeno que
+        # redefine _action_assign(self) sin el parametro (shopify_ept, odoo_connector_api_producteca...)
+        # y queda debajo en el MRO revienta con TypeError en cada reserva si se lo pasamos siempre.
+        assign_kwargs = {'force_qty': force_qty} if force_qty else {}
         t_start = time.time()
-        res = super(StockMove, self)._action_assign()
+        res = super(StockMove, self)._action_assign(**assign_kwargs)
         t_super_end = time.time()
 
         if not self._should_skip_meli_stock_update():
@@ -208,7 +228,8 @@ class StockMove(models.Model):
         t_super_end = time.time()
 
         if not self._should_skip_meli_stock_update():
-            self.meli_update_boms()
+            # [#caso-K65 543] el move de KIT que mrp explota se BORRA dentro del super: solo los vivos
+            _meli_moves_vivos(self, moves_todo).meli_update_boms()
         t_meli_end = time.time()
 
         t_total = time.time() - t_start
@@ -252,3 +273,44 @@ class StockMove(models.Model):
                 len(self), t_total, t_super_end - t_start, t_meli_end - t_super_end
             )
         return res
+
+    # ------------------------------------------------------------------
+    # un caso (un cliente): modo 'waiting' de "Venta sin existencia al confirmar".
+    # Con el contexto `meli_force_mts_product_ids` (lo pone SOLO
+    # sale.order._meli_confirm_waiting_retry, dentro de un savepoint), los moves de
+    # esos productos que nacen de una regla "mts_else_mto" NO disparan la regla
+    # siguiente (la COMPRA que no puede generarse): quedan make_to_stock, en espera
+    # de existencia. Sin el contexto no cambia nada.
+    # 26.171 (E1, caso-K13): también las reglas "make_to_order" PURAS (la ruta MTO estándar
+    # de Odoo). Antes sólo se miraba mts_else_mto y con MTO puro el modo 'waiting'
+    # volvía a cotización (medido en Odoo 18 demo, 30-sep).
+    #   16/17: _run_pull decide 'make_to_order' al crear el move -> se corrige en create.
+    #   18/19: el move nace make_to_stock y _action_confirm pide el faltante vía
+    #          _prepare_procurement_qty -> se devuelve 0 (procurement.group lo saltea).
+    # ------------------------------------------------------------------
+    _MELI_FORCEABLE_PROCURE = ('mts_else_mto', 'make_to_order')
+
+    def _meli_forced_mts_product_ids(self):
+        return set(self.env.context.get('meli_force_mts_product_ids') or ())
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        forced = self._meli_forced_mts_product_ids()
+        if forced:
+            Rule = self.env['stock.rule']
+            for vals in vals_list:
+                if (vals.get('procure_method') == 'make_to_order' and vals.get('rule_id')
+                        and vals.get('product_id') in forced
+                        and Rule.browse(vals['rule_id']).procure_method in self._MELI_FORCEABLE_PROCURE):
+                    vals['procure_method'] = 'make_to_stock'
+        return super(StockMove, self).create(vals_list)
+
+    def _prepare_procurement_qty(self):
+        parent = getattr(super(StockMove, self), '_prepare_procurement_qty', None)
+        quantities = parent() if parent else [m.product_uom_qty for m in self]
+        forced = self._meli_forced_mts_product_ids()
+        if not forced:
+            return quantities
+        return [0.0 if (move.product_id.id in forced and move.rule_id
+                        and move.rule_id.procure_method in self._MELI_FORCEABLE_PROCURE) else qty
+                for move, qty in zip(self, quantities)]

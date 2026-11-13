@@ -27,7 +27,7 @@ class OcapiConnectionBindingSaleOrderShipmentItem(models.Model):
     _inherit = "ocapi.connection.binding"
 
     name = fields.Char(string="Shipment Product Item")
-    shipping_id = fields.Many2one("ocapi.binding.shipment",string="Shipment")
+    shipping_id = fields.Many2one("ocapi.binding.shipment",string="Shipment", index='btree_not_null')
 
     _unique_conn_id_shipment_item = versions.UniqueIndex('connection_account, conn_id, shipping_id', message='Binding exists for this item: shipment.item!')
 

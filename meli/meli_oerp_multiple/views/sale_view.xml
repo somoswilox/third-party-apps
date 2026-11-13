@@ -80,7 +80,7 @@
 
       <!--TREE AND MENU VIEWS -->
 
-        <!-- FIX #414 (NipSkin/Inity 520, tickets #414/#415): se eliminaron los records de
+        <!-- FIX un caso (un cliente, tickets un caso): se eliminaron los records de
              busqueda sale_order_view_search_inherit_mercadolibre y _quotation_mercadolibre.
              Daban X roja en Odoo 19 (el comodelo mercadolibre.sale_order solo es accesible al
              grupo manager) y el filtro era no-funcional: el M2M mercadolibre_bindings nunca se
@@ -130,7 +130,7 @@
             <field name="inherit_id" ref="meli_oerp_accounting.meli_oerp_acct_orders_invoices_form"/>
             <field name="arch" type="xml">
               <xpath expr="//button[@name='orders_post_invoice']" position="before">
-                <button name='send_post_message' type="object"
+                <button name='action_send_post_message' type="object"
                   string="Mensaje Postventa"
                   class="oe_stat_button"
                   icon="fa-send"/>
@@ -472,6 +472,21 @@
 
 
 
+
+
+        <!-- Deposito ML de origen: Many2one visible en la pestana MercadoLibre de la venta.
+             Hereda la vista de meli_oerp (que carga antes) y agrega el campo despues del
+             tipo logistico. El campo vive en este modulo (mercadolibre.account.stock_location). -->
+        <record model="ir.ui.view" id="view_sale_order_form_meli_stock_location">
+            <field name="name">sale.order.form.meli.stock_location</field>
+            <field name="model">sale.order</field>
+            <field name="inherit_id" ref="meli_oerp.view_sale_order_form_meli"/>
+            <field name="arch" type="xml">
+                <field name="meli_shipment_logistic_type" position="after">
+                    <field name="meli_stock_location_id" readonly="1"/>
+                </field>
+            </field>
+        </record>
 
     </data>
 </odoo>

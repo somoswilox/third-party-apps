@@ -27,7 +27,6 @@ _logger = logging.getLogger(__name__)
 import pdb
 
 import requests
-#from odoo.addons.meli_oerp.melisdk.meli import Meli
 from odoo.addons.meli_oerp.models.versions import *
 
 class product_product(models.Model):
@@ -137,6 +136,13 @@ class product_product(models.Model):
     def _meli_get_location_id(self, meli_id=None, meli=False, config=None):
 
         loc_id = False
+        # 26.363 (caso-K10): ubicaciones FORZADAS por contexto. Lo usa meli_oerp_multiple para publicar el stock
+        # de UN depósito ML (store_id) con la ubicación que tiene mapeada en «Depósitos ML»: mismo cálculo
+        # (método de cantidad, kits, stock de seguridad), pero sólo sobre esa ubicación. Va antes del cache
+        # y de la consulta de logistic_type: no los consulta ni los ensucia.
+        _forced_loc_ids = self.env.context.get('meli_stock_force_location_ids')
+        if _forced_loc_ids:
+            return self.env["stock.location"].browse(_forced_loc_ids).exists()
         company = self.env.user.company_id
         config = config or company
         company = (config and 'company_id' in config._fields and config.company_id) or company
@@ -382,7 +388,8 @@ class product_product(models.Model):
 
         return qty_available
 
-    def _meli_available_quantity( self, meli_id=None, meli=False, config=None ):
+    # firma alineada con meli_oerp (meli, config); `meli_id` keyword-only: todos los llamadores del suite usan keywords (F8b 20.0)
+    def _meli_available_quantity( self, meli=False, config=None, *, meli_id=None ):
 
         #_logger.info("meli_oerp_stock._meli_available_quantity ")
         #_logger.info("meli_oerp_stock._meli_available_quantity meli_id "+str(meli_id))
@@ -468,6 +475,22 @@ class product_product(models.Model):
                             new_meli_available_quantity = stock_material_max
                             #_logger.info("stock _meli_available_quantity based on minimum material available / " +str(bom_line.product_qty)+ ": " + str(new_meli_available_quantity))
 
+        # [caso de un cliente] Stock de seguridad: se publican N unidades menos que el disponible.
+        # N sale de las REGLAS DE STOCK de la configuracion (meli_oerp.sku.rule type='stock',
+        # campo "Quantity Stock" = security_quantity_stock_to_pause; SKU exacto gana sobre '*').
+        # Ver meli_oerp.sku.rule._meli_stock_safety_qty_for_sku. Desde 13-oct-2026 el campo
+        # mercadolibre_stock_safety_qty (26.208) YA NO SE LEE.
+        # Se aplica sobre lo que Odoo publica (stock PROPIO). Las publicaciones 100 % Full no
+        # reciben PUT de stock (x_product_post_stock corta por logistic_type), asi que no les
+        # afecta; en Full + stock propio (user_product, selling_address) lo publicado es stock
+        # propio y el resguardo corresponde igual. En un kit cuenta la regla del SKU del KIT
+        # (los componentes se miden con _meli_virtual_available, sin resguardo).
+        _cfg = config or self.env.user.company_id
+        # 26.375 (#caso-K69): + modo «umbral» (con menos de K publica 0) y alcance por depósito ML (el depósito
+        # viaja por contexto desde meli_oerp_multiple). Ver meli_oerp.sku.rule._meli_stock_rule_qty_for_sku.
+        new_meli_available_quantity = self.env['meli_oerp.sku.rule']._meli_stock_rule_qty_from_config(
+            _cfg, product.default_code, new_meli_available_quantity)
+
         #_logger.info("meli_oerp_stock._meli_virtual_available  new_meli_available_quantity FINAL: "+str(product)+" "+str(meli_id)+" " + str(new_meli_available_quantity))
         return new_meli_available_quantity
 
@@ -550,56 +573,6 @@ class ProductTemplate(models.Model):
     #available_threshold = fields.Float(string='Availability Threshold', default=5.0)
     #custom_message = fields.Text(string='Custom Message', default='', translate=True)
 
-    def __get_combination_info(self, combination=False, product_id=False, add_qty=1, pricelist=False, parent_combination=False, only_template=False):
-
-        _logger.info("_get_combination_info meli: "+str(combination))
-
-        combination_info = super(ProductTemplate, self)._get_combination_info(
-            combination=combination, product_id=product_id, add_qty=add_qty, pricelist=pricelist,
-            parent_combination=parent_combination, only_template=only_template)
-
-        company = self.env.user.company_id
-        config = config or company
-        company = (config and 'company_id' in config._fields and config.company_id) or company
-
-        use_meli = config and "mercadolibre_stock_website_sale" in config._fields and config.mercadolibre_stock_website_sale
-
-        if not self.env.context.get('website_sale_stock_get_quantity') and not use_meli:
-            return combination_info
-
-        _logger.info("combination_info start: "+str(combination_info))
-
-        if combination_info['product_id']:
-            product = self.env['product.product'].sudo().browse(combination_info['product_id'])
-            website = self.env['website'].get_current_website()
-            virtual_available = product.with_context(warehouse=website.warehouse_id.id).virtual_available
-            meli_virtual_available = product.with_context(warehouse=website.warehouse_id.id)._meli_virtual_available()
-            combination_info.update({
-                #'virtual_available': virtual_available,
-                'virtual_available': meli_virtual_available,
-                'meli_virtual_available': meli_virtual_available,
-                'virtual_available_formatted': self.env['ir.qweb.field.float'].value_to_html(meli_virtual_available, {'decimal_precision': 'Product Unit of Measure'}),
-                'product_type': product.type,
-                'inventory_availability': product.inventory_availability,
-                'available_threshold': product.available_threshold,
-                'custom_message': product.custom_message,
-                'product_template': product.product_tmpl_id.id,
-                'cart_qty': product.cart_qty,
-                'uom_name': product.uom_id.name,
-            })
-            #_logger.info("combination_info [product_id]: "+str(combination_info))
-        else:
-            product_template = self.sudo()
-            combination_info.update({
-                'virtual_available': 0,
-                'product_type': product_template.type,
-                'inventory_availability': product_template.inventory_availability,
-                'available_threshold': product_template.available_threshold,
-                'custom_message': product_template.custom_message,
-                'product_template': product_template.id,
-                'cart_qty': 0
-            })
-
-        #_logger.info("combination_info final: "+str(combination_info))
-
-        return combination_info
+    # (F8b 20.0) borrado `__get_combination_info`: nombre con doble guion bajo => Python lo renombra a
+    # `_ProductTemplate__get_combination_info` y el ORM nunca lo llamaba (codigo muerto; ademas usaba `config` sin
+    # asignar).

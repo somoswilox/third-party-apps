@@ -437,8 +437,9 @@ class AfipSequenceSyncWizard(models.TransientModel):
             "params": {
                 "title": _("Sincronización completada"),
                 "message": _(
-                    "%d tipo(s) ajustado(s), %d omitido(s). Ver nota en el diario para detalles."
-                ) % (len(applied), len(skipped)),
+                    "%(applied)d tipo(s) ajustado(s), %(skipped)d omitido(s). Ver nota en el diario para detalles.",
+                    applied=len(applied), skipped=len(skipped),
+                ),
                 "type": "success" if applied else "warning",
                 "sticky": False,
                 "next": {"type": "ir.actions.act_window_close"},
@@ -482,7 +483,7 @@ class AfipSequenceSyncWizard(models.TransientModel):
                 # you cannot confirm the invoice."). En Factura B de venta el partner_bank_id no
                 # es requerido y no afecta a AFIP -> si el banco esta archivado (active=False) se
                 # limpia en el borrador (no se reactiva el banco global). Generico para toda la
-                # flota AR con AFIP. Caso Mocoroa (409): 1.309/1.319 borradores B apuntaban a la
+                # flota AR con AFIP. Caso un cliente: 1.309/1.319 borradores B apuntaban a la
                 # cuenta propia archivada -> el wizard halteaba en el 1er draft antes de AFIP.
                 if draft.partner_bank_id and not draft.partner_bank_id.active:
                     draft.sudo().write({'partner_bank_id': False})
@@ -530,8 +531,9 @@ class AfipSequenceSyncWizard(models.TransientModel):
             "tag": "display_notification",
             "params": {
                 "title": _("Confirmación completada"),
-                "message": _("%d confirmada(s), %d con error. Ver nota en el diario.") % (
-                    len(posted_ok), len(errors)
+                "message": _(
+                    "%(posted)d confirmada(s), %(errors)d con error. Ver nota en el diario.",
+                    posted=len(posted_ok), errors=len(errors),
                 ),
                 "type": notif_type,
                 "sticky": bool(errors),
@@ -604,8 +606,9 @@ class AfipSequenceSyncWizardLine(models.TransientModel):
             elif line.gap == 0:
                 line.action_summary = _("Nada — ya está alineado")
             elif line.gap > 0:
-                line.action_summary = _("Adelantar Odoo a %d (próxima: %d)") % (
-                    line.afip_last_number, line.afip_last_number + 1,
+                line.action_summary = _(
+                    "Adelantar Odoo a %(last)d (próxima: %(next)d)",
+                    last=line.afip_last_number, next=line.afip_last_number + 1,
                 )
             else:
                 line.action_summary = _(

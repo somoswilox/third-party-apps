@@ -1,0 +1,2177 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* odoo_connector_api
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-26 13:47+0000\n"
+"PO-Revision-Date: 2026-10-26 13:47+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_cancelled_pct
+msgid "% Cancelled"
+msgstr "% Cancelado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_conciled_pct
+msgid "% Conciled"
+msgstr "% Conciliado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_delivered_pct
+msgid "% Delivered"
+msgstr "% Entregue"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_error_pct
+msgid "% Error"
+msgstr "% Erro"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_not_conciled_pct
+msgid "% Invoiced not conciled"
+msgstr "% Faturado sem conciliar"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_missing_pct
+msgid "% Missing"
+msgstr "% Faltante"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_not_invoiced_pct
+msgid "% Not invoiced"
+msgstr "% Sem faturar"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_paid_pct
+msgid "% Paid"
+msgstr "% Pagamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_returned_pct
+msgid "% Returned"
+msgstr "% Devolvido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_active_pct
+msgid "% Synced & Active"
+msgstr "% Sincronizado e Ativo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_pause_pct
+msgid "% Synced & Pause"
+msgstr "% Sincronizado e Pausado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_updated_problems_pct
+msgid "% Synced Updated w/ Problems"
+msgstr "% Sincronizado com Problemas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_updating_pct
+msgid "% Synced Updating"
+msgstr "% Sincronizando"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_unsynced_pct
+msgid "% Unsynced"
+msgstr "% Sem sincronizar"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "<i class=\"fa fa-building-o me-1\" role=\"img\" aria-label=\"Empresa\"/>"
+msgstr "<i class=\"fa fa-building-o me-1\" role=\"img\" aria-label=\"Empresa\"/>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "<i class=\"fa fa-external-link me-1\"/>Abrir"
+msgstr "<i class=\"fa fa-external-link me-1\"/>Abrir"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "<i class=\"fa fa-globe me-1\" role=\"img\" aria-label=\"Pais\"/>"
+msgstr "<i class=\"fa fa-globe me-1\" role=\"img\" aria-label=\"País\"/>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "<i class=\"fa fa-key me-1\" role=\"img\" aria-label=\"Client ID\"/>"
+msgstr "<i class=\"fa fa-key me-1\" role=\"img\" aria-label=\"Client ID\"/>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "<i class=\"fa fa-plug fa-3x text-muted\" title=\"Connector\"/>"
+msgstr "<i class=\"fa fa-plug fa-3x text-muted\" title=\"Conector\"/>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "<span class=\"badge text-bg-info\">Nativo Odoo</span>"
+msgstr "<span class=\"badge text-bg-info\">Nativo Odoo</span>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "<span class=\"badge text-bg-primary\">OCAPI</span>"
+msgstr "<span class=\"badge text-bg-primary\">OCAPI</span>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "<span class=\"badge text-bg-secondary\">No instalado</span>"
+msgstr "<span class=\"badge text-bg-secondary\">Não instalado</span>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "<span class=\"badge text-bg-success\">Instalado</span>"
+msgstr "<span class=\"badge text-bg-success\">Instalado</span>"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_form_view
+msgid "Abrir Cuenta Original"
+msgstr "Abrir conta original"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "Abrir cuenta original"
+msgstr "Abrir conta original"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__access_token
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__access_token
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__access_token
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_credential__access_token
+msgid "Access Token/Api Token"
+msgstr "Token de Acesso/Token de API"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__access_warning
+msgid "Access warning"
+msgstr "Aviso de acesso"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "Account"
+msgstr "Conta"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_needaction
+msgid "Action Needed"
+msgstr "Ação Requerida"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_sales_action
+msgid "Action from importing Sale"
+msgstr "Ação ao importar venda"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__active
+msgid "Active"
+msgstr "Ativo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_ids
+msgid "Activities"
+msgstr "Actividades"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_exception_decoration
+msgid "Activity Exception Decoration"
+msgstr "Decoração de Exceção de Atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_state
+msgid "Activity State"
+msgstr "Status da atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_type_icon
+msgid "Activity Type Icon"
+msgstr "Ícone do tipo de atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__active
+msgid "Activo"
+msgstr "Ativo"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_tree_view
+msgid "Actualizado"
+msgstr "Atualizado"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_account_unified
+msgid "All Connector Accounts"
+msgstr "Todas as contas de conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__access_token_date
+msgid "Alta token"
+msgstr "Cadastro do token"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__res_company__ocapi_security_level__high
+msgid "Alto"
+msgstr "Alto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__seller_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__seller_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__seller_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_credential__seller_id
+msgid "App Seller Id"
+msgstr "Id do vendedor do app"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__application_id
+msgid "Application Id"
+msgstr "Id do Aplicativo"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ir_attachment
+msgid "Attachment"
+msgstr "Anexo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_attachment_count
+msgid "Attachment Count"
+msgstr "Quantidade de Adjuntos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__attempts
+msgid "Attempts"
+msgstr "Tentativas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__attributes
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__attributes
+msgid "Attributes"
+msgstr "Atributos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__barcode
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__barcode
+msgid "BARCODE"
+msgstr "CÓDIGO DE BARRAS"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__res_company__ocapi_security_level__low
+msgid "Bajo"
+msgstr "Baixo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__can_image_1024_be_zoomed
+msgid "Can Image 1024 be zoomed"
+msgstr "A imagem 1024 pode ser ampliada"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__cancelled
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__cancelled
+msgid "Cancelado"
+msgstr "Cancelado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__name
+msgid "Category"
+msgstr "Categoria"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__category_id
+msgid "Category Id"
+msgstr "Id da Categoria"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__icon
+msgid "Clase CSS del icono (fa-*) o ruta al icono"
+msgstr "Classe CSS do ícone (fa-*) ou caminho do ícone"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__client
+msgid "Client"
+msgstr "Cliente"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__client_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_credential__client_id
+msgid "Client ID/App Id"
+msgstr "ID de Cliente/Id de App"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__client_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__client_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__client_id
+msgid "Client Id/App Id"
+msgstr "Id de Cliente/Id de App"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__name
+msgid "Client Name"
+msgstr "Nome de Cliente"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_clients_tree
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_ocapi_clients_tree
+msgid "Clientes"
+msgstr "Clientes"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__date_closed
+msgid "Closing Date"
+msgstr "Data de Fechamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__color
+msgid "Color"
+msgstr "Cor"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_res_company
+msgid "Companies"
+msgstr "Empresas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__company_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__company_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__company_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__company_id
+msgid "Company"
+msgstr "Empresa"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connection_account_search_view
+msgid "Compañia"
+msgstr "Empresa"
+
+#. module: odoo_connector_api
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_clients
+msgid "Compradores"
+msgstr "Compradores"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid ""
+"Con el Nivel de seguridad Alto de la compañía no se puede activar el "
+"Monitoreo."
+msgstr ""
+"Com o Nível de segurança Alto da empresa não é possível ativar o "
+"Monitoramento."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_conciled
+msgid "Conciled"
+msgstr "Conciliado"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_tree_view
+msgid "Conector"
+msgstr "Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__is_native_odoo
+msgid "Conector Nativo Odoo"
+msgstr "Conector nativo Odoo"
+
+#. module: odoo_connector_api
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_connectors_section
+msgid "Conectores"
+msgstr "Conectores"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_connector_registry
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_registry
+msgid "Conectores Registrados"
+msgstr "Conectores registrados"
+
+#. module: odoo_connector_api
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_configuration
+msgid "Configuracion"
+msgstr "Configuração"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__mode
+msgid "Configuration Mode"
+msgstr "Modo de Configuração"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__name
+msgid "Configuration Name"
+msgstr "Nome de Configuração"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__configuration_brief
+msgid "Configuration Overview"
+msgstr "Resumo de Configuração"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__configuration_brief
+msgid "Configuration resume overview."
+msgstr "Resumo da configuração."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__confirmed
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__confirmed
+msgid "Confirmado"
+msgstr "Confirmado"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_connections_tree
+#: model:ir.model.fields,field_description:odoo_connector_api.field_res_company__ocapi_connections
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_connections
+msgid "Connection Accounts"
+msgstr "Contas de Conexão"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__configuration
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__configuration
+msgid "Connection Parameters Configuration"
+msgstr "Configuração de Parâmetros de Conexão"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__type
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__type
+msgid "Connector"
+msgstr "Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__class_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__class_id
+msgid "Connector Class Id"
+msgstr "Id de Classe do Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__conn_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__conn_id
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_orders_search_view
+msgid "Connector Id"
+msgstr "Id de Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__conn_image_id
+msgid "Connector Image Id"
+msgstr "Connector Image Id"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__name
+msgid "Connector Order Name"
+msgstr "Nome do Pedido do Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__conn_variation_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__conn_variation_id
+msgid "Connector Variation Id"
+msgstr "Id de Variação do Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__connector_version
+msgid "Connector Version"
+msgstr "Versão do Conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__connectors
+msgid "Connectors"
+msgstr "Conectores"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_res_partner
+msgid "Contact"
+msgstr "Contato"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__copy_error
+msgid "Copy Error"
+msgstr "Copiar Erro"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__country_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__country_id
+msgid "Country"
+msgstr "País"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__create_date
+msgid "Created"
+msgstr "Criado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__create_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__create_uid
+msgid "Created by"
+msgstr "Criado por"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__create_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__create_date
+msgid "Created on"
+msgstr "Criado em"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_form_view
+msgid "Cuenta"
+msgstr "Conta"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__account_count
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_accounts
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Cuentas"
+msgstr "Contas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_account__type__custom
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_account__type__custom
+msgid "Custom"
+msgstr "Personalizado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__access_url
+msgid "Customer Portal URL"
+msgstr "URL do Portal de Cliente"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__date_created
+msgid "Date Created"
+msgstr "Data de Criação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__import_sales_action__quotation_only
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__import_sales_action__quotation_only
+msgid "Default: Quotation"
+msgstr "Padrão: Cotação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__description
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__description
+msgid "Description"
+msgstr "Descrição"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__returned
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__returned
+msgid "Devuelto"
+msgstr "Devolvido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__mode__disabled
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__mode__disabled
+msgid "Disabled"
+msgstr "Desabilitado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__display_name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__display_name
+msgid "Display Name"
+msgstr "Nome exibido"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "Empresa"
+msgstr "Empresa"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__delivered
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__delivered
+msgid "Entregado"
+msgstr "Entregue"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__seller_team
+msgid "Equipo de venta"
+msgstr "Equipe de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_configuration__seller_team
+msgid "Equipo de ventas para ordenes de venta"
+msgstr "Equipe de vendas para pedidos de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_error
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_warning__type__error
+msgid "Error"
+msgstr "Erro"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Estado"
+msgstr "Estado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__state
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_credential__state
+msgid "Estado de la conexión"
+msgstr "Estado da conexão"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_follower_ids
+msgid "Followers"
+msgstr "Seguidores"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_partner_ids
+msgid "Followers (Partners)"
+msgstr "Seguidores (Contatos)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__activity_type_icon
+msgid "Font awesome icon e.g. fa-tasks"
+msgstr "Ícono de Font Awesome ej. fa-tasks"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "Fulfillment"
+msgstr "Fulfillment"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ir_http
+msgid "HTTP Routing"
+msgstr "Roteamento HTTP"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__has_message
+msgid "Has Message"
+msgstr "Tem mensagem"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__id
+msgid "ID"
+msgstr "ID"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_exception_icon
+msgid "Icon"
+msgstr "Ícono"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__activity_exception_icon
+msgid "Icon to indicate an exception activity."
+msgstr "Ícone para indicar uma atividade de exceção."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__icon
+msgid "Icono"
+msgstr "Ícone"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "Icono del conector"
+msgstr "Ícone do conector"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Identificacion"
+msgstr "Identificação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__connector_type
+msgid ""
+"Identificador unico del tipo de conector. Coincide con el valor del campo "
+"'type' en ocapi.connection.account para conectores propios."
+msgstr ""
+"Identificador único do tipo de conector. Coincide com o valor do campo "
+"'type' em ocapi.connection.account para conectores próprios."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__message_needaction
+msgid "If checked, new messages require your attention."
+msgstr "Se marcado, há mensagens novas que requerem sua atenção."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__message_has_error
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__message_has_sms_error
+msgid "If checked, some messages have a delivery error."
+msgstr "Se marcado, algumas mensagens têm um erro de entrega."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product__active
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product_template__active
+msgid ""
+"If unchecked, it will allow you to hide the product without removing it."
+msgstr "Se não estiver marcado, permitirá ocultar o produto sem excluí-lo."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__image_128
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__image_1920
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__image_1920
+msgid "Image"
+msgstr "Imagem"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__image_1024
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__image_1024
+msgid "Image 1024"
+msgstr "Imagem 1024"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__image_128
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__image_128
+msgid "Image 128"
+msgstr "Imagem 128"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__image_256
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__image_256
+msgid "Image 256"
+msgstr "Imagem 256"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__image_512
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__image_512
+msgid "Image 512"
+msgstr "Imagem 512"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__image_update
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__image_update
+msgid "Image update"
+msgstr "Atualização de imagem"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid "Image upload not implemented for connector type: %s"
+msgstr "Upload de imagem não implementado para o tipo de conector: %s"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_payments
+msgid "Import Payments"
+msgstr "Importar pagamentos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_price_lists
+msgid "Import Price Lists"
+msgstr "Importar listas de preços"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_price_list
+msgid "Import price list"
+msgstr "Importar lista de preços"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_products
+msgid "Import products"
+msgstr "Importar produtos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_sales
+msgid "Import sales"
+msgstr "Importar vendas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_stock
+msgid "Import stock"
+msgstr "Importar estoque"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__is_installed
+msgid "Indica si el modulo del conector esta instalado en esta instancia"
+msgstr "Indica se o módulo do conector está instalado nesta instância"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_warning__type__info
+msgid "Information"
+msgstr "Informação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__is_installed
+msgid "Instalado"
+msgstr "Instalado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_not_conciled
+msgid "Invoiced not conciled"
+msgstr "Faturado sem conciliar"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_total
+msgid "Invoices (Total)"
+msgstr "Notas Fiscais (Total)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__invoices_by_team_json
+msgid "Invoices by Team (JSON)"
+msgstr "Notas Fiscais por Equipo (JSON)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__is_active
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__is_active
+msgid "Is Active"
+msgstr "Está ativo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_is_follower
+msgid "Is Follower"
+msgstr "É seguidor"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__kpi_from
+msgid "KPI From"
+msgstr "KPI desde"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__kpi_to
+msgid "KPI To"
+msgstr "KPI até"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "LDPS"
+msgstr "LDPS"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__last_kpi_refresh_at
+msgid "Last KPI Refresh"
+msgstr "Última Atualização de KPI"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__write_uid
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__write_uid
+msgid "Last Updated by"
+msgstr "Última atualização por"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binder_wiz__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__write_date
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__write_date
+msgid "Last Updated on"
+msgstr "Última atualização em"
+
+#. module: odoo_connector_api
+#: model_terms:ir.actions.act_window,help:odoo_connector_api.action_ocapi_connector_registry
+msgid ""
+"Los conectores se registran automaticamente al instalarse.\n"
+"                    Instala un modulo conector (MercadoLibre, Producteca, etc.)\n"
+"                    para verlo aqui."
+msgstr ""
+"Os conectores são registrados automaticamente ao serem instalados.\n"
+" Instale um módulo conector (Mercado Livre, Producteca etc.)\n"
+" para vê-lo aqui."
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "MercadoLibre"
+msgstr "MercadoLibre"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__message
+msgid "Message"
+msgstr "Mensagem"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_has_error
+msgid "Message Delivery error"
+msgstr "Erro de Entrega de Mensagem"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__message_html
+msgid "Message HTML"
+msgstr "Mensagem HTML"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_ids
+msgid "Messages"
+msgstr "Mensagens"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__messages_brief
+msgid "Messages Overview"
+msgstr "Resumo de Mensagens"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__messages_brief
+msgid "Messages resume overview."
+msgstr "Resumo de mensagens."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_missing
+msgid "Missing Sales"
+msgstr "Vendas Faltantes"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__source_model
+msgid "Model"
+msgstr "Modelo"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_tree_view
+msgid "Modelo"
+msgstr "Modelo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__binding_model
+msgid "Modelo de Binding"
+msgstr "Modelo de vínculo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__configuration_model
+msgid "Modelo de Configuracion"
+msgstr "Modelo de configuração"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__account_model
+msgid "Modelo de Cuenta"
+msgstr "Modelo de conta"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Modelos"
+msgstr "Modelos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__bridge_module
+msgid "Modulo Bridge"
+msgstr "Módulo bridge"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__module_name
+msgid "Modulo Principal"
+msgstr "Módulo principal"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Modulos"
+msgstr "Módulos"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_tree_view
+msgid "Monitor"
+msgstr "Monitor"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "Monitoreada"
+msgstr "Monitorada"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "Monitoreadas"
+msgstr "Monitoradas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__connection_monitor
+msgid "Monitored"
+msgstr "Monitorada"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__connection_monitor
+msgid "Monitoreo"
+msgstr "Monitoreo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__my_activity_date_deadline
+msgid "My Activity Deadline"
+msgstr "Meu prazo de atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__name
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__name
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_orders_search_view
+msgid "Name"
+msgstr "Nome"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_search_view
+msgid "Nativos Odoo"
+msgstr "Nativos Odoo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_date_deadline
+msgid "Next Activity Deadline"
+msgstr "Prazo da próxima atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_summary
+msgid "Next Activity Summary"
+msgstr "Resumo da próxima atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_type_id
+msgid "Next Activity Type"
+msgstr "Tipo da próxima atividade"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_res_company__ocapi_security_level
+msgid "Nivel de seguridad"
+msgstr "Nível de segurança"
+
+#. module: odoo_connector_api
+#: model_terms:ir.actions.act_window,help:odoo_connector_api.action_ocapi_connector_registry
+msgid "No hay conectores registrados"
+msgstr "Não há conectores registrados"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__name
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Nombre del Conector"
+msgstr "Nome do conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__bridge_module
+msgid ""
+"Nombre del modulo bridge OCAPI si es un conector nativo (ej: "
+"ocapi_sale_amazon)"
+msgstr ""
+"Nome do módulo bridge OCAPI se for um conector nativo (ex.: "
+"ocapi_sale_amazon)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__binding_model
+msgid ""
+"Nombre tecnico del modelo de binding/offer (ej: amazon.offer, shopee.item)"
+msgstr ""
+"Nome técnico do modelo de vínculo/oferta (ex.: amazon.offer, shopee.item)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__configuration_model
+msgid "Nombre tecnico del modelo de configuracion si existe"
+msgstr "Nome técnico do modelo de configuração, se existir"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__account_model
+msgid ""
+"Nombre tecnico del modelo de cuenta (ej: mercadolibre.account, "
+"amazon.account, shopee.shop)"
+msgstr ""
+"Nome técnico do modelo de conta (ex.: mercadolibre.account, amazon.account, "
+"shopee.shop)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__module_name
+msgid ""
+"Nombre tecnico del modulo de Odoo (ej: meli_oerp_multiple, sale_amazon)"
+msgstr "Nome técnico do módulo do Odoo (ex.: meli_oerp_multiple, sale_amazon)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__inv_not_invoiced
+msgid "Not invoiced"
+msgstr "Sem faturar"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__notes
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_form_view
+msgid "Notas"
+msgstr "Notas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__notification_id
+msgid "Notification Id"
+msgstr "Id da Notificação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__state
+msgid "Notification State"
+msgstr "Status da notificação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_notification__state__failed
+msgid "Notification process with errors"
+msgstr "Processamento da notificação com erros"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_notification__state__success
+msgid "Notification processed."
+msgstr "Notificação processada."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_notification__state__received
+msgid "Notification received."
+msgstr "Notificação recebida."
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_notifications_tree
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_notifications
+msgid "Notifications"
+msgstr "Notificações"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_needaction_counter
+msgid "Number of Actions"
+msgstr "Número de Ações"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_has_error_counter
+msgid "Number of errors"
+msgstr "Número de erros"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__message_needaction_counter
+msgid "Number of messages requiring action"
+msgstr "Número de mensagens que requerem ação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__message_has_error_counter
+msgid "Number of messages with delivery error"
+msgstr "Número de mensagens com erro de entrega"
+
+#. module: odoo_connector_api
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_root
+msgid "OCAPI"
+msgstr "OCAPI"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connector_registry
+msgid "OCAPI Connector Registry"
+msgstr "Registro de conectores OCAPI"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__ocapi_version
+msgid "OCAPI Version"
+msgstr "Versão de OCAPI"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.warning_form
+msgid "OK"
+msgstr "OK"
+
+#. module: odoo_connector_api
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_connectors
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_res_partner_form_ocapi
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_sale_order_form_ocapi
+msgid "Ocapi"
+msgstr "Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_binding
+msgid "Ocapi Connection Binding"
+msgstr "Vínculo de conexão Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_res_partner__ocapi_bindings
+#: model:ir.model.fields,field_description:odoo_connector_api.field_res_users__ocapi_bindings
+#: model:ir.model.fields,field_description:odoo_connector_api.field_sale_order__ocapi_bindings
+#: model:ir.model.fields,field_description:odoo_connector_api.field_sale_order_line__ocapi_bindings
+msgid "Ocapi Connection Bindings"
+msgstr "Vínculos de conexão Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_product_product__ocapi_connection_bindings
+msgid "Ocapi Connection Bindings Product"
+msgstr "Vínculos de conexão Ocapi - produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_product_template__ocapi_connection_bindings
+msgid "Ocapi Connection Bindings Product Templates"
+msgstr "Vínculos de conexão Ocapi - modelos de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_notification
+msgid "Ocapi Connection Notification"
+msgstr "Notificação de conexão Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_configuration
+msgid "Ocapi Connection Parameters Configuration"
+msgstr "Configuração de parâmetros de conexão Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_category
+msgid "Ocapi Product Binding Category"
+msgstr "Vínculo Ocapi de categoria de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_binding_product
+msgid "Ocapi Product Binding Product"
+msgstr "Vínculo Ocapi de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_binding_product_template
+msgid "Ocapi Product Binding Product Template"
+msgstr "Vínculo Ocapi de modelo de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_product_image
+msgid "Ocapi Product Image"
+msgstr "Imagem de produto Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_sale_order
+msgid "Ocapi Sale Order Binding"
+msgstr "Vínculo Ocapi de pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_client
+msgid "Ocapi Sale Order Client Binding"
+msgstr "Vínculo Ocapi de cliente do pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_sale_order_line
+msgid "Ocapi Sale Order Line Binding"
+msgstr "Vínculo Ocapi de linha do pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_payment
+msgid "Ocapi Sale Order Payment Binding"
+msgstr "Vínculo Ocapi de pagamento do pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_shipment
+msgid "Ocapi Sale Order Shipment Binding"
+msgstr "Vínculo Ocapi de envio do pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binding_shipment_item
+msgid "Ocapi Sale Order Shipment Item"
+msgstr "Item de envio do pedido de venda Ocapi"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_account
+msgid "Odoo Connector Api Account Credentials and Configuration"
+msgstr "Credenciais e configuração da conta Odoo Connector Api"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_category__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__connection_account
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__connection_account
+msgid "Odoo Connector Api Connection"
+msgstr "Conexão Odoo Connector Api"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__connection_account
+msgid "Odoo Connector Api Connection Account"
+msgstr "Conta de conexão Odoo Connector Api"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_res_company__ocapi_connections
+msgid "Odoo Connector Api Connection Accounts"
+msgstr "Contas de conexão Odoo Connector Api"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_connection_credential
+msgid "Odoo Connector Api Credentials"
+msgstr "Credenciais Odoo Connector Api"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_company_page_ocapi
+msgid "Odoo Connectors"
+msgstr "Conectores Odoo"
+
+#. module: odoo_connector_api
+#: model:res.groups,name:odoo_connector_api.group_ocapi_connectors_manager
+msgid "Odoo Connectors Api Manager"
+msgstr "Gerente Odoo Connectors Api"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_orders_tree
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_orders
+msgid "Ordenes"
+msgstr "Pedidos"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__order_id
+msgid "Order"
+msgstr "Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__lines
+msgid "Order Items"
+msgstr "Ítems de Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__sale_order_line
+msgid "Order Line"
+msgstr "Linha de Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order_line__name
+msgid "Order Line Name"
+msgstr "Nome de Linha de Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__payments
+msgid "Order Payments"
+msgstr "Pagamentos do Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__shipments
+msgid "Order Shipments"
+msgstr "Envios do Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__state
+msgid "Order State"
+msgstr "Estado do Pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_stock_locations
+msgid "Order Stock Warehouse"
+msgstr "Armazém de Estoque do Pedido"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_ocapi_orders_tree
+msgid "Orders"
+msgstr "Pedidos"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_form_view
+msgid "Origen"
+msgstr "Origem"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__paid
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__paid
+msgid "Pagado"
+msgstr "Pago"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__payment_in_process
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__payment_in_process
+msgid "Pago en proceso"
+msgstr "Pagamento em processamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__payment_required
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__payment_required
+msgid "Pago requerido"
+msgstr "Pagamento obrigatório"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "Pais"
+msgstr "País"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_client__partner_id
+msgid "Partner"
+msgstr "Contato"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__account_payment_id
+msgid "Payment"
+msgstr "Pagamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_payment__name
+msgid "Payment Name"
+msgstr "Nome do Pagamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__import_sales_action__payed_confirm_order
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__import_sales_action__payed_confirm_order
+msgid "Payment confirm order"
+msgstr "Pagamento confirma o pedido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__import_sales_action__payed_confirm_order_invoice
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__import_sales_action__payed_confirm_order_invoice
+msgid "Payment confirm order and invoice"
+msgstr "Pagamento confirma o pedido e a fatura"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__import_sales_action__payed_confirm_order_shipment
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__import_sales_action__payed_confirm_order_shipment
+msgid "Payment confirm order and shipment"
+msgstr "Pagamento confirma o pedido e o envio"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__import_sales_action__payed_confirm_order_invoice_shipment
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__import_sales_action__payed_confirm_order_invoice_shipment
+msgid "Payment confirm order, shipment and invoice"
+msgstr "Pagamento confirma o pedido, o envio e a fatura"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__connection_monitor
+msgid ""
+"Permite que el centro de soporte de Moldeo consulte desde afuera si esta cuenta está conectada (estado y vencimiento del token). Esa consulta no devuelve ventas, clientes ni productos, ni la clave secreta. Apagado: la consulta de estado no responde.\n"
+"Lo demás que se expone hacia afuera lo define el Nivel de seguridad de la compañía: con Alto esta casilla queda apagada y no se puede activar."
+msgstr "Monitoreo remoto de status de conexão"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__access_url
+msgid "Portal Access URL"
+msgstr "URL de Acesso ao Portal"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__res_company__ocapi_security_level__default
+msgid "Predeterminado"
+msgstr "Padrão"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_company_page_ocapi
+msgid ""
+"Predeterminado: como hasta ahora. Bajo: hacia afuera sólo el estado de "
+"conexión. Alto: sólo la notificación de Mercado Libre y el inicio de sesión;"
+" sin Monitoreo, sin copia de token y sin proxy."
+msgstr ""
+"Padrão: como até agora. Baixo: para fora somente o status da conexão. Alto: "
+"somente a notificação do Mercado Livre e o início de sessão; sem "
+"Monitoramento, sem cópia de token e sem proxy."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__price
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__price
+msgid "Price"
+msgstr "Preço"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__price_update
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__price_update
+msgid "Price update"
+msgstr "Atualização de preço"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_ocapi_notification_form
+msgid "Procesar"
+msgstr "Processar"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_ocapi_notification_form
+msgid "Procesar notificación"
+msgstr "Processar notificação"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__processing_logs
+msgid "Processing Logs"
+msgstr "Logs de processamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__processing_ended
+msgid "Processing ended"
+msgstr "Processamento encerrado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__processing_errors
+msgid "Processing errors log"
+msgstr "Log de erros de processamento"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_notification__state__processing
+msgid "Processing notification."
+msgstr "Processando notificação."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__processing_started
+msgid "Processing started"
+msgstr "Processamento iniciado"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_product_template
+msgid "Product"
+msgstr "Produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__product_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product__product_id
+msgid "Product Binding"
+msgstr "Vinculação de Produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__products
+msgid "Product Items"
+msgstr "Itens do Produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__product_tmpl_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__product_tmpl_id
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__binding_product_tmpl_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product__product_tmpl_id
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product_template__product_tmpl_id
+msgid "Product Template"
+msgstr "Modelo de Produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__binding_product_tmpl_id
+msgid "Product Template Binding"
+msgstr "Vinculação de Modelo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__image_bindings
+msgid "Product Template Images"
+msgstr "Imagems de Modelo de Produto"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_bindings_product_template_tree
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_bindings_product_template
+msgid "Product Templates Bindings"
+msgstr "Vínculos de modelos de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_product_product
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__binding_product_variant_id
+msgid "Product Variant"
+msgstr "Variante do produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__image_bindings
+msgid "Product Variant Images"
+msgstr "Imagemes de variantes"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__full_update
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__full_update
+msgid "Product update"
+msgstr "Atualização de produto"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_search_view
+msgid "Producteca"
+msgstr "Producteca"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__mode__production
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__mode__production
+msgid "Production"
+msgstr "Produção"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_products_tree
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_products
+msgid "Products"
+msgstr "Produtos"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_search_view
+msgid "Propios OCAPI"
+msgstr "Próprios OCAPI"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__publish_stock
+msgid "Publicar Stock Avanzado"
+msgstr "Publicar estoque"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_total
+msgid "Publications (Total)"
+msgstr "Publicações (Total)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__publications_by_team_json
+msgid "Publications by Team (JSON)"
+msgstr "Publicações por Equipo (JSON)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__publish_price_lists
+msgid "Publish Price Lists"
+msgstr "Publicar Listas de Preços"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__publish_stock_locations
+msgid "Publish Stock location"
+msgstr "Localização de Estoque a Publicar"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__publish_price_list
+msgid "Publish price list"
+msgstr "Publicar lista de preços"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__publish_products
+msgid "Publish products"
+msgstr "Publicar produtos"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid "Publishing not implemented for connector type: %s"
+msgstr "Publicação não implementada para o tipo de conector: %s"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_notifications_search_view
+msgid "Questions only"
+msgstr "Somente perguntas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_res_company__ocapi_security_level
+msgid ""
+"Qué se puede consultar o hacer desde afuera de Odoo en las integraciones.\n"
+"Predeterminado: como hasta ahora: estado de conexión (en las cuentas con Monitoreo), indicadores, acciones remotas y copia de token entre producción y testing.\n"
+"Bajo: sólo el estado de conexión (sin datos de ventas, clientes ni acciones); sin copia de token; los tokens no se registran en el chatter.\n"
+"Alto: ninguna consulta ni acción desde afuera; quedan sólo las notificaciones y el login del canal. La casilla Monitoreo queda apagada y sólo se usa la dirección oficial de la API.\n"
+"En todos los niveles: los tokens nunca se muestran completos y los secretos sólo los ve un Administrador."
+msgstr ""
+"O que pode ser consultado ou feito de fora do Odoo nas integrações.\n"
+"Padrão: como até agora: status da conexão (nas contas com Monitoramento), indicadores, ações remotas e cópia de token entre produção e teste.\n"
+"Baixo: somente o status da conexão (sem dados de vendas, clientes nem ações); sem cópia de token; os tokens não são registrados no chatter.\n"
+"Alto: nenhuma consulta nem ação de fora; ficam somente as notificações e o login do canal. A opção Monitoramento fica desligada e somente o endereço oficial da API é usado.\n"
+"Em todos os níveis: os tokens nunca são mostrados completos e os segredos só são vistos por um Administrador."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__rating_ids
+msgid "Ratings"
+msgstr "Avaliações"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__received
+msgid "Received"
+msgstr "Recebido"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__source_id
+msgid "Record ID"
+msgstr "ID do registro"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_sale_order__state__refunded
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_binding_sale_order__state__refunded
+msgid "Reembolsado"
+msgstr "Reembolsado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__refresh_count_period
+msgid "Refreshes in Period"
+msgstr "Atualizações no período"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__resource
+msgid "Resource"
+msgstr "Recurso"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__activity_user_id
+msgid "Responsible User"
+msgstr "Usuário Responsable"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__sku
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__sku
+msgid "SKU"
+msgstr "SKU"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__message_has_sms_error
+msgid "SMS Delivery error"
+msgstr "Erro de Entrega de SMS"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__import_sale_start_date
+msgid "Sale Date Start"
+msgstr "Data de Início de Venda"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_sale_order__sale_order
+msgid "Sale Order"
+msgstr "Pedido de Venda"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_total
+msgid "Sales (Total)"
+msgstr "Vendas (Total)"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_cancelled
+msgid "Sales Cancelled"
+msgstr "Vendas Canceladas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_delivered
+msgid "Sales Delivered"
+msgstr "Vendas Entregues"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_sale_order
+msgid "Sales Order"
+msgstr "Pedido de venda"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_sale_order_line
+msgid "Sales Order Line"
+msgstr "Linha do pedido de vendas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_paid
+msgid "Sales Paid"
+msgstr "Vendas Pagas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_returned
+msgid "Sales Returned"
+msgstr "Vendas Devolvidas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__sales_by_team_json
+msgid "Sales by Team (JSON)"
+msgstr "Vendas por Equipo (JSON)"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_notifications_search_view
+msgid "Search Ocapi Notifications Information"
+msgstr "Buscar informações de notificações Ocapi"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_orders_search_view
+msgid "Search Ocapi Orders Information"
+msgstr "Buscar informações de pedidos Ocapi"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_products_search_view
+msgid "Search Ocapi Products"
+msgstr "Buscar produtos Ocapi"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_bindings_product_template_search_view
+msgid "Search Product Template Bindings"
+msgstr "Buscar vínculos de modelo de produto"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__secret_key
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__secret_key
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__secret_key
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_credential__secret_key
+msgid "Secret Key/App Key"
+msgstr "Chave Secreta/Chave de App"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__sequence
+msgid "Secuencia"
+msgstr "Sequência"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_company_page_ocapi
+msgid "Seguridad de conectores"
+msgstr "Segurança dos conectores"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__seller_id
+msgid "Seller"
+msgstr "Vendedor"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__sent
+msgid "Sent"
+msgstr "Enviado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__sequence
+msgid "Sequence"
+msgstr "Sequência"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__shipping_id
+msgid "Shipment"
+msgstr "Envio"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment__name
+msgid "Shipment Name"
+msgstr "Nome do envio"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_binding_shipment_item__name
+msgid "Shipment Product Item"
+msgstr "Item de produto do envio"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__state
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_credential__state
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_notifications_search_view
+msgid "State"
+msgstr "Estado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__activity_state
+msgid ""
+"Status based on activities\n"
+"Overdue: Due date is already passed\n"
+"Today: Activity date is today\n"
+"Planned: Future activities."
+msgstr ""
+"Status based on activities\n"
+"Overdue: Due date is already passed\n"
+"Today: Activity date is today\n"
+"Planned: Future activities."
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid "Status check not implemented for connector type: %s"
+msgstr "Verificação de status não implementada para o tipo de conector: %s"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__stock
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__stock
+msgid "Stock"
+msgstr "Estoque"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__stock_error
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__stock_error
+msgid "Stock Error"
+msgstr "Erro de estoque"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__stock_update
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__stock_update
+msgid "Stock update"
+msgstr "Data de atualização de estoque"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_active
+msgid "Synced & Active"
+msgstr "Sincronizado e ativo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_pause
+msgid "Synced & Pause"
+msgstr "Sincronizado e Pausado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_updated_problems
+msgid "Synced Updated w/ Problems"
+msgstr "Sincronizado com Problemas"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_synced_updating
+msgid "Synced Updating"
+msgstr "Sincronizando"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/company.py:0
+msgid "Sólo un Administrador puede cambiar el Nivel de seguridad."
+msgstr "Somente um Administrador pode alterar o Nível de segurança."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__mercadolibre_configuration__mode__test
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_connection_configuration__mode__test
+msgid "Test"
+msgstr "Teste"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connector_registry__connector_type
+msgid "Tipo"
+msgstr "Tipo"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connection_account_search_view
+msgid "Tipo de Conector"
+msgstr "Tipo de conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__title
+msgid "Title"
+msgstr "Título"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_ocapi_account_unified
+#: model:ir.ui.menu,name:odoo_connector_api.menu_ocapi_all_accounts
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_tree_view
+msgid "Todas las Cuentas"
+msgstr "Todas as contas"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_notifications_search_view
+msgid "Today"
+msgstr "Hoje"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__topic
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_notifications_search_view
+msgid "Topic"
+msgstr "Tópico"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connector_registry__is_native_odoo
+msgid "True si es un conector nativo de Odoo Enterprise integrado via bridge"
+msgstr ""
+"True se for um conector nativo do Odoo Enterprise integrado via bridge"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_warning__type
+msgid "Type"
+msgstr "Tipo"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__activity_exception_decoration
+msgid "Type of the exception activity on record."
+msgstr "Tipo da atividade de exceção no registro."
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_product_image__video_url
+msgid "URL of a video for showcasing your product."
+msgstr "URL de um video para exibir su produto."
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid "Unpublish not implemented for connector type: %s"
+msgstr "Despublicação não implementada para o tipo de conector: %s"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__pub_unsynced
+msgid "Unsynced (missing binding)"
+msgstr "Não sincronizado (falta o vínculo)"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/connection_account.py:0
+msgid "Update not implemented for connector type: %s"
+msgstr "Atualização não implementada para o tipo de conector: %s"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_account_unified__write_date
+msgid "Updated"
+msgstr "Atualizado"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_notification__user_id
+msgid "User Id"
+msgstr "Id do Usuário"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_configuration__seller_user
+msgid "Usuario con el que se registrarán las órdenes automáticamente"
+msgstr "Usuário com o qual os pedidos serão registrados automaticamente"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product__variant_bindings
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_binding_product_template__variant_bindings
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product__variant_bindings
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_binding_product_template__variant_bindings
+msgid "Variant Bindings"
+msgstr "Vinculações de Variante"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__access_token_date_expiration
+msgid "Vencimiento token"
+msgstr "Vencimento do token"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_configuration__seller_user
+msgid "Vendedor"
+msgstr "Vendedor"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__ocapi_version
+msgid "Versión de OCAPI"
+msgstr "Versão de OCAPI"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__connector_version
+msgid "Versión de este conector"
+msgstr "Versão deste conector"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_product_image__video_url
+msgid "Video URL"
+msgstr "URL de Vídeo"
+
+#. module: odoo_connector_api
+#: model:ir.actions.act_window,name:odoo_connector_api.action_warning
+#: model:ir.model.fields.selection,name:odoo_connector_api.selection__ocapi_warning__type__warning
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.warning_form
+msgid "Warning"
+msgstr "Aviso"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,field_description:odoo_connector_api.field_ocapi_connection_account__website_message_ids
+msgid "Website Messages"
+msgstr "Mensagens do Site"
+
+#. module: odoo_connector_api
+#: model:ir.model.fields,help:odoo_connector_api.field_ocapi_connection_account__website_message_ids
+msgid "Website communication history"
+msgstr "Histórico de comunicação web"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_binder_wiz
+msgid "Wizard de Product Template Ocapi Binder"
+msgstr "Assistente Ocapi Binder de modelo de produto"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/wizards.py:0
+msgid "adding product %s"
+msgstr "adicionando produto %s"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_connector_registry_kanban_view
+msgid "cuentas"
+msgstr "contas"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "fulfillment"
+msgstr "fulfillment"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "fulfillment virtual"
+msgstr "fulfillment virtual"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "ldps"
+msgstr "ldps"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "ldps virtual"
+msgstr "ldps virtual"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "mercadolibre"
+msgstr "mercadolibre"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.ocapi_account_unified_kanban_view
+msgid "producteca"
+msgstr "producteca"
+
+#. module: odoo_connector_api
+#. odoo-python
+#: code:addons/odoo_connector_api/models/wizards.py:0
+msgid "removing product %s"
+msgstr "removendo produto %s"
+
+#. module: odoo_connector_api
+#: model:ir.model,name:odoo_connector_api.model_ocapi_warning
+msgid "warning"
+msgstr "aviso"
+
+#. module: odoo_connector_api
+#: model_terms:ir.ui.view,arch_db:odoo_connector_api.view_ocapi_notification_form
+msgid "¿Está seguro que necesita procesar esta notificación?"
+msgstr "Tem certeza de que precisa processar esta notificação?"
